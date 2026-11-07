@@ -1,0 +1,408 @@
+// End-to-end viewer check: load the REAL client.js (unmocked viewer code) in a
+// real browser with stubbed dsh platform modules, open a real PDF through the
+// UI, then verify painting, zoom, fit-width and the page jump.
+//
+// The in-app viewer is pdf.js in main-thread mode (the viewer module registers
+// pdfjs-dist's WorkerMessageHandler itself), so no engine bundles are staged —
+// the harness only serves client.js and the sample PDF.
+import http from 'node:http'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { chromium } from 'playwright-core'
+
+const PLUGIN = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
+const DIR = path.join(process.env.TEMP ?? '/tmp', 'dsh-library-e2e')
+const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+const SAMPLE = process.argv[2] ?? 'C:\\Users\\moqiq\\Zotero\\storage\\23A9Q3N2\\Li 等 - 2024 - Rationally engineered novel AAV capsids for intra-.pdf'
+
+fs.rmSync(DIR, { recursive: true, force: true })
+fs.mkdirSync(DIR, { recursive: true })
+fs.copyFileSync(path.join(PLUGIN, 'client.js'), path.join(DIR, 'client.js'))
+fs.copyFileSync(path.join(PLUGIN, 'node_modules/react/umd/react.production.min.js'), path.join(DIR, 'react.js'))
+fs.copyFileSync(path.join(PLUGIN, 'node_modules/react-dom/umd/react-dom.production.min.js'), path.join(DIR, 'react-dom.js'))
+fs.copyFileSync(SAMPLE, path.join(DIR, 'sample.pdf'))
+
+const fixtureBytes = fs.readFileSync(SAMPLE).toString('base64')
+const mockDataJs = JSON.stringify({
+  state: { available: true, dataDir: 'C:/Zotero', dbPath: '', storageDir: '', source: 'default', mode: 'zotero', schemaVersion: 125, counts: { items: 1, attachments: 1, annotations: 0, collections: 0, tags: 0, trash: 0 }, settings: { mode: 'zotero', zoteroDataDir: '', webdav: { url: '', username: '', hasPassword: false }, autoSync: false, updateFeed: '' }, sync: { running: false, last: null }, revision: 1, version: '0.8.0' },
+  collections: { collections: [], unfiled: 0, trash: 0, tags: [] },
+  items: { total: 1, offset: 0, limit: 100, items: [{ key: 'AAAAAAAA', itemType: 'journalArticle', title: 'A test paper', date: '2024', year: 2024, doi: '', creators: 'Zhang', creatorList: [], publicationTitle: '', publisher: '', tags: [], firstCreator: 'Zhang', hasAttachment: true, dateAdded: '2026-01-01 00:00:00', dateModified: '2026-01-01 00:00:00' }] },
+  item: { key: 'AAAAAAAA', itemType: 'journalArticle', title: 'A test paper', dateAdded: '', dateModified: '', version: 0, synced: false, deleted: false, fields: [{ field: 'title', value: 'A test paper' }], creators: [], tags: [], collections: [], attachments: [{ key: 'CCCCCCCC', title: 'sample.pdf', rawPath: 'storage:sample.pdf', linkMode: 0, contentType: 'application/pdf', syncState: 2, size: 1, target: { kind: 'file', path: 'C:/tmp/sample.pdf' } }], notes: [], annotations: [] },
+  annotations: { annotations: [{ key: 'ANNO0001', type: 1, color: '#ffd400', pageLabel: '1', text: 'sample highlight', comment: '', position: { pageIndex: 0, rects: [[57, 640, 540, 660]] }, parentKey: 'CCCCCCCC' }] },
+})
+
+const HTML = `<!doctype html><html><head><meta charset="utf-8"><link rel="icon" href="data:,"><title>E2E</title><style>
+html, body, #app { height: 100%; }
+body { margin: 0; font-family: system-ui; }
+</style></head><body><div id="app"></div>
+<script src="./react.js"></script>
+<script src="./react-dom.js"></script>
+<script>
+window.__MOCK__ = ${mockDataJs}
+window.__MOCK_CALLS = []
+const realFetch = window.fetch.bind(window)
+window.fetch = async (url, options) => {
+  const target = String(url)
+  if (target.includes('api/library/file')) {
+    const bytes = new Uint8Array(await (await realFetch('./sample.pdf')).arrayBuffer())
+    return {
+      ok: true,
+      headers: { get: name => ({ 'content-type': 'application/pdf', 'x-library-attachment-key': 'CCCCCCCC', 'x-library-parent-key': 'AAAAAAAA', 'x-library-title': 'sample.pdf' }[name] ?? null) },
+      arrayBuffer: async () => bytes.buffer,
+    }
+  }
+  if (target.includes('api/library')) {
+    const body = JSON.parse(options.body)
+    window.__MOCK_CALLS.push(body.endpoint)
+    const mock = window.__MOCK__
+    if (body.endpoint === 'annotation-create') {
+      // Echo the created annotation back so overlays carry the real selection
+      // geometry (the hit-split probe below tests the created row).
+      const row = { key: 'ANNEW' + mock.annotations.annotations.length, parentKey: 'CCCCCCCC', ...(body.payload?.annotation ?? {}) }
+      mock.annotations.annotations.push(row)
+      return { ok: true, json: async () => ({ ok: true, value: { key: row.key } }) }
+    }
+    const map = {
+      state: mock.state, collections: mock.collections, items: mock.items, item: mock.item,
+      annotations: mock.annotations, 'annotations-list': mock.annotations,
+      ping: { revision: 1 }, 'chat-open': { sessionId: 's1' }, 'chat-page': { sessionId: 's1', running: false, messages: [] },
+      'chat-send': { sessionId: 's1' }, 'chat-context': { saved: true },
+      upload: { parentKey: 'AAAAAAAA', attachmentKey: 'CCCCCCCC', needsMetadataHelp: false },
+    }
+    const value = map[body.endpoint] ?? {}
+    if (body.endpoint === 'annotations-list') { window.__MOCK_LIST_LEN = (value.annotations ?? []).length; (window.__MOCK_SEQ ??= []).push('list:' + window.__MOCK_LIST_LEN) } else (window.__MOCK_SEQ ??= []).push(body.endpoint)
+    // Fresh copies per call: the real host answers with JSON text, so the
+    // client never sees the same array/object identity twice.
+    return { ok: true, json: async () => ({ ok: true, value: JSON.parse(JSON.stringify(value)) }) }
+  }
+  return realFetch(url, options)
+}
+window.__pluginFactory = null
+window.__ModuleLoader__ = { load(value) { window.__pluginFactory = value.factory } }
+// jsx-runtime shim over the UMD React (dev-only harness).
+const jsx = (type, props, key) => {
+  const { children, ...rest } = props ?? {}
+  return React.createElement(type, { ...rest, key: key ?? undefined }, children)
+}
+window.__require = (specifier) => {
+  if (specifier === 'react') return React
+  if (specifier === 'react/jsx-runtime') return { jsx, jsxs: jsx, Fragment: React.Fragment }
+  if (specifier === 'react-dom') return ReactDOM
+  if (specifier === 'react-dom/client') return { createRoot: (el) => ({ render: (node) => ReactDOM.createRoot(el).render(node), unmount: () => {} }) }
+  if (specifier === '@deepseek-ai/dsh-client-ui-primitives') {
+    return { Button: React.forwardRef((props, ref) => React.createElement('button', { ref, type: 'button', ...props })) }
+  }
+  throw new Error('unexpected require ' + specifier)
+}
+</script>
+<script src="./client.js"></script>
+<script>
+const mounted = new Map()
+const listeners = new Set()
+let panelSnapshot = { activePanelId: null }
+const ctx = {
+  layout: {
+    panelInfo: { getSnapshot: () => panelSnapshot, subscribe: l => { listeners.add(l); return () => listeners.delete(l) } },
+    selectPanel(id) { mounted.set('active', id); panelSnapshot = { activePanelId: id }; for (const l of listeners) l() },
+    toggleSidebar() {},
+  },
+  effect(fn) { return fn() },
+  inject(_deps, cb) { cb({}); return () => {} },
+  slots: { inject(_n, cb) { cb(); return () => {} }, register(o, c) { mounted.set(o.name === 'main' ? 'main:library' : o.name, c); return () => {} } },
+}
+window.__pluginFactory(window.__require).apply(ctx)
+const Page = mounted.get('main:library')
+ReactDOM.createRoot(document.getElementById('app')).render(React.createElement(Page, {
+  layout: ctx.layout,
+  openNativeSession: () => {},
+  retainSession: () => ({ release() {} }),
+  SessionProvider: p => React.createElement('div', null, p.children),
+  renderSlot: (k, o) => React.createElement('div', { 'data-slot': k }, 'conversation'),
+}))
+</script></body></html>`
+fs.writeFileSync(path.join(DIR, 'index.html'), HTML)
+
+const server = http.createServer((request, response) => {
+  const url = request.url === '/' ? '/index.html' : request.url
+  try {
+    const data = fs.readFileSync(path.join(DIR, decodeURIComponent(url.split('?')[0])))
+    response.writeHead(200, { 'content-type': url.endsWith('.js') ? 'text/javascript' : 'text/html' })
+    response.end(data)
+  } catch {
+    response.writeHead(404)
+    response.end()
+  }
+})
+await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+const port = server.address().port
+
+const browser = await chromium.launch({ executablePath: EDGE, headless: true, args: ['--no-first-run', '--disable-gpu'] })
+const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } })
+const errors = []
+page.on('pageerror', error => errors.push(String(error?.stack ?? error).slice(0, 600)))
+page.on('console', message => {
+  if (message.type() === 'error') {
+    errors.push(`console.${message.type()}: ${message.text().slice(0, 400)}`)
+  }
+})
+page.on('response', (response) => {
+  if (response.status() >= 400 && !response.url().includes('favicon')) {
+    errors.push(`HTTP ${response.status()} ${response.url().slice(-120)}`)
+  }
+})
+
+/** Paint proof: the placeholder skeleton is gone and the canvas holds a
+ * bitmap; ink counts non-white sampled pixels (near-zero for blank pages). */
+const paintProbe = '(() => {\n'
+  + '  const page = document.querySelector(\'.lib-pdf-page[data-page="1"]\')\n'
+  + '  const canvas = page?.querySelector("canvas")\n'
+  + '  if (!canvas || !canvas.width) return { painted: false, canvasSize: null, ink: 0 }\n'
+  + '  const ctx = canvas.getContext("2d")\n'
+  + '  let ink = 0\n'
+  + '  const step = Math.max(1, Math.floor(Math.min(canvas.width, canvas.height) / 60))\n'
+  + '  for (let y = 0; y < canvas.height; y += step) {\n'
+  + '    for (let x = 0; x < canvas.width; x += step) {\n'
+  + '      const d = ctx.getImageData(x, y, 1, 1).data\n'
+  + '      if (d[0] < 240 || d[1] < 240 || d[2] < 240) ink += 1\n'
+  + '    }\n'
+  + '  }\n'
+  + '  return { painted: !page.querySelector(".lib-pdf-skel") && canvas.width > 0, canvasSize: canvas.width + "x" + canvas.height, ink }\n'
+  + '})()'
+
+try {
+  await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('.lib-itemrow', { timeout: 20_000 })
+  await page.click('.lib-itemrow')
+  await page.waitForSelector('button:has-text("打开 PDF")', { timeout: 10_000 })
+  await page.click('button:has-text("打开 PDF")')
+  try {
+    await page.waitForSelector('.lib-pdf-page[data-page="1"]', { timeout: 30_000, state: 'attached' })
+  } catch (failure) {
+    console.error('viewer did not mount; page errors:', errors.slice(0, 8).join('\n-----\n'))
+    console.error('viewer html:', await page.evaluate(() => document.querySelector('.lib-reader')?.innerHTML?.slice(0, 400) ?? 'NONE'))
+    console.error('toast:', await page.evaluate(() => document.querySelector('.lib-toast')?.textContent ?? null))
+    throw failure
+  }
+  // pdf.js parses on the main thread; the first visible page paints within a
+  // few hundred milliseconds for typical samples.
+  let paint = { painted: false }
+  for (let i = 0; i < 30 && !paint.painted; i += 1) {
+    await page.waitForTimeout(300)
+    paint = await page.evaluate(paintProbe)
+  }
+  console.log('paint:', JSON.stringify(paint))
+  if (!paint.painted) throw new Error('page 1 canvas never received real pixels')
+
+  const layout = await page.evaluate(`(() => {
+    const pick = (selector) => {
+      const el = document.querySelector(selector)
+      if (!el) return null
+      const r = el.getBoundingClientRect()
+      return { w: Math.round(r.width), h: Math.round(r.height) }
+    }
+    return {
+      viewer: pick('.lib-reader'),
+      page1: pick('.lib-pdf-page[data-page="1"]'),
+      numpages: document.querySelector('.lib-rdr-numpages')?.textContent ?? null,
+    }
+  })()`)
+  console.log('layout:', JSON.stringify(layout))
+  if (!layout.numpages || !layout.numpages.trim().startsWith('/')) throw new Error('page count missing from the toolbar')
+
+  // Zoom in: the page box widens and the canvas re-renders at a higher
+  // resolution (bitmap grows, not just CSS stretch).
+  const boxBefore = await page.evaluate('document.querySelector(".lib-pdf-page[data-page=\\"1\\"]").getBoundingClientRect().width')
+  const bitmapBefore = await page.evaluate('document.querySelector(".lib-pdf-page[data-page=\\"1\\"] canvas").width')
+  await page.click('button[title="放大"]')
+  let bitmapAfter = 0
+  for (let i = 0; i < 20; i += 1) {
+    await page.waitForTimeout(250)
+    bitmapAfter = await page.evaluate('document.querySelector(".lib-pdf-page[data-page=\\"1\\"] canvas")?.width ?? 0')
+    if (bitmapAfter > bitmapBefore * 1.03) break
+  }
+  const boxAfter = await page.evaluate('document.querySelector(".lib-pdf-page[data-page=\\"1\\"]").getBoundingClientRect().width')
+  console.log('zoom: box', Math.round(boxBefore), '→', Math.round(boxAfter), '| canvas bitmap', bitmapBefore, '→', bitmapAfter)
+  const zoomOk = boxAfter > boxBefore * 1.03 && bitmapAfter > bitmapBefore * 1.03
+
+  // Fit width returns the page box to the scroll column width.
+  await page.click('button[title="缩放到页宽"]')
+  await page.waitForTimeout(400)
+  const fitState = await page.evaluate('(() => {\n'
+    + '  const scroll = document.querySelector(".lib-pdf-scroll")\n'
+    + '  const box = document.querySelector(".lib-pdf-page[data-page=\\"1\\"]").getBoundingClientRect()\n'
+    + '  return { box: box.width, available: scroll.clientWidth - 18 }\n'
+  + '})()')
+  console.log('fit:', JSON.stringify(fitState))
+  const fitOk = Math.abs(fitState.box - fitState.available) < 6
+
+  // Zoomed OUT below fit width the page column centers horizontally (it used
+  // to hug the left edge), then 适应宽度 restores the fit zoom.
+  await page.click('button[title="缩小"]')
+  await page.waitForTimeout(500)
+  const centering = await page.evaluate('(() => {\n'
+    + '  const scroll = document.querySelector(".lib-pdf-scroll")\n'
+    + '  const sc = scroll.getBoundingClientRect()\n'
+    + '  const box = document.querySelector(".lib-pdf-page[data-page=\\"1\\"]").getBoundingClientRect()\n'
+    + '  const pad = 9\n'
+    + '  return { leftGap: Math.round((box.left - sc.left) - pad), rightGap: Math.round((sc.right - box.right) - pad) }\n'
+  + '})()')
+  console.log('centering (zoomed out):', JSON.stringify(centering))
+  const centerOk = Math.abs(centering.leftGap - centering.rightGap) <= 3 && centering.leftGap > 4
+  await page.click('button[title="缩放到页宽"]')
+  await page.waitForTimeout(400)
+
+  // The page-number input jumps (only meaningful for multi-page samples).
+  const numPages = Number((layout.numpages ?? '/ 1').replace('/', '').trim())
+  let jumpOk = numPages < 2
+  let jumpNote = 'single-page sample, jump skipped'
+  if (numPages >= 2) {
+    await page.click('.lib-rdr-page-input')
+    await page.fill('.lib-rdr-page-input', '2')
+    await page.press('.lib-rdr-page-input', 'Enter')
+    await page.waitForTimeout(900)
+    const afterJump = await page.evaluate('(() => ({\n'
+      + '  currentPageLabel: document.querySelector(".lib-rdr-page-input")?.value,\n'
+      + '  page2Visible: (() => { const el = document.querySelector(\'.lib-pdf-page[data-page="2"]\'); if (!el) return false; const r = el.getBoundingClientRect(); return r.top < window.innerHeight && r.bottom > 0 })(),\n'
+    + '}))()')
+    console.log('jump:', JSON.stringify(afterJump))
+    jumpOk = afterJump.currentPageLabel === '2' && afterJump.page2Visible
+    jumpNote = JSON.stringify(afterJump)
+  }
+
+  // Selection → popup → highlight: the text layer selects, the popup offers
+  // highlight/underline/note/copy, and creating one stores a Zotero annotation
+  // row (mocked) and renders the overlay from its PDF-space rects. The jump
+  // test left the view on page 2 — scroll back so page 1 is on screen. A
+  // text-less fixture (near-blank page) skips this section; the real-paper
+  // run always exercises it.
+  await page.evaluate('document.querySelector(".lib-pdf-scroll").scrollTop = 0')
+  await page.waitForTimeout(500)
+  const selectableSpans = await page.evaluate('[...document.querySelectorAll(".lib-pdf-page[data-page=\\"1\\"] .lib-pdf-text span")].filter(s => (s.textContent || "").trim().length > 4).length')
+  if (selectableSpans >= 2) {
+    const selected = await page.evaluate(`(() => {
+      const spans = [...document.querySelectorAll('.lib-pdf-page[data-page="1"] .lib-pdf-text span')]
+      const usable = spans.filter(span => (span.textContent ?? '').trim().length > 4).slice(0, 2)
+      const range = document.createRange()
+      range.setStart(usable[0].firstChild, 0)
+      range.setEnd(usable[1].firstChild, Math.min(8, usable[1].firstChild.textContent.length))
+      const selection = window.getSelection()
+      selection.removeAllRanges()
+      selection.addRange(range)
+      const release = usable[1].getBoundingClientRect()
+      const mouseup = new MouseEvent('mouseup', { bubbles: true, button: 0, clientX: release.left + release.width / 2, clientY: release.top + release.height / 2 })
+      document.querySelector('.lib-pdf-scroll').dispatchEvent(mouseup)
+      return true
+    })()`)
+    if (!selected) throw new Error('text layer spans were not selectable')
+    await page.waitForSelector('.lib-sel-popup', { timeout: 5000 })
+    // The popup must anchor near the mouse release point and stay inside the
+    // viewer (cross-column / upward selections never push it off-screen).
+    const popupBounds = await page.evaluate('(() => {\n'
+      + '  const popup = document.querySelector(".lib-sel-popup").getBoundingClientRect()\n'
+      + '  const root = document.querySelector(".lib-pdf-root").getBoundingClientRect()\n'
+      + '  return { inside: popup.left >= root.left && popup.right <= root.right && popup.top >= root.top && popup.bottom <= root.bottom }\n'
+    + '})()')
+    if (!popupBounds.inside) throw new Error(`selection popup left the viewer bounds (${JSON.stringify(popupBounds)})`)
+    await page.click('.lib-sel-popup button[title^="高亮"]')
+    await page.waitForTimeout(600)
+    const calls = await page.evaluate('window.__MOCK_CALLS')
+    const overlay = await page.evaluate('document.querySelectorAll(".lib-pdf-anno").length')
+    console.log('selection: popup → highlight →', JSON.stringify({ createCalled: calls.includes('annotation-create'), overlays: overlay }))
+    if (!calls.includes('annotation-create')) throw new Error('highlight selection did not create an annotation')
+    if (overlay < 1) throw new Error('annotation overlay never rendered')
+
+    // Interaction split: over the highlight's upper part the text layer
+    // (I-beam) must be hit-testable; the bottom strip catches the mouse.
+    // Probe the CREATED overlay — its rects come from the real selection, so
+    // a span sits inside at least one of its rects.
+    const hitSplit = await page.evaluate('(() => {\n'
+      + '  const spans = [...document.querySelectorAll(\'.lib-pdf-page[data-page="1"] .lib-pdf-text span\')]\n'
+      + '  for (const anno of document.querySelectorAll(\'[data-anno-key="ANNEW1"]\')) {\n'
+      + '    const r = anno.getBoundingClientRect()\n'
+      + '    const probe = spans.find(s => { const b = s.getBoundingClientRect(); const cx = b.left + b.width / 2; const cy = b.top + b.height / 2; return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom })\n'
+      + '    if (!probe) continue\n'
+      + '    const b = probe.getBoundingClientRect()\n'
+      + '    const strip = anno.previousElementSibling?.getBoundingClientRect()\n'
+      + '    if (!strip) continue\n'
+      + '    // Upper: near the span top — well above the strip, must reach the text\n'
+      + '    // layer (I-beam). Lower: the strip center — must catch the mouse.\n'
+      + '    const probeX = Math.min(b.left + b.width / 2, window.innerWidth - 30)\n'
+      + '    const upperY = Math.max(r.top + 2, b.top + Math.min(4, b.height * 0.25))\n'
+      + '    const upper = document.elementFromPoint(probeX, upperY)\n'
+      + '    const lower = document.elementFromPoint(Math.min(strip.left + strip.width / 2, window.innerWidth - 30), strip.top + strip.height / 2)\n'
+      + '    const verdict = upper === probe && String(lower?.className || "").includes("lib-pdf-anno-hit") ? "split" : "wrong:" + String(upper?.tagName) + "/" + String(lower?.className || "")\n'
+      + '    return { verdict }\n'
+      + '  }\n'
+      + '  return { verdict: "no-span" }\n'
+    + '})()')
+    console.log('overlay hit split:', JSON.stringify(hitSplit))
+    if (hitSplit.verdict.startsWith('wrong:')) throw new Error(`overlay hit zones do not match the visual split (${JSON.stringify(hitSplit)})`)
+    if (hitSplit.verdict === 'none' || hitSplit.verdict === 'no-span') throw new Error(`no probeable overlay (${JSON.stringify(hitSplit)})`)
+
+    // Full-text find: open the bar, query a frequent word taken from the
+    // document's own text layer (works for any sample), navigate with 下一处.
+    const findWord = await page.evaluate('(() => {\n'
+      + '  const counts = new Map()\n'
+      + '  for (const span of document.querySelectorAll(".lib-pdf-text span")) {\n'
+      + '    for (const word of (span.textContent || "").toLowerCase().match(/[a-z]{5,}/g) ?? []) counts.set(word, (counts.get(word) ?? 0) + 1)\n'
+      + '  }\n'
+      + '  let best = ""\n'
+      + '  let bestCount = 0\n'
+      + '  for (const [word, count] of counts) if (count > bestCount) { best = word; bestCount = count }\n'
+      + '  return bestCount > 3 ? best : ""\n'
+    + '})()')
+    if (findWord !== '') {
+      const activeMarkVisible = () => page.evaluate('(() => {\n'
+        + '  const el = document.querySelector(".lib-pdf-mark.active")\n'
+        + '  if (!el) return false\n'
+        + '  const r = el.getBoundingClientRect()\n'
+        + '  return r.top >= 0 && r.bottom <= window.innerHeight && r.height > 0\n'
+      + '})()')
+      await page.click('button[title="在文档中查找"]')
+      await page.fill('.lib-rdr-findbar input', findWord)
+      let findStatus = ''
+      for (let i = 0; i < 20; i += 1) {
+        await page.waitForTimeout(250)
+        findStatus = await page.textContent('.lib-rdr-find-status')
+        if (/\d+\s*\/\s*\d+/.test(findStatus)) break
+      }
+      await page.waitForTimeout(400)
+      console.log('find status:', findStatus, `(word: ${findWord})`)
+      if (!/\d+\s*\/\s*\d+/.test(findStatus)) throw new Error(`find found nothing (${findStatus})`)
+      if (!(await activeMarkVisible())) throw new Error('the first match was not scrolled into view')
+      await page.click('.lib-rdr-findbar button[title="下一处"]')
+      await page.waitForTimeout(500)
+      const findStatusAfter = await page.textContent('.lib-rdr-find-status')
+      if (findStatusAfter === findStatus) throw new Error('find navigation did not advance')
+      if (!(await activeMarkVisible())) throw new Error('the active match was not scrolled into view')
+      await page.click('.lib-rdr-findbar button[title="关闭查找"]')
+    }
+  } else {
+    console.log('selection/find: skipped (fixture has no selectable text)')
+  }
+
+  // Rotate the CURRENT page: portrait → landscape → back (box aspect swaps).
+  const boxShape = () => page.evaluate('(() => { const r = document.querySelector(".lib-pdf-page[data-page=\\"1\\"]").getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) } })()')
+  const portrait = await boxShape()
+  await page.click('button[title="顺时针旋转当前页"]')
+  await page.waitForTimeout(700)
+  const landscape = await boxShape()
+  await page.click('button[title="逆时针旋转当前页"]')
+  await page.waitForTimeout(700)
+  const restored = await boxShape()
+  console.log('rotate:', JSON.stringify({ portrait, landscape, restored }))
+  const rotateOk = landscape.w > landscape.h && portrait.h > portrait.w
+    && Math.abs(restored.h - portrait.h) <= 2 && Math.abs(restored.w - portrait.w) <= 2
+  if (!rotateOk) throw new Error('page rotation did not swap the page box aspect')
+
+  console.log('page errors:', errors.slice(0, 4).join('\n=====\n') || '(none)')
+  if (!zoomOk) { console.error('zoom FAILED'); process.exit(1) }
+  if (!fitOk) { console.error('fit width FAILED'); process.exit(1) }
+  if (!centerOk) { console.error('zoomed-out centering FAILED'); process.exit(1) }
+  if (!jumpOk) { console.error(`page jump FAILED (${jumpNote})`); process.exit(1) }
+  console.log('reader e2e: OK')
+} finally {
+  await browser.close()
+  server.close()
+}

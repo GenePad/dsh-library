@@ -1,0 +1,9 @@
+# dsh-library bundle patch.
+#
+# One insert row mounts the Host half; the browser half is attached by the
+# package.json `dsh.client` declaration and binds to this row because its
+# `name` is the bare package name.
+- insert:
+    - id: library
+      name: dsh-library
+      config: {}

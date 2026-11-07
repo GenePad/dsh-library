@@ -1,0 +1,8 @@
+node_modules/
+.workbuddy/
+reference/
+client.debug.js
+tmp-visual/
+*.log
+.DS_Store
+Thumbs.db

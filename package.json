@@ -1,0 +1,61 @@
+{
+  "name": "dsh-library",
+  "version": "0.1.1",
+  "type": "module",
+  "description": "A Zotero-compatible literature library for DeepSeek Harness: browse and edit a real zotero.sqlite, import PDFs with metadata lookup, annotations, WebDAV file sync, and an agent chat dock.",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "zotero",
+    "literature",
+    "reference-manager"
+  ],
+  "license": "MIT",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "src/",
+    "vendor/",
+    "README.md",
+    "LICENSE",
+    "AGENTS.md"
+  ],
+  "engines": {
+    "node": ">=24.9"
+  },
+  "scripts": {
+    "build": "node tools/build-client.mjs && node tools/build-vendor.mjs",
+    "check": "node --check index.js && node --check client.js && node scripts/host-smoke.mjs && node scripts/webdav-smoke.mjs && node scripts/client-smoke.mjs",
+    "bench": "node scripts/pdf-open-bench.mjs && node scripts/pdf-pages-bench.mjs",
+    "manifest": "node tools/build-manifest.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0",
+    "fflate": "^0.8.2",
+    "jsdom": "^29.1.1",
+    "pdfjs-dist": "^4.10.38",
+    "playwright-core": "^1.65.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "unpdf": "^1.4.0"
+  }
+}

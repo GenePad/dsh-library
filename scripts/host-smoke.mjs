@@ -1,0 +1,475 @@
+// Host-half smoke test: mounts the plugin against a temporary copy of a real
+// zotero.sqlite and drives the API channel, tools, import pipeline and chat.
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { safeRemoveTree } from '../src/host/util.js'
+
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-library-smoke-'))
+process.env.DSH_HOME = path.join(tempRoot, 'dsh-home')
+const dataDir = path.join(process.env.DSH_HOME, 'library', 'zotero-data')
+const storageDir = path.join(dataDir, 'storage')
+fs.mkdirSync(storageDir, { recursive: true })
+
+const realDb = path.join(process.env.USERPROFILE ?? os.homedir(), 'Zotero', 'zotero.sqlite')
+const hasRealLibrary = fs.existsSync(realDb)
+if (hasRealLibrary) fs.copyFileSync(realDb, path.join(dataDir, 'zotero.sqlite'))
+
+const { apply, name, version } = await import('../index.js')
+const { chatGuidance } = await import('../src/host/chat.js')
+assert.equal(name, 'library')
+assert.match(version, /^\d+\.\d+\.\d+$/)
+
+// --- mock cordis context ----------------------------------------------------
+const routes = []
+const toolDefs = new Map()
+const disposers = []
+const prompts = []
+const createdSessions = []
+let running = false
+const agent = {
+  get status() { return running ? 'running' : 'idle' },
+  session: { seq: 10 },
+  followup() {},
+  steer() {},
+  cancel() { running = false },
+}
+const mockCtx = {
+  logger: { info() {}, warn() {}, error() {} },
+  get() { return undefined },
+  effect(fn) {
+    const dispose = fn()
+    if (typeof dispose === 'function') disposers.push(dispose)
+    return dispose
+  },
+  inject(_deps, callback) {
+    const scoped = {
+      ...mockCtx,
+      tools: { register(definition) { toolDefs.set(definition.name, definition); return () => toolDefs.delete(definition.name) } },
+      effect(fn) { const dispose = fn(); if (typeof dispose === 'function') disposers.push(dispose); return dispose },
+    }
+    callback(scoped)
+    return { dispose() {} }
+  },
+  connection: { fetch: { register(route) { routes.push(route); return () => {} } } },
+  sessionController: {
+    async create({ workspaceId }) { createdSessions.push(workspaceId); return { sessionId: 'session-smoke' } },
+    async resolveAgent() { return { agent } },
+    async prompt(request) { prompts.push(request); running = true; return {} },
+    async page() {
+      return {
+        hasMore: false,
+        records: [
+          { event: { type: 'user/message', seq: 1, time: Date.now(), data: { source: { kind: 'user' }, content: [{ type: 'text', text: '总结这篇文献' }] } } },
+          { event: { type: 'assistant/message', seq: 2, time: Date.now(), data: { turn: 1, message: { content: [{ type: 'text', text: '好的，正在阅读。' }] } } } },
+          { event: { type: 'tool/call', seq: 3, time: Date.now(), data: { turn: 1, step: 1, callId: 'c1', name: 'library_read', arguments: '{"key":"AAAAAAAA"}' } } },
+          { event: { type: 'tool/result', seq: 4, time: Date.now(), data: { turn: 1, step: 1, message: { toolCallId: 'c1', isError: false, content: [{ type: 'text', text: '文本检索结果' }] } } } },
+        ],
+      }
+    },
+  },
+  sessionTitle: { async rename() {} },
+  workspaceRegistry: {
+    async resolveByPath() { return { id: 'ws-smoke' } },
+    async create() { return { id: 'ws-smoke' } },
+    get() { return undefined },
+    async archiveSession() {},
+  },
+}
+
+apply(mockCtx, { zoteroDataDir: dataDir })
+
+assert.equal(routes.length, 2, 'API + binary PDF routes registered')
+assert.equal(routes[0].path, '/api/library')
+assert.deepEqual(routes[0].methods, ['POST'])
+assert.equal(routes[1].path, '/api/library/file')
+assert.deepEqual(routes[1].methods, ['GET'])
+assert.deepEqual([...toolDefs.keys()].sort(), [
+  'library_add', 'library_annotations', 'library_cite', 'library_collections', 'library_import', 'library_item',
+  'library_open', 'library_read', 'library_search', 'library_status', 'library_sync', 'library_trash',
+  'library_update',
+])
+
+const call = async (endpoint, payload) => {
+  const request = new Request('http://localhost/api/library', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ endpoint, payload }),
+  })
+  const response = await routes[0].fetch(request)
+  assert.equal(response.status, 200)
+  return await response.json()
+}
+
+// Tool schemas must be wire-safe standard JSON Schema (no inline required).
+const SCHEMA_KEYWORDS = new Set(['type', 'properties', 'required', 'items', 'additionalProperties', 'enum', 'const', 'description', 'title', 'minimum', 'maximum'])
+const walkSchema = (node, where) => {
+  if (node === null || typeof node !== 'object') return
+  for (const [key, value] of Object.entries(node)) {
+    if (key === 'properties') {
+      for (const [prop, child] of Object.entries(value)) walkSchema(child, `${where}.${prop}`)
+      continue
+    }
+    assert.ok(SCHEMA_KEYWORDS.has(key), `unsupported schema keyword "${key}" at ${where}`)
+    if (key === 'required') assert.ok(Array.isArray(value), `required must be an array at ${where}`)
+    if (key === 'items') walkSchema(value, `${where}[]`)
+  }
+}
+for (const [toolName, definition] of toolDefs) {
+  assert.ok(definition.description.length > 20, `${toolName} needs a description`)
+  assert.ok(typeof definition.execute === 'function', `${toolName} needs execute`)
+  walkSchema(definition.parameters, toolName)
+  assert.equal(typeof definition.output.schema, 'object')
+  assert.equal(typeof definition.output.render, 'function')
+}
+
+const status = await call('status-test').catch(() => undefined) // unknown endpoint answers an envelope
+void status
+const unknown = await call('nope', {})
+assert.equal(unknown.ok, false)
+assert.equal(unknown.error.code, 'library/not-found')
+
+if (hasRealLibrary) {
+  // Regression: every tool output must be lossless JSON (no undefined /
+  // BigInt properties). The harness rejects the whole call otherwise with
+  // "returned invalid output: value is not lossless JSON" — which once broke
+  // every library_search call on items without a date field.
+  const scanLossless = (value, where) => {
+    assert.ok(value !== undefined, `undefined at ${where}`)
+    if (value === null || typeof value !== 'object') {
+      assert.ok(typeof value !== 'function' && typeof value !== 'symbol' && typeof value !== 'bigint', `non-JSON value at ${where}`)
+      return
+    }
+    if (Array.isArray(value)) {
+      value.forEach((entry, index) => scanLossless(entry, `${where}[${index}]`))
+      return
+    }
+    for (const [name, entry] of Object.entries(value)) scanLossless(entry, `${where}.${name}`)
+  }
+  const probed = await toolDefs.get('library_search').execute({ query: 'a', limit: 5 })
+  scanLossless(probed, 'library_search')
+  const statusTool = await toolDefs.get('library_status').execute({})
+  scanLossless(statusTool, 'library_status')
+
+  const state = await call('state', {})
+  assert.equal(state.ok, true)
+  assert.equal(state.value.available, true)
+  assert.ok(state.value.counts.items > 100, 'real library has items')
+  assert.ok(state.value.counts.collections > 0)
+  assert.ok(state.value.schemaVersion > 100)
+
+  // A running Zotero holds the rollback-journal lock: state must explain the
+  // lock with its own error code (the UI auto-recovers on poll) and the
+  // library must come back by itself once the lock is released.
+  {
+    const { DatabaseSync } = await import('node:sqlite')
+    const locker = new DatabaseSync(path.join(dataDir, 'zotero.sqlite'))
+    locker.exec('BEGIN EXCLUSIVE')
+    try {
+      const locked = await call('state', {})
+      assert.equal(locked.ok, true)
+      assert.equal(locked.value.available, false, 'locked library reports unavailable')
+      assert.equal(locked.value.error.code, 'library/db-locked', `locked code (got ${locked.value.error.code}: ${locked.value.error.message})`)
+      const ping = await call('ping', {})
+      assert.equal(ping.value.available, false, 'ping reports availability')
+    } finally {
+      locker.exec('ROLLBACK')
+      locker.close()
+    }
+    const recovered = await call('state', {})
+    assert.equal(recovered.value.available, true, 'library recovers once the lock is released')
+    const ping = await call('ping', {})
+    assert.equal(ping.value.available, true, 'ping reports recovery')
+  }
+
+  const tree = await call('collections', {})
+  assert.ok(tree.value.collections.length > 0)
+
+  const list = await call('items', { limit: 5 })
+  assert.equal(list.value.items.length, 5)
+  const first = list.value.items[0]
+
+  const searched = await call('items', { query: 'AAV', limit: 20 })
+  assert.equal(searched.ok, true, JSON.stringify(searched))
+  assert.ok(Array.isArray(searched.value.items))
+  const tagName = tree.value.tags?.[0]?.name
+  if (tagName) {
+    const byTag = await call('items', { tag: tagName, limit: 10 })
+    assert.ok(byTag.value.items.every(item => item.key))
+  }
+  const unfiled = await call('items', { unfiled: true, limit: 10 })
+  assert.equal(unfiled.ok, true, JSON.stringify(unfiled))
+  const detail = await call('item', { key: first.key })
+  assert.equal(detail.value.key, first.key)
+
+  // Create → update → tags → trash → restore → delete.
+  const created = await call('create', {
+    itemType: 'journalArticle',
+    fields: { title: 'dsh-library smoke item', date: '2026', DOI: '10.0000/smoke' },
+    creators: [{ firstName: 'San', lastName: 'Zhang', creatorType: 'author' }],
+    tags: ['smoke'],
+  })
+  assert.equal(created.ok, true, JSON.stringify(created))
+  const key = created.value.key
+  const createdDetail = await call('item', { key })
+  assert.equal(createdDetail.value.title, 'dsh-library smoke item')
+  assert.equal(createdDetail.value.creators[0].lastName, 'Zhang')
+  assert.deepEqual(createdDetail.value.tags.map(tag => tag.name), ['smoke'])
+
+  const updated = await call('update', { key, patch: { fields: { abstractNote: 'abstract text' } } })
+  assert.equal(updated.ok, true, JSON.stringify(updated))
+  const updatedDetail = await call('item', { key })
+  assert.ok(updatedDetail.value.fields.some(field => field.field === 'abstractNote' && field.value === 'abstract text'))
+
+  const trashed = await call('trash', { keys: [key] })
+  assert.equal(trashed.value.changed, 1)
+  const trashList = await call('items', { trash: true, limit: 500 })
+  assert.ok(trashList.value.items.some(item => item.key === key))
+  const restored = await call('trash', { keys: [key], restore: true })
+  assert.equal(restored.value.changed, 1)
+  const deleted = await call('delete', { keys: [key] })
+  assert.equal(deleted.ok, false, 'live items cannot be deleted forever')
+  await call('trash', { keys: [key] })
+  const deletedForever = await call('delete', { keys: [key] })
+  assert.equal(deletedForever.value.deleted, 1)
+
+  const collection = await call('collection-create', { name: 'Smoke 分类' })
+  assert.equal(collection.ok, true, JSON.stringify(collection))
+  const renamed = await call('collection-rename', { id: collection.value.collectionID, name: 'Smoke 分类 2' })
+  assert.equal(renamed.ok, true)
+  const treeAfter = await call('collections', {})
+  const flat = JSON.stringify(treeAfter.value)
+  assert.ok(flat.includes('Smoke 分类 2'))
+  await call('collection-trash', { id: collection.value.collectionID })
+
+  // Import a real PDF from the user's storage (read-only source).
+  const sourceStorage = path.join(path.dirname(realDb), 'storage')
+  let samplePdf
+  try {
+    const folder = fs.readdirSync(sourceStorage).find(entry => fs.readdirSync(path.join(sourceStorage, entry)).some(name => name.toLowerCase().endsWith('.pdf')))
+    if (folder) samplePdf = path.join(sourceStorage, folder, fs.readdirSync(path.join(sourceStorage, folder)).find(name => name.toLowerCase().endsWith('.pdf')))
+  } catch {
+    samplePdf = undefined
+  }
+  if (samplePdf) {
+    const imported = await call('import', { path: samplePdf, lookup: false })
+    assert.equal(imported.ok, true, JSON.stringify(imported))
+    assert.ok(imported.value.attachmentKey)
+    assert.ok(imported.value.textChars > 100, 'PDF text extracted')
+    // Without metadata the import stays a standalone attachment, as in Zotero;
+    // with metadata the caller gets a parent item key.
+    const readKey = imported.value.parentKey ?? imported.value.attachmentKey
+    const attachmentDetail = await call('item', { key: readKey })
+    const stored = attachmentDetail.value.attachment
+      ? attachmentDetail.value.attachment.target.path
+      : attachmentDetail.value.attachments[0].target.path
+    assert.ok(fs.existsSync(stored), 'attachment copied into the temporary storage')
+    assert.ok(fs.existsSync(path.join(path.dirname(stored), '.zotero-ft-cache')), 'fulltext cache written')
+
+    const readTool = toolDefs.get('library_read')
+    const read = await readTool.execute({ key: readKey, maxChars: 2000 })
+    assert.ok(read.text.length > 100)
+    assert.equal(read.totalChars, imported.value.textChars)
+
+    const searchTool = toolDefs.get('library_search')
+    const found = await searchTool.execute({ query: path.basename(samplePdf).slice(0, 12) })
+    assert.ok(Array.isArray(found.items))
+
+    const annotationsTool = toolDefs.get('library_annotations')
+    const annotations = await annotationsTool.execute({ key: readKey })
+    assert.ok(Array.isArray(annotations.annotations))
+
+    // Explicit metadata creates a metadata-complete parent item in one import.
+    const withMeta = await call('import', {
+      path: samplePdf,
+      lookup: false,
+      metadata: {
+        itemType: 'journalArticle',
+        fields: { title: 'dsh-library imported parent', date: '2025', DOI: '10.0000/import' },
+        creators: [{ firstName: 'Meta', lastName: 'Data', creatorType: 'author' }],
+        tags: ['imported'],
+      },
+    })
+    assert.equal(withMeta.ok, true, JSON.stringify(withMeta))
+    assert.ok(withMeta.value.parentKey, 'parent item created from metadata')
+    const parentDetail = await call('item', { key: withMeta.value.parentKey })
+    assert.equal(parentDetail.value.title, 'dsh-library imported parent')
+    assert.equal(parentDetail.value.attachments.length, 1)
+
+    // Regression for double-click open: a parent item's PDF child must resolve
+    // to a real path (delete the file so the open fails gracefully instead of
+    // spawning a reader during the test).
+    const childAttachment = parentDetail.value.attachments[0]
+    const childDetail = await call('item', { key: childAttachment.key })
+    const childPath = childDetail.value.attachment.target.path
+
+    // Binary PDF route: streams the stored fixture bytes with PDF headers
+    // (before the unlink below).
+    const fileRoute = routes[1]
+    const fileRequest = new Request(`http://localhost/api/library/file?key=${childAttachment.key}`, { method: 'GET' })
+    const fileResponse = await fileRoute.fetch(fileRequest)
+    assert.equal(fileResponse.status, 200, 'binary route streams the stored PDF')
+    assert.equal(fileResponse.headers.get('content-type'), 'application/pdf')
+    assert.equal(fileResponse.headers.get('x-library-attachment-key'), childAttachment.key)
+    const fileBytes = Buffer.from(await fileResponse.arrayBuffer())
+    assert.ok(fileBytes.equals(fs.readFileSync(childPath)), 'binary route bytes match the stored file')
+
+    fs.unlinkSync(childPath)
+    const openMissing = await call('open', { key: withMeta.value.parentKey })
+    assert.equal(openMissing.ok, false, 'opening a missing file reports an error')
+    assert.match(openMissing.error.message, /missing on disk/, `resolved path reported: ${openMissing.error.message}`)
+    assert.ok(openMissing.error.message.includes('.pdf'), 'the PDF child path was resolved')
+
+    // needsMetadataHelp flags a lookup that produced nothing usable.
+    assert.equal(imported.value.needsMetadataHelp, true, 'lookup:false import asks for agent help')
+    assert.equal(withMeta.value.needsMetadataHelp, false, 'explicit metadata does not ask for help')
+
+    // library_read search locates text instead of reading sequentially.
+    const readSearch = await toolDefs.get('library_read').execute({ key: readKey, search: 'the' })
+    assert.ok(Array.isArray(readSearch.matches) && readSearch.matches.length > 0, 'search matches returned')
+    assert.ok(Number.isInteger(readSearch.matches[0].offset))
+
+    // Citation export endpoints (also the future Office add-in interface).
+    const citeJson = await call('cite-json', { keys: [withMeta.value.parentKey] })
+    assert.equal(citeJson.ok, true, JSON.stringify(citeJson))
+    assert.equal(citeJson.value.items.length, 1)
+    assert.equal(citeJson.value.items[0].type, 'article-journal')
+
+
+    // Built-in reader annotation round trip: create → list → update → delete.
+    // The child PDF file itself was unlinked above; annotations are DB rows
+    // and work regardless.
+    const createdAnnotation = await call('annotation-create', {
+      attachmentKey: childAttachment.key,
+      annotation: {
+        type: 1, color: '#2ea8e5', text: 'selected sentence', comment: '',
+        position: { pageIndex: 0, rects: [[72, 700, 300, 712]], pageHeight: 792 }, pageLabel: '1',
+      },
+    })
+    assert.equal(createdAnnotation.ok, true, JSON.stringify(createdAnnotation))
+    const readerAnnotations = await call('annotations-list', { key: childAttachment.key })
+    assert.equal(readerAnnotations.ok, true, JSON.stringify(readerAnnotations))
+    assert.ok(readerAnnotations.value.annotations.some(entry => entry.key === createdAnnotation.value.key && entry.position?.pageIndex === 0), 'created annotation listed with parsed position')
+    const updatedAnnotation = await call('annotation-update', { key: createdAnnotation.value.key, patch: { color: '#ff6666', comment: 'looks wrong' } })
+    assert.equal(updatedAnnotation.ok, true, JSON.stringify(updatedAnnotation))
+    const afterUpdate = await call('annotations-list', { key: childAttachment.key })
+    const updatedEntry = afterUpdate.value.annotations.find(entry => entry.key === createdAnnotation.value.key)
+    assert.equal(updatedEntry.color, '#ff6666', 'annotation color updated')
+    assert.equal(updatedEntry.comment, 'looks wrong', 'annotation comment updated')
+    const removedAnnotation = await call('annotation-delete', { key: createdAnnotation.value.key })
+    assert.equal(removedAnnotation.ok, true, JSON.stringify(removedAnnotation))
+    const afterDelete = await call('annotations-list', { key: childAttachment.key })
+    assert.ok(!afterDelete.value.annotations.some(entry => entry.key === createdAnnotation.value.key), 'deleted annotation removed')
+
+    // chat-context lets the viewer refresh the guidance without a chat-send.
+    const contextSaved = await call('chat-context', { context: { mode: 'reader', itemKey: readKey, itemTitle: 'A test paper' } })
+    assert.equal(contextSaved.ok, true, JSON.stringify(contextSaved))
+
+    assert.equal(citeJson.value.items[0].title, 'dsh-library imported parent')
+    assert.equal(citeJson.value.items[0].DOI, '10.0000/import')
+    assert.deepEqual(citeJson.value.items[0].author, [{ family: 'Data', given: 'Meta' }])
+    const citeBib = await call('cite-bibtex', { keys: [withMeta.value.parentKey] })
+    assert.equal(citeBib.ok, true, JSON.stringify(citeBib))
+    assert.match(citeBib.value.text, /@article\{data2025,/)
+    assert.ok(citeBib.value.text.includes('10.0000/import'))
+    const citeTool = toolDefs.get('library_cite')
+    const toolBib = await citeTool.execute({ query: 'dsh-library imported parent', format: 'bibtex' })
+    assert.ok(toolBib.text.includes('dsh-library imported parent') || toolBib.entries >= 0)
+  }
+}
+
+// Chat: session creation, prompt delivery, transcript normalization.
+const opened = await call('chat-open', {})
+assert.equal(opened.ok, true, JSON.stringify(opened))
+assert.equal(opened.value.sessionId, 'session-smoke')
+assert.ok(createdSessions.length >= 1)
+const page = await call('chat-page', { maxMessages: 50 })
+assert.equal(page.ok, true)
+const roles = page.value.messages.map(message => message.role)
+assert.deepEqual(roles, ['user', 'assistant', 'tool'])
+assert.equal(page.value.messages[2].status, 'done')
+const sent = await call('chat-send', { text: '帮我总结这篇文献' })
+assert.equal(sent.ok, true, JSON.stringify(sent))
+assert.equal(prompts.length, 1)
+assert.equal(prompts[0].content[0].text, '帮我总结这篇文献')
+assert.equal(prompts[0].mode, 'queue')
+// Dock sends carry NO preamble in the user message — the guidance lives in the
+// session's system prompt via chatGuidance(); the dock user must not see it.
+const sentWithItem = await call('chat-send', {
+  text: '这篇讲了什么',
+  context: { mode: 'item', itemKey: 'AAAAAAAA', itemTitle: 'A test paper' },
+})
+assert.equal(sentWithItem.ok, true, JSON.stringify(sentWithItem))
+assert.equal(prompts.length, 2)
+assert.equal(prompts[1].content[0].text, '这篇讲了什么', 'message stays clean, no preamble')
+const sentWithList = await call('chat-send', { text: '找综述', context: { mode: 'list' } })
+assert.equal(sentWithList.ok, true)
+assert.equal(prompts[2].content[0].text, '找综述', 'list send stays clean')
+// The system-prompt guidance text (chatGuidance) covers every mode.
+const guidanceItem = chatGuidance({ mode: 'item', itemKey: 'AAAAAAAA', itemTitle: 'A test paper' })
+assert.ok(guidanceItem.includes('《A test paper》'), 'item guidance names the paper')
+assert.ok(guidanceItem.includes('不要一上来就阅读全文'), 'abstract-first guidance present')
+assert.ok(!guidanceItem.includes('这篇讲了什么'), 'guidance never contains the user message')
+// Regression: an item merely selected in the list must NOT claim the question
+// is about that paper — the user may be asking to find one.
+const guidanceSelection = chatGuidance({ mode: 'list', itemKey: 'AAAAAAAA', itemTitle: 'A test paper' })
+assert.ok(guidanceSelection.includes('文库列表界面'), 'selection keeps list mode')
+assert.ok(guidanceSelection.includes('不要默认问题与选中的文献相关'), 'selected item treated as weak hint')
+assert.ok(guidanceSelection.includes('关键词变体'), 'retry-variant search guidance present')
+const guidanceReader = chatGuidance({ mode: 'reader', itemKey: 'BBBBBBBB', itemTitle: 'A test paper' })
+assert.ok(guidanceReader.includes('内置阅读器'), 'reader guidance names the reader')
+assert.ok(guidanceReader.includes('library_search'), 'reader mode still allows finding other papers')
+assert.equal(chatGuidance(undefined).includes('文库列表界面'), true, 'missing context falls back to neutral list guidance')
+const stopped = await call('chat-stop', {})
+assert.equal(stopped.ok, true)
+
+// Settings, sync status, updates.
+const settings = await call('settings-set', {
+  patch: { webdav: { url: 'https://dav.example.com/me', username: 'smoke', password: 'secret' } },
+})
+assert.equal(settings.ok, true)
+assert.equal(settings.value.webdav.hasPassword, true)
+assert.equal(settings.value.webdav.password, undefined)
+const syncStatus = await call('sync-status', {})
+assert.equal(syncStatus.ok, true)
+const updateStatus = await call('update-status', {})
+assert.equal(updateStatus.ok, true)
+assert.equal(updateStatus.value.feed, false)
+
+// Standalone library: switching away from Zotero creates a fresh schema-130
+// database under $DSH_HOME/library/data that the same engine can write.
+const standaloneState = await call('setup', { mode: 'standalone' })
+assert.equal(standaloneState.ok, true, JSON.stringify(standaloneState))
+assert.equal(standaloneState.value.available, true)
+assert.equal(standaloneState.value.source, 'standalone')
+assert.equal(standaloneState.value.schemaVersion, 130)
+assert.equal(standaloneState.value.counts.items, 0)
+const standaloneItem = await call('create', {
+  itemType: 'journalArticle',
+  fields: { title: 'standalone smoke', date: '2026-03', DOI: '10.0000/standalone', publicationTitle: 'Standalone Journal' },
+  creators: [{ firstName: 'Ai', lastName: 'Bot', creatorType: 'author' }],
+  tags: ['solo'],
+})
+assert.equal(standaloneItem.ok, true, JSON.stringify(standaloneItem))
+const standaloneList = await call('items', { query: 'standalone' })
+assert.equal(standaloneList.value.items.length, 1)
+assert.equal(standaloneList.value.items[0].publicationTitle, 'Standalone Journal')
+assert.deepEqual(standaloneList.value.items[0].tags, ['solo'])
+const standaloneCite = await call('cite-bibtex', { keys: [standaloneItem.value.key] })
+assert.match(standaloneCite.value.text, /@article\{bot2026,/)
+const standaloneJson = await call('cite-json', { keys: [standaloneItem.value.key] })
+assert.equal(standaloneJson.value.items[0]['container-title'], 'Standalone Journal')
+// Switching back to Zotero keeps working (explicit config override).
+const backToZotero = await call('setup', { mode: 'zotero' })
+assert.equal(backToZotero.ok, true, JSON.stringify(backToZotero))
+if (hasRealLibrary) {
+  assert.equal(backToZotero.value.available, true)
+  assert.equal(backToZotero.value.source, 'override')
+}
+
+// Every effect must expose a disposer; disposing must not throw.
+for (const dispose of disposers.reverse()) dispose()
+
+safeRemoveTree(tempRoot)
+console.log('host-smoke: OK')
