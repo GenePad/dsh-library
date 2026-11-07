@@ -1,6 +1,9 @@
 import * as React from 'react'
+import { ITEM_TYPE_LABELS, FIELD_LABELS, CREATOR_TYPE_LABELS, PANE_LABELS } from './labels.js'
 
 // Small helpers shared by the library UI.
+
+export { ITEM_TYPE_LABELS, FIELD_LABELS, CREATOR_TYPE_LABELS, PANE_LABELS }
 
 export function classNames(...values) {
   return values.filter(Boolean).join(' ')
@@ -21,100 +24,6 @@ export function formatDate(value) {
   return String(value)
 }
 
-export const ITEM_TYPE_LABELS = {
-  annotation: '批注',
-  artwork: '艺术品',
-  attachment: '附件',
-  audioRecording: '录音',
-  bill: '法案',
-  blogPost: '博客文章',
-  book: '图书',
-  bookSection: '图书章节',
-  case: '案例',
-  computerProgram: '软件',
-  conferencePaper: '会议论文',
-  dataset: '数据集',
-  dictionaryEntry: '词典条目',
-  document: '文档',
-  email: '邮件',
-  encyclopediaArticle: '百科条目',
-  film: '电影',
-  forumPost: '论坛帖子',
-  hearing: '听证会',
-  instantMessage: '即时消息',
-  interview: '访谈',
-  journalArticle: '期刊论文',
-  letter: '信件',
-  magazineArticle: '杂志文章',
-  manuscript: '手稿',
-  map: '地图',
-  newspaperArticle: '报纸文章',
-  note: '笔记',
-  patent: '专利',
-  podcast: '播客',
-  preprint: '预印本',
-  presentation: '演示',
-  radioBroadcast: '广播',
-  report: '报告',
-  standard: '标准',
-  statute: '法规',
-  thesis: '学位论文',
-  tvBroadcast: '电视节目',
-  videoRecording: '视频',
-  webpage: '网页',
-}
-
-export const FIELD_LABELS = {
-  title: '标题',
-  abstractNote: '摘要',
-  date: '日期',
-  publicationTitle: '期刊/出版物',
-  journalAbbreviation: '期刊缩写',
-  volume: '卷',
-  issue: '期',
-  pages: '页码',
-  DOI: 'DOI',
-  URL: '网址',
-  url: '网址',
-  ISBN: 'ISBN',
-  ISSN: 'ISSN',
-  publisher: '出版社',
-  place: '出版地',
-  edition: '版次',
-  language: '语言',
-  shortTitle: '短标题',
-  extra: '备注',
-  libraryCatalog: '来源目录',
-  accessDate: '访问日期',
-  rights: '版权',
-  numPages: '页数',
-  conferenceName: '会议名称',
-  university: '大学',
-  thesisType: '学位类型',
-  reportType: '报告类型',
-  repository: '仓库',
-  archiveID: '存档编号',
-  series: '系列',
-  seriesTitle: '系列标题',
-  editionNumber: '版次',
-  subject: '主题',
-  type: '类型',
-  number: '编号',
-  versionNumber: '版本',
-  programTitle: '节目',
-  network: '网络',
-  studio: '工作室',
-  label: '标签',
-  distributor: '发行',
-  genre: '体裁',
-  medium: '媒介',
-  websiteTitle: '网站',
-  blogTitle: '博客',
-  forumTitle: '论坛',
-  postType: '帖子类型',
-  website: '网站',
-}
-
 export const ANNOTATION_TYPE_LABELS = {
   1: '高亮',
   2: '笔记',
@@ -130,6 +39,23 @@ export function itemTypeLabel(name) {
 
 export function fieldLabel(name) {
   return FIELD_LABELS[name] ?? name
+}
+
+export function creatorTypeLabel(name) {
+  return CREATOR_TYPE_LABELS[name] ?? name
+}
+
+/** Parse one author line: "Last, First" or "First Last" (the create forms). */
+export function parseCreatorLine(line) {
+  const text = line.trim()
+  if (text === '') return undefined
+  if (text.includes(',')) {
+    const [lastName, ...rest] = text.split(',')
+    return { lastName: lastName.trim(), firstName: rest.join(',').trim(), creatorType: 'author' }
+  }
+  const parts = text.split(/\s+/)
+  if (parts.length === 1) return { fieldMode: 1, lastName: text, creatorType: 'author' }
+  return { firstName: parts.slice(0, -1).join(' '), lastName: parts.at(-1), creatorType: 'author' }
 }
 
 /**

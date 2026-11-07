@@ -13,6 +13,7 @@ export const SETTINGS_SAVED_EVENT = 'dsh-library:settings-saved'
 const TABS = [
   { value: 'source', label: '数据来源', id: 'lib-set-tab-source', panelId: 'lib-set-panel-source' },
   { value: 'pdf', label: 'PDF 与导出', id: 'lib-set-tab-pdf', panelId: 'lib-set-panel-pdf' },
+  { value: 'translate', label: 'AI 翻译', id: 'lib-set-tab-translate', panelId: 'lib-set-panel-translate' },
   { value: 'webdav', label: 'WebDAV 同步', id: 'lib-set-tab-webdav', panelId: 'lib-set-panel-webdav' },
   { value: 'misc', label: '更新', id: 'lib-set-tab-misc', panelId: 'lib-set-panel-misc' },
 ]
@@ -27,6 +28,10 @@ function restoreForm(settings) {
     updateFeed: settings?.updateFeed ?? '',
     // Older settings may still hold the removed 'dsh' value; it means builtin.
     pdfOpen: settings?.pdfOpen === 'native' ? 'native' : 'builtin',
+    translateThinking: settings?.translate?.thinking === true,
+    translateAuto: settings?.translate?.auto === true,
+    translateModelSource: settings?.translate?.modelSource === 'fixed' ? 'fixed' : 'follow',
+    translateModel: typeof settings?.translate?.model === 'string' ? settings.translate.model : '',
   }
 }
 
@@ -37,6 +42,9 @@ export function LibrarySettingsSection() {
   const [form, setForm] = React.useState(restoreForm(undefined))
   const [busy, setBusy] = React.useState('')
   const [message, setMessage] = React.useState('')
+  // dsh 已配置的模型（供「指定模型」下拉选择），随设置页一起加载。
+  const [models, setModels] = React.useState([])
+  const [currentModel, setCurrentModel] = React.useState(null)
 
   const load = React.useCallback(async () => {
     try {
@@ -45,6 +53,13 @@ export function LibrarySettingsSection() {
       setForm(restoreForm(state.settings))
     } catch (error) {
       setMessage(error?.message ?? String(error))
+    }
+    try {
+      const listed = await api.call('translate-models', {})
+      setModels(Array.isArray(listed?.models) ? listed.models : [])
+      setCurrentModel(listed?.current ?? null)
+    } catch {
+      setModels([]) // 旧宿主没有该端点时隐藏指定模型下拉即可
     }
   }, [])
 
@@ -68,6 +83,12 @@ export function LibrarySettingsSection() {
           autoSync: form.autoSync,
           updateFeed: form.updateFeed,
           pdfOpen: form.pdfOpen,
+          translate: {
+            thinking: form.translateThinking,
+            auto: form.translateAuto,
+            modelSource: form.translateModelSource,
+            model: form.translateModel,
+          },
         },
       })
       window.dispatchEvent(new CustomEvent(SETTINGS_SAVED_EVENT, { detail: saved }))
@@ -225,6 +246,66 @@ export function LibrarySettingsSection() {
                 <Button variant="outline" size="sm" disabled={busy !== ''} onClick={() => exportLibrary('bibtex')}>{busy === 'export-bibtex' ? '导出中…' : '导出 BibTeX'}</Button>
               </div>
               <div className="lib-settings-hint">CSL JSON 可直接被 Zotero「导入…」读取。</div>
+            </div>
+          </div>
+        ) : null}
+
+        {tab === 'translate' ? (
+          <div id="lib-set-panel-translate" role="tabpanel" aria-labelledby="lib-set-tab-translate">
+            <div className="lib-settings-row">
+              <div className="lib-settings-label">阅读器「译」按钮</div>
+              <div className="lib-settings-hint">
+                在内建 PDF 查看器里选中文字后，浮窗会对选中内容做一次临时翻译：
+                流式输出到浮窗内颜色行下方，可直接「添加到备注」成为批注。翻译不进入文献助手对话。
+              </div>
+            </div>
+            <div className="lib-settings-row">
+              <div className="lib-settings-label">划词后自动翻译</div>
+              <Switch
+                checked={form.translateAuto}
+                label={form.translateAuto ? '开启（选中文本即开始翻译）' : '关闭（点浮窗里的「译」才开始）'}
+                onChange={checked => setForm(previous => ({ ...previous, translateAuto: checked }))}
+              />
+            </div>
+            <div className="lib-settings-row">
+              <div className="lib-settings-label">翻译时开启思考</div>
+              <Switch
+                checked={form.translateThinking}
+                label={form.translateThinking ? '开启（思考内容折叠显示）' : '关闭（更快出结果）'}
+                onChange={checked => setForm(previous => ({ ...previous, translateThinking: checked }))}
+              />
+            </div>
+            <div className="lib-settings-row">
+              <div className="lib-settings-label">翻译使用的模型</div>
+              <SegmentedControl
+                id="lib-set-translate-model"
+                label="翻译使用的模型"
+                options={[
+                  { value: 'follow', label: '跟随 dsh 当前模型' },
+                  { value: 'fixed', label: '指定模型' },
+                ]}
+                value={form.translateModelSource}
+                onChange={value => setForm(previous => ({ ...previous, translateModelSource: value }))}
+              />
+              {form.translateModelSource === 'follow' && currentModel ? (
+                <div className="lib-settings-hint">
+                  当前 dsh 模型：
+                  {models.find(model => model.provider === currentModel.provider && model.model === currentModel.model)?.name
+                    ?? `${currentModel.provider}/${currentModel.model}`}
+                </div>
+              ) : null}
+              {form.translateModelSource === 'fixed' ? (
+                <select
+                  className="lib-settings-select"
+                  value={form.translateModel}
+                  onChange={event => setForm(previous => ({ ...previous, translateModel: event.target.value }))}
+                >
+                  <option value="">{models.length === 0 ? '（暂未读到可用模型）' : '选择模型…'}</option>
+                  {models.map(model => (
+                    <option key={model.id} value={model.id}>{model.name ?? model.id}</option>
+                  ))}
+                </select>
+              ) : null}
             </div>
           </div>
         ) : null}

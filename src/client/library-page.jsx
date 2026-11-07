@@ -5,14 +5,18 @@ import { ItemsPane } from './items-pane.jsx'
 import { DetailsPane } from './details-pane.jsx'
 import { ChatDock } from './chat-dock.jsx'
 import { SETTINGS_SAVED_EVENT } from './settings-section.jsx'
-import { CreateItemDialog, CollectionDialog } from './create-dialog.jsx'
+import { CollectionDialog } from './create-dialog.jsx'
 import { PdfViewer } from './pdf-viewer.jsx'
-import { GearIcon, LibraryIcon, PlusIcon, PdfIcon, SearchIcon, SyncIcon } from './icons.jsx'
+import {
+  ChevronLeftIcon, ChevronRightIcon, GearIcon, LibraryIcon, PlusIcon, PdfIcon, SearchIcon, SyncIcon, WandIcon,
+} from './icons.jsx'
 import { Button } from './platform.jsx'
-import { fileBase64, filePathOf, useDarkMode, useDebounced, probeSidebarOpen } from './util.js'
+import { fileBase64, filePathOf, itemTypeLabel, useDarkMode, useDebounced, probeSidebarOpen } from './util.js'
 
 const VIEW_STORAGE = 'dsh-library:view'
 const SORT_STORAGE = 'dsh-library:sort'
+// Right pane (文献信息) visibility, remembered across sessions like view/sort.
+const DETAILS_STORAGE = 'dsh-library:details-open'
 
 function flattenCollections(nodes, depth = 0, out = []) {
   for (const node of nodes ?? []) {
@@ -47,12 +51,45 @@ function restoreSort() {
   return { sort: 'dateAdded', desc: true }
 }
 
+function restoreDetailsOpen() {
+  try {
+    return localStorage.getItem(DETAILS_STORAGE) !== '0'
+  } catch {
+    return true
+  }
+}
+
 function viewTitle(view) {
   if (view.kind === 'collection') return view.name
   if (view.kind === 'tag') return `标签：${view.name}`
   if (view.kind === 'unfiled') return '未分类'
   if (view.kind === 'trash') return '回收站'
   return '我的文库'
+}
+
+/**
+ * Toast = 通知 + 可复制错误：正文允许选中（报错原文常要贴给别人看），右侧
+ * 一键复制全文。
+ */
+function Toast({ message }) {
+  const [copied, setCopied] = React.useState(false)
+  React.useEffect(() => { setCopied(false) }, [message])
+  return (
+    <div className="lib-toast">
+      <span className="lib-toast-text">{message}</span>
+      <button
+        type="button"
+        className="lib-toast-copy"
+        onClick={() => {
+          try { navigator.clipboard?.writeText(String(message ?? '')) } catch { /* clipboard denied */ }
+          setCopied(true)
+          setTimeout(() => setCopied(false), 2000)
+        }}
+      >
+        {copied ? '已复制' : '复制'}
+      </button>
+    </div>
+  )
 }
 
 /** The whole library page: toolbar, three panes and the floating assistant. */
@@ -77,10 +114,29 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
   const [booting, setBooting] = React.useState(true)
   const [toast, setToast] = React.useState('')
   const [importing, setImporting] = React.useState([])
-  const [createOpen, setCreateOpen] = React.useState(false)
   const [collectionDialog, setCollectionDialog] = React.useState({ open: false, mode: 'create', target: undefined })
   const [syncing, setSyncing] = React.useState(false)
   const [settingUp, setSettingUp] = React.useState('')
+  const [detailsOpen, setDetailsOpen] = React.useState(restoreDetailsOpen)
+  // Bundled item-type schema (per type: field order + creator types), fetched
+  // once; drives the item pane's type menu, field list and creator rows.
+  const [schemaTypes, setSchemaTypes] = React.useState(undefined)
+  // Toolbar 新建条目 menu + Add-by-Identifier popover (Zotero's magic wand).
+  const [createMenuOpen, setCreateMenuOpen] = React.useState(false)
+  const [identifierOpen, setIdentifierOpen] = React.useState(false)
+  const [identifierDraft, setIdentifierDraft] = React.useState('')
+  const [identifierBusy, setIdentifierBusy] = React.useState(false)
+  const createMenuRef = React.useRef(null)
+  const identifierRef = React.useRef(null)
+  React.useEffect(() => {
+    if (!createMenuOpen && !identifierOpen) return undefined
+    const close = (event) => {
+      if (createMenuRef.current && !createMenuRef.current.contains(event.target)) setCreateMenuOpen(false)
+      if (identifierRef.current && !identifierRef.current.contains(event.target)) setIdentifierOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [createMenuOpen, identifierOpen])
   // In-app viewer tabs: [{key, parentKey, title, bytes}]; '' active = the list
   // view. Tabs host the pdf.js viewer (the "dsh 内建查看器"), which owns
   // selection, annotations, rotation and find.
@@ -228,6 +284,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
         if (state.available) {
           await loadCollections()
           await loadItems({ viewOverride: viewRef.current, queryOverride: '' })
+          api.call('schema', {}).then(types => setSchemaTypes(Array.isArray(types) ? types : [])).catch(() => {})
         }
       } catch (error) {
         if (!stopped) setSnapshot({ available: false, error: { message: error?.message ?? String(error) } })
@@ -244,10 +301,11 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
     try {
       localStorage.setItem(VIEW_STORAGE, JSON.stringify(view))
       localStorage.setItem(SORT_STORAGE, JSON.stringify({ sort, desc }))
+      localStorage.setItem(DETAILS_STORAGE, detailsOpen ? '1' : '0')
     } catch {
       // Preferences are optional.
     }
-  }, [view, sort, desc])
+  }, [view, sort, desc, detailsOpen])
 
   // Reload whenever the view, search text or sort changes.
   React.useEffect(() => {
@@ -415,6 +473,103 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
     }
   }
 
+  // Zotero's 新建条目 menu: pick a type, an empty item is created at once and
+  // edited in the details pane.
+  const createItemOfType = async (itemType) => {
+    setCreateMenuOpen(false)
+    try {
+      const created = await api.call('create', {
+        itemType,
+        fields: {},
+        creators: [],
+        collectionIDs: viewRef.current.kind === 'collection' ? [viewRef.current.id] : [],
+      })
+      await refreshAll()
+      setSelectedKeys([created.key])
+      setActiveKey(created.key)
+      notify(`已创建${itemTypeLabel(itemType)}，在右侧信息栏中编辑`)
+    } catch (error) {
+      notify(error?.message ?? String(error))
+    }
+  }
+
+  // Zotero's magic wand: one DOI / ISBN / arXiv id / PMID per line, each
+  // resolved online and added as a proper item.
+  const addByIdentifier = async () => {
+    if (identifierDraft.trim() === '') return
+    setIdentifierBusy(true)
+    try {
+      const drafts = await api.call('lookup', { identifier: identifierDraft })
+      const createdKeys = []
+      for (const draft of Array.isArray(drafts) ? drafts : []) {
+        if (!draft?.fields?.title) continue
+        const created = await api.call('create', {
+          itemType: draft.itemType ?? 'document',
+          fields: draft.fields,
+          creators: draft.creators ?? [],
+          tags: draft.tags ?? [],
+          collectionIDs: viewRef.current.kind === 'collection' ? [viewRef.current.id] : [],
+        })
+        createdKeys.push(created.key)
+      }
+      if (createdKeys.length === 0) {
+        notify('没有找到匹配的元数据，请检查标识符（支持 DOI / ISBN / arXiv / PMID）')
+        return
+      }
+      setIdentifierOpen(false)
+      setIdentifierDraft('')
+      await refreshAll()
+      setSelectedKeys([createdKeys[0]])
+      setActiveKey(createdKeys[0])
+      notify(`已通过标识符添加 ${createdKeys.length} 条文献`)
+    } catch (error) {
+      notify(error?.message ?? String(error))
+    } finally {
+      setIdentifierBusy(false)
+    }
+  }
+
+  // Details-pane attachment/note actions.
+  const openUrlExternal = async (url) => {
+    try {
+      await api.call('open-url', { url })
+    } catch (error) {
+      notify(error?.message ?? String(error))
+    }
+  }
+  const addAttachmentFile = async (file) => {
+    const parentKey = activeKeyRef.current
+    if (!parentKey) return
+    try {
+      const localPath = filePathOf(file)
+      if (localPath) await api.call('import', { path: localPath, parentKey, lookup: false })
+      else await api.call('upload', { name: file.name, data: await fileBase64(file), parentKey, lookup: false })
+      notify('附件已添加')
+      await refreshAll()
+    } catch (error) {
+      notify(error?.message ?? String(error))
+    }
+  }
+  const addAttachmentUrl = async (url) => {
+    const parentKey = activeKeyRef.current
+    if (!parentKey) return
+    await api.call('attachment-url', { parentKey, url })
+    await refreshAll()
+  }
+  const trashAttachment = async (key) => {
+    if (!window.confirm('将附件移到回收站？')) return
+    try {
+      await api.call('trash', { keys: [key] })
+      await refreshAll()
+    } catch (error) {
+      notify(error?.message ?? String(error))
+    }
+  }
+  const updateNote = async (key, text) => {
+    await api.call('note-update', { key, text })
+    await loadDetail(activeKeyRef.current)
+  }
+
   const moveToTrash = async (restore = false) => {
     if (selectedKeys.length === 0) return
     try {
@@ -540,6 +695,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
   }
 
   const collectionFlat = React.useMemo(() => flattenCollections(data?.collections), [data])
+  const schemaMap = React.useMemo(() => new Map((schemaTypes ?? []).map(type => [type.itemType, type])), [schemaTypes])
 
   // The dock's context: what the user is looking at when they send.
   // A PDF open in the built-in reader → 'reader'; an item merely selected in
@@ -621,7 +777,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
             <Button variant="primary" size="sm" onClick={() => openSettings?.()}>打开设置</Button>
           </div>
         )}
-        {toast ? <div className="lib-toast">{toast}</div> : null}
+        {toast ? <Toast message={toast} /> : null}
       </div>
     )
   }
@@ -642,7 +798,43 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
               )
             : <Button variant="toolbar" size="sm" onClick={() => moveToTrash(false)}>移到回收站</Button>
         ) : null}
-        <Button variant="toolbar" size="sm" icon={<PlusIcon size={13} />} onClick={() => setCreateOpen(true)}>新建条目</Button>
+        <span className="lib-newitem-wrap" ref={createMenuRef} style={{ position: 'relative' }}>
+          <Button variant="toolbar" size="sm" icon={<PlusIcon size={13} />} onClick={() => { setCreateMenuOpen(value => !value); setIdentifierOpen(false) }}>新建条目</Button>
+          {createMenuOpen ? (
+            <div className="lib-type-menu-pop">
+              {[...(schemaTypes ?? [])].map(type => (
+                <button key={type.itemType} type="button" onClick={() => void createItemOfType(type.itemType)}>
+                  {itemTypeLabel(type.itemType)}
+                </button>
+              ))}
+              {(schemaTypes ?? []).length === 0 ? <span className="lib-form-hint" style={{ padding: 6 }}>加载中…</span> : null}
+            </div>
+          ) : null}
+        </span>
+        <span className="lib-newitem-wrap" ref={identifierRef} style={{ position: 'relative' }}>
+          <Button
+            variant="toolbar"
+            size="sm"
+            icon={<WandIcon size={13} />}
+            title="通过标识符添加条目（DOI / ISBN / arXiv / PMID，每行一个）"
+            onClick={() => { setIdentifierOpen(value => !value); setCreateMenuOpen(false) }}
+          >标识符添加</Button>
+          {identifierOpen ? (
+            <div className="lib-type-menu-pop lib-lookup-pop">
+              <textarea
+                placeholder={'10.1002/glia.23254\narXiv:2401.01234\n9787302106526\n每行一个标识符（DOI / ISBN / arXiv / PMID）'}
+                value={identifierDraft}
+                onChange={event => setIdentifierDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) void addByIdentifier()
+                }}
+              />
+              <Button variant="primary" size="sm" disabled={identifierBusy} onClick={() => void addByIdentifier()}>
+                {identifierBusy ? '检索中…' : '检索并添加'}
+              </Button>
+            </div>
+          ) : null}
+        </span>
         <Button variant="toolbar" size="sm" icon={<SyncIcon size={14} />} disabled={syncing} onClick={runSync} title="与 WebDAV 同步附件文件">
           {syncing ? '同步中…' : '同步'}
         </Button>
@@ -707,7 +899,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
           </div>
         )
         return (
-          <div className="lib-main">
+          <div className={`lib-main${detailsOpen ? '' : ' lib-main-no-details'}`}>
             <CollectionsPane
               data={data}
               tags={tags}
@@ -731,6 +923,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
                       title={activeReaderTab.title}
                       attachmentKey={activeReaderTab.key}
                       onNotify={notify}
+                      translateAuto={snapshot?.settings?.translate?.auto === true}
                       onOpenNative={() => {
                         void api.call('open', { key: activeReaderTab.key }).catch(error => notify(error?.message ?? String(error)))
                       }}
@@ -767,31 +960,47 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
                 </>
               )}
             </div>
-            <DetailsPane
-              detail={detail}
-              loading={detailLoading}
-              collections={collectionFlat}
-              onUpdate={updateItem}
-              onOpen={openItem}
-              onReveal={revealItem}
-            />
+            {detailsOpen ? (
+              <div className="lib-right-wrap">
+                <button
+                  type="button"
+                  className="lib-right-collapse"
+                  title="收起文献信息栏"
+                  onClick={() => setDetailsOpen(false)}
+                >
+                  <ChevronRightIcon size={13} />
+                </button>
+                <DetailsPane
+                  detail={detail}
+                  loading={detailLoading}
+                  collections={collectionFlat}
+                  schema={schemaMap}
+                  onUpdate={updateItem}
+                  onOpen={openItem}
+                  onReveal={revealItem}
+                  onOpenUrl={openUrlExternal}
+                  onAddFile={addAttachmentFile}
+                  onAddUrl={addAttachmentUrl}
+                  onTrashAttachment={trashAttachment}
+                  onUpdateNote={updateNote}
+                  onNotify={notify}
+                />
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="lib-right-rail"
+                title="展开文献信息栏"
+                onClick={() => setDetailsOpen(true)}
+              >
+                <ChevronLeftIcon size={13} />
+                <span className="lib-right-rail-text">文献信息</span>
+              </button>
+            )}
           </div>
         )
       })()}
 
-      <CreateItemDialog
-        open={createOpen}
-        collections={collectionFlat}
-        defaultCollectionID={view.kind === 'collection' ? view.id : undefined}
-        onClose={() => setCreateOpen(false)}
-        onCreated={async (key) => {
-          setCreateOpen(false)
-          await refreshAll()
-          setSelectedKeys([key])
-          setActiveKey(key)
-          notify('已创建')
-        }}
-      />
       <CollectionDialog
         open={collectionDialog.open}
         mode={collectionDialog.mode}
@@ -804,7 +1013,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
           notify('已更新分类')
         }}
       />
-      {toast ? <div className="lib-toast">{toast}</div> : null}
+      {toast ? <Toast message={toast} /> : null}
     </div>
   )
 }

@@ -2,6 +2,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { normalizeText, objectKey, safeFileName, sqlNow } from './util.js'
+import { planTypeChange } from './schema.js'
 
 /** Field names Zotero stores as base fields on every item type when relevant. */
 const BASE_FIELDS = ['title', 'abstractNote', 'date', 'language', 'shortTitle', 'url', 'accessDate', 'DOI', 'rights', 'extra', 'archive', 'archiveLocation', 'libraryCatalog', 'callNumber']
@@ -293,6 +294,120 @@ export function createItem(db, input = {}) {
     if (creators) setCreators(db, itemID, creators)
     if (Array.isArray(input.tags)) setTags(db, itemID, input.tags)
     if (Array.isArray(input.collectionIDs)) setCollections(db, itemID, input.collectionIDs)
+    return { itemID, key }
+  })
+}
+
+/**
+ * Change an item's type the way Zotero's setType does: fields that map to the
+ * same base field in the new type transfer across, the rest are dropped. The
+ * client confirms the dropped list first (change-type with confirm:false).
+ */
+export function changeItemType(db, key, newItemType) {
+  const meta = db.schema()
+  const row = db.get('SELECT itemID, itemTypeID FROM items WHERE libraryID = ? AND key = ?', meta.libraryID, key)
+  if (!row) throw Object.assign(new Error(`No item with key ${key}`), { code: 'library/not-found' })
+  const fromType = meta.itemTypeNames.get(row.itemTypeID)
+  if (!db.schema().itemTypes.has(newItemType)) {
+    throw Object.assign(new Error(`Unknown Zotero item type "${newItemType}"`), { code: 'library/invalid' })
+  }
+  const stored = db.all(
+    `SELECT f.fieldName FROM itemData d JOIN fieldsCombined f ON f.fieldID = d.fieldID WHERE d.itemID = ?`,
+    row.itemID,
+  ).map(entry => entry.fieldName)
+  const plan = planTypeChange(fromType, newItemType, stored)
+  return db.transaction(() => {
+    const merged = new Map(db.all(
+      `SELECT f.fieldName, v.value FROM itemData d JOIN fieldsCombined f ON f.fieldID = d.fieldID
+       JOIN itemDataValues v ON v.valueID = d.valueID WHERE d.itemID = ?`, row.itemID,
+    ).map(entry => [entry.fieldName, entry.value]))
+    const next = new Map()
+    for (const [name, value] of merged) {
+      if (plan.dropped.includes(name)) continue
+      const transfer = plan.transfers.find(entry => entry[0] === name)
+      const targetName = transfer ? transfer[1] : name
+      if (!next.has(targetName) && String(value).trim() !== '') next.set(targetName, String(value))
+    }
+    setFieldMap(db, row.itemID, Object.fromEntries(next))
+    db.run('UPDATE items SET itemTypeID = ? WHERE itemID = ?', db.itemTypeId(newItemType), row.itemID)
+    touchItem(db, row.itemID)
+    return { key, itemType: newItemType, transferred: plan.transfers, dropped: plan.dropped }
+  })
+}
+
+/** Create a standalone or child note item; body is plain text shaped into paragraphs. */
+export function createNoteItem(db, input = {}) {
+  const meta = db.schema()
+  let parentItemID = null
+  if (input.parentKey) {
+    const parent = db.get('SELECT itemID FROM items WHERE libraryID = ? AND key = ?', meta.libraryID, String(input.parentKey))
+    if (!parent) throw Object.assign(new Error(`No item with key ${input.parentKey}`), { code: 'library/not-found' })
+    parentItemID = parent.itemID
+  }
+  const paragraphs = String(input.text ?? '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line !== '')
+    .map(line => `<p>${line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>`)
+  const html = paragraphs.length > 0 ? paragraphs.join('') : '<p></p>'
+  return db.transaction(() => {
+    const { itemID, key } = insertItem(db, 'note')
+    insertRow(db, 'itemNotes', { itemID, parentItemID, note: html })
+    if (Array.isArray(input.collectionIDs)) setCollections(db, itemID, input.collectionIDs)
+    if (parentItemID !== null) touchItem(db, parentItemID)
+    return { itemID, key }
+  })
+}
+
+/** Replace one note's body (plain text from the editor, same shaping as create). */
+export function updateNoteItem(db, key, text) {
+  const meta = db.schema()
+  const row = db.get(
+    `SELECT i.itemID FROM items i JOIN itemNotes n ON n.itemID = i.itemID WHERE i.libraryID = ? AND i.key = ?`,
+    meta.libraryID, String(key ?? ''),
+  )
+  if (!row) throw Object.assign(new Error(`No note with key ${key}`), { code: 'library/not-found' })
+  const paragraphs = String(text ?? '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line !== '')
+    .map(line => `<p>${line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>`)
+  return db.transaction(() => {
+    db.run('UPDATE itemNotes SET note = ? WHERE itemID = ?', paragraphs.join('') || '<p></p>', row.itemID)
+    touchItem(db, row.itemID)
+    return { key, updated: true }
+  })
+}
+
+/**
+ * Create a "web link" attachment (linkMode 3, like Zotero's 添加网页链接):
+ * no file is stored; the row only points at the URL.
+ */
+export function createUrlAttachment(db, input = {}) {
+  const meta = db.schema()
+  const url = String(input.url ?? '').trim()
+  if (!/^https?:\/\//i.test(url)) {
+    throw Object.assign(new Error('Only http(s) web links can be attached'), { code: 'library/invalid' })
+  }
+  let parentItemID = null
+  if (input.parentKey) {
+    const parent = db.get('SELECT itemID FROM items WHERE libraryID = ? AND key = ?', meta.libraryID, String(input.parentKey))
+    if (!parent) throw Object.assign(new Error(`No item with key ${input.parentKey}`), { code: 'library/not-found' })
+    parentItemID = parent.itemID
+  }
+  return db.transaction(() => {
+    const { itemID, key } = insertItem(db, 'attachment')
+    const title = String(input.title ?? '').trim() || url
+    setFieldMap(db, itemID, { title, url })
+    insertRow(db, 'itemAttachments', {
+      itemID,
+      parentItemID,
+      linkMode: 3,
+      contentType: 'text/html',
+      path: url,
+      syncState: 0,
+    })
+    if (parentItemID !== null) touchItem(db, parentItemID)
     return { itemID, key }
   })
 }

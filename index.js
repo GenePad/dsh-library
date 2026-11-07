@@ -11,7 +11,7 @@ import { createTools } from './src/host/tools.js'
 import { chatGuidance } from './src/host/chat.js'
 
 export const name = 'library'
-export const version = '0.1.1'
+export const version = '0.1.6'
 
 // The plugin cannot do anything useful without the authenticated connection
 // (the API route) or a session controller (the chat dock).
@@ -25,7 +25,18 @@ export const inject = ['connection', 'sessionController', 'sessionTitle', 'works
 export function apply(ctx, config = {}) {
   const logger = ctx.logger ?? console
   const packageDir = fileURLToPath(new URL('./', import.meta.url))
-  const runtime = createLibraryRuntime({ ctx, config: { ...config, version }, logger, packageDir })
+  // Optional service bridges: the translator needs dsh's llm runtime and the
+  // current-model selection, but the library must keep working without them.
+  const extensions = {}
+  ctx.effect(() => ctx.inject(['llm'], (scoped) => {
+    extensions.llm = scoped.llm
+    return () => { extensions.llm = undefined }
+  }), 'library: llm bridge')
+  ctx.effect(() => ctx.inject(['agentDefaultModel'], (scoped) => {
+    extensions.agentDefaultModel = scoped.agentDefaultModel
+    return () => { extensions.agentDefaultModel = undefined }
+  }), 'library: default model bridge')
+  const runtime = createLibraryRuntime({ ctx, config: { ...config, version, extensions }, logger, packageDir })
   const paths = {
     get dataDir() { return runtime.paths().dataDir },
     get storageDir() { return runtime.paths().storageDir },
@@ -130,4 +141,23 @@ export function apply(ctx, config = {}) {
   }), 'library: pdf file route')
 
   ctx.effect(() => () => runtime.dispose(), 'library: runtime')
+
+  // Reader translations: one NDJSON stream per POST (thinking/answer/done/error
+  // events). A separate exact route because the buffered JSON envelope cannot
+  // carry a streaming body; the browser aborts by closing the fetch.
+  ctx.effect(() => ctx.connection.fetch.register({
+    path: '/api/library/translate',
+    methods: ['POST'],
+    requestBody: 'buffered',
+    fetch: async (request) => {
+      let text = ''
+      try {
+        const body = await request.json()
+        text = body?.text
+      } catch {
+        text = ''
+      }
+      return runtime.translateStream(text, request.signal)
+    },
+  }), 'library: translate route')
 }

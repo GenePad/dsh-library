@@ -1,23 +1,23 @@
 {
-  "version": "0.1.1",
+  "version": "0.1.6",
   "base": "../",
-  "publishedAt": 1794064284665,
+  "publishedAt": 1794084113212,
   "notes": "",
   "files": [
     {
       "path": "package.json",
       "size": 1596,
-      "sha256": "13a281bc2453dcc05234bedadcc62da8e375fdd1d115b0cb90a3b0c44829fc64"
+      "sha256": "5032b850cceb6e8ce235b9c33cbc5fbd323f92c45b6976fbb1959b471c2b750d"
     },
     {
       "path": "index.js",
-      "size": 5505,
-      "sha256": "424b67b10d5a6c39f44cc264dd96340d98c5c43946a7e5fdd6404432f01d782e"
+      "size": 6731,
+      "sha256": "59b87f21ed44c4d8bd599f3b9f17368847268a4f6f501f046ae178fe84714d90"
     },
     {
       "path": "client.js",
-      "size": 1786061,
-      "sha256": "7e59436495c7b076dfeb0dadaaf124b5f45e7f89ba958d948600a18e2accf537"
+      "size": 1833236,
+      "sha256": "68676b2b1a558c26ddc4486221e8bf3188713f261e22e5f91bcb9e986873b486"
     },
     {
       "path": "cordis.patch.yml",
@@ -31,13 +31,13 @@
     },
     {
       "path": "src/client/api.js",
-      "size": 1033,
-      "sha256": "9782a98355bbd176d2fcc509b2709454dd2d023d7c1cc7280a9608c3a26ff19a"
+      "size": 3012,
+      "sha256": "56dce30863af634aa55c2153dc82b4614b41edc89f1d6c7daa930f2b92a9091c"
     },
     {
       "path": "src/client/chat-dock.jsx",
-      "size": 8684,
-      "sha256": "238ee7fbc741966122e226b88b45104d71154407ad0e993a8258795e9bfdbdd0"
+      "size": 10278,
+      "sha256": "2e036e8b51e12cd8eeadba8b63519c958d52e4d69e766054a619277ee608be58"
     },
     {
       "path": "src/client/collections-pane.jsx",
@@ -46,13 +46,13 @@
     },
     {
       "path": "src/client/create-dialog.jsx",
-      "size": 9870,
-      "sha256": "dcf691c1a9ce43116b26b1fa5a03948a2900cd7fbbaaecab1b49bd7bbe864704"
+      "size": 2862,
+      "sha256": "cf9db655f66981ecac92f057ccf229a277689e2cb7d165360567263f6bc4786d"
     },
     {
       "path": "src/client/details-pane.jsx",
-      "size": 12996,
-      "sha256": "1473cfce2d056490a4db44ca77721c04446f78d4b9cbf8d1ac4339ad12aed541"
+      "size": 33198,
+      "sha256": "5ee0b85f7d7a48c82ab1812abf99db3876ab58b2b6081c12312b3e184c121ef8"
     },
     {
       "path": "src/client/footer.jsx",
@@ -61,23 +61,28 @@
     },
     {
       "path": "src/client/icons.jsx",
-      "size": 5587,
-      "sha256": "e5bcecee1c35f9d54a7670b7e55acc4016be3efebf4cad0bea1eb875faef7c64"
+      "size": 7171,
+      "sha256": "ca5708706f4ed31bca33ea8cb3527f78d13f0cc134c6afdb239510dc86f2b9a9"
     },
     {
       "path": "src/client/index.js",
-      "size": 4642,
-      "sha256": "adc8b704514b941250fdb1bcee28721fb0a73be4239abb80dc993eabf5c47173"
+      "size": 6733,
+      "sha256": "af168b3569be682575b0c756aaa292bb716e25ada7ad09fccbc05a98eb882811"
     },
     {
       "path": "src/client/items-pane.jsx",
-      "size": 11051,
-      "sha256": "cf9e31720873470c0f02a0266c822b065469ca505324708335b5993d4e507329"
+      "size": 13699,
+      "sha256": "92fc015e49c8b0fa611de29c46732d325dd7304ab8762f4f88415c6520266a62"
+    },
+    {
+      "path": "src/client/labels.js",
+      "size": 6764,
+      "sha256": "b431353b446ab4bb5dad8d56420fe848da2a5416afda5d0b8a7ca60443f5f22b"
     },
     {
       "path": "src/client/library-page.jsx",
-      "size": 32990,
-      "sha256": "b431de9270414e06b39c125ffc7c709b7e683f63806706d1e01cf6266a837cf3"
+      "size": 41605,
+      "sha256": "6178253e5276393a653bec4a5a042a8f007234cae82e49078ed04fdbcc047e99"
     },
     {
       "path": "src/client/pdf-util.js",
@@ -86,38 +91,43 @@
     },
     {
       "path": "src/client/pdf-viewer.jsx",
-      "size": 44325,
-      "sha256": "322db1d586ca82a943f94986b3a17fc677a7534fd7fa249fff0ac27f8d440238"
+      "size": 71915,
+      "sha256": "cc6bcec214dadb04dadd5a4ecbb5c88d9620638fd8c942da016e62c6aacbfdd9"
     },
     {
       "path": "src/client/platform.jsx",
-      "size": 355,
-      "sha256": "8b8c75485e38190db9f785e545ba879b7058cb2d55c3ae77b3c2c25879333cc1"
+      "size": 748,
+      "sha256": "8a5a969f553e0ed15f25ae87974d3183f026551f2be886cece3e4b172f05dae3"
     },
     {
       "path": "src/client/settings-section.jsx",
-      "size": 12826,
-      "sha256": "9fa6d86fcdc2d0ead67d6fade4f6789e4ffdcc8245072342733eef6279f0ea75"
+      "size": 17180,
+      "sha256": "9d79e93ccd049be7d4285179cfbc591e6d45680421673259228f0e56b59c6db4"
     },
     {
       "path": "src/client/styles.js",
-      "size": 33814,
-      "sha256": "8201fe450fcce650b58b99fd9588ee17d6b9e55a3a1b107a25fd68e81d8bba97"
+      "size": 47907,
+      "sha256": "bd463bb4d8565a355dcbb3187f4bc39454baba950062a9cb1e40dac0b167a695"
     },
     {
       "path": "src/client/util.js",
-      "size": 7623,
-      "sha256": "e29a9d74c8710ec1a680778b5bdef970913a431dfd4fe882fc66feebe833d4e4"
+      "size": 6182,
+      "sha256": "ad50d4027cd725913ed43bb56673b516d2475398fd45234514cd9531c6d55451"
+    },
+    {
+      "path": "src/host/assoc.js",
+      "size": 13182,
+      "sha256": "7f70454fca6a21f1ca4efd91c3f2904e7d5453bd6993d453e9a524a444f39cd8"
     },
     {
       "path": "src/host/channel.js",
-      "size": 8237,
-      "sha256": "658619bdf8129d7177d8513959462b0acd3db3cb5d722623110922d825faae0e"
+      "size": 10019,
+      "sha256": "fe77438c7c259343faa72d75e3177a7b6151b37d6250cc4c4d3eac0a3fef129f"
     },
     {
       "path": "src/host/chat.js",
-      "size": 10831,
-      "sha256": "17e6e0f1d0c570f2e7ad2e369875d0e8cd736f34d39c09e6501009f4fdf4b657"
+      "size": 13505,
+      "sha256": "0c05bbddc01994919c090d37ace20f197ecbcc4863725419809efc3f8d8e47c3"
     },
     {
       "path": "src/host/cite.js",
@@ -141,8 +151,8 @@
     },
     {
       "path": "src/host/metadata.js",
-      "size": 12495,
-      "sha256": "d477f482c0e82ec6a400040f1891d5233e2670a8b25cbd0f868d67eb9dd13a0b"
+      "size": 16373,
+      "sha256": "3f3f03ec8978c6d71ea04c1f06cf2867e2ab51be3e554129a0d39f98fa185b7c"
     },
     {
       "path": "src/host/open.js",
@@ -156,13 +166,13 @@
     },
     {
       "path": "src/host/read.js",
-      "size": 20364,
-      "sha256": "84a0623ffe823e4daf128ae244a71bdd4ba8b91da8493b65e1c616c90d0fb550"
+      "size": 22610,
+      "sha256": "2fc447ac5a14a4df4350e782db1fcf44c3b799b24ef92a0e02e915fee14387c4"
     },
     {
       "path": "src/host/runtime.js",
-      "size": 17739,
-      "sha256": "509ca67f23cf201724f9d68c682ede366ed0ed55004f30232322c35f54deae69"
+      "size": 21432,
+      "sha256": "d38791653f4130e75375aaa131e1d1f9d016c44b7e0931e17b587b7e730091c0"
     },
     {
       "path": "src/host/schema-data.js",
@@ -170,9 +180,14 @@
       "sha256": "853bac3dba8b155ec80602f236822fba90208da608691c67751b1302f3dbfcd9"
     },
     {
+      "path": "src/host/schema.js",
+      "size": 2060,
+      "sha256": "af7cb2461efa163234af00c59074fb1c0934e6b3b1aca2987d752457cae148c3"
+    },
+    {
       "path": "src/host/settings.js",
-      "size": 3274,
-      "sha256": "833c4845c7cc554908d423a58ae8f2a36db2d4077d5b81196601352712eb28d1"
+      "size": 4126,
+      "sha256": "974413f27238f385778018e5e5a54bfafc9facfcbfc1bc4e1d7f31025de7751e"
     },
     {
       "path": "src/host/standalone.js",
@@ -186,8 +201,13 @@
     },
     {
       "path": "src/host/tools.js",
-      "size": 23470,
-      "sha256": "72b2532a6e3e1c4659a2fa550a04bb018e27a10d7644fb07aa31e1de6cd0f992"
+      "size": 29341,
+      "sha256": "1e369e84adeff42508c1e4e8e03597f29cf4e5de098b580a31876b651889e041"
+    },
+    {
+      "path": "src/host/translate.js",
+      "size": 7970,
+      "sha256": "e47e9b86e5dad5ba8a566d1d0901038a1046e22531c255e7868179ce15041ac0"
     },
     {
       "path": "src/host/updater.js",
@@ -216,8 +236,8 @@
     },
     {
       "path": "src/host/write.js",
-      "size": 22607,
-      "sha256": "7fc929bf720bd3729ced676f0fed80cd34793352ed821a94acdfaab57eaa8f5c"
+      "size": 27930,
+      "sha256": "ede6def6fd0156c9c01f107f948914cf8da9c03065c6c97bc9b717ac19f4a327"
     },
     {
       "path": "vendor/deps.js",
@@ -236,8 +256,8 @@
     },
     {
       "path": "AGENTS.md",
-      "size": 21941,
-      "sha256": "c6dd61b57b612d1b9aaf2b4763cd0bfe0861d43cd2d64533bb394cc17b0ce391"
+      "size": 38717,
+      "sha256": "a358f162305af075715c9d540ac48e37b5760834f6347b28c88fca87f1ea001d"
     }
   ]
 }

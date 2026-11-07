@@ -36,6 +36,21 @@ export function loadSettings() {
     // the OS reader. (Legacy settings may hold 'dsh' — treated as builtin.)
     pdfOpen: ['native', 'builtin'].includes(raw.pdfOpen) ? raw.pdfOpen : 'builtin',
     updateFeed: typeof raw.updateFeed === 'string' ? raw.updateFeed : '',
+    // Reader「译」button: one-shot translation. `modelSource` 'follow' uses
+    // dsh's current model; 'fixed' pins settings.translate.model. `auto`
+    // starts the translation as soon as the selection popup appears.
+    translate: normalizeTranslate(raw.translate),
+  }
+}
+
+function normalizeTranslate(raw) {
+  const value = raw && typeof raw === 'object' ? raw : {}
+  return {
+    thinking: value.thinking === true,
+    // 划词自动翻译：选区浮窗一出现就开始翻译，默认关闭（点「译」才译）。
+    auto: value.auto === true,
+    modelSource: value.modelSource === 'fixed' ? 'fixed' : 'follow',
+    model: typeof value.model === 'string' ? value.model : '',
   }
 }
 
@@ -58,6 +73,7 @@ export function saveSettings(patch = {}) {
     ...(patch.autoSync === undefined ? {} : { autoSync: patch.autoSync === true }),
     ...(['native', 'builtin'].includes(patch.pdfOpen) ? { pdfOpen: patch.pdfOpen } : {}),
     ...(typeof patch.updateFeed === 'string' ? { updateFeed: patch.updateFeed.trim() } : {}),
+    ...(patch.translate && typeof patch.translate === 'object' ? { translate: normalizeTranslate(patch.translate) } : {}),
   }
   if (next.mode === 'standalone') next.zoteroDataDir = ''
   writeJson(settingsFile(), next)
@@ -78,6 +94,7 @@ export function publicSettings() {
     autoSync: settings.autoSync,
     pdfOpen: settings.pdfOpen,
     updateFeed: settings.updateFeed,
+    translate: settings.translate,
   }
 }
 

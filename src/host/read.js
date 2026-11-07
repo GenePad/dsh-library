@@ -222,7 +222,65 @@ export function readItems(db, filter = {}) {
   const limit = Number.isInteger(filter.limit) ? Math.min(Math.max(filter.limit, 1), 500) : 100
   const offset = Number.isInteger(filter.offset) ? Math.max(filter.offset, 0) : 0
   const rows = db.all(`SELECT * FROM (${sql}) ORDER BY ${sort} ${desc ? 'DESC' : 'ASC'}, itemID DESC LIMIT ? OFFSET ?`, ...params, limit, offset)
-  return { total, offset, limit, items: summarizeRows(db, rows) }
+  const items = summarizeRows(db, rows)
+  attachChildren(db, rows, items)
+  return { total, offset, limit, items }
+}
+
+/**
+ * Child attachments and notes for one page of list rows, so the item tree can
+ * expand a parent into its children the way Zotero's does. One batched query
+ * per kind keeps the list view at O(1) round trips. `rows` (raw) and `items`
+ * (summarized) share their order, so parents map by position.
+ */
+function attachChildren(db, rows, items) {
+  if (items.length === 0) return
+  const ids = rows.map(row => row.itemID).filter(Number.isInteger)
+  if (ids.length === 0) return
+  const placeholders = ids.map(() => '?').join(',')
+  for (const item of items) item.children = []
+  const byParent = new Map(items.map((item, index) => [rows[index].itemID, item]))
+  const attachments = db.all(
+    `SELECT i.key, i.dateAdded, a.parentItemID, a.path, a.contentType
+     FROM itemAttachments a JOIN items i ON i.itemID = a.itemID
+     LEFT JOIN deletedItems d ON d.itemID = i.itemID
+     WHERE a.parentItemID IN (${placeholders}) AND d.itemID IS NULL
+     ORDER BY i.dateAdded`,
+    ...ids,
+  )
+  for (const row of attachments) {
+    const parent = byParent.get(row.parentItemID)
+    if (!parent) continue
+    parent.children.push({
+      key: row.key,
+      kind: 'attachment',
+      itemType: 'attachment',
+      title: path.basename(String(row.path ?? '').replace(/^storage:/, '')) || '附件',
+      contentType: row.contentType ?? '',
+    })
+  }
+  const notes = db.all(
+    `SELECT i.key, i.dateAdded, n.parentItemID, n.title, n.note
+     FROM itemNotes n JOIN items i ON i.itemID = n.itemID
+     LEFT JOIN deletedItems d ON d.itemID = i.itemID
+     WHERE n.parentItemID IN (${placeholders}) AND d.itemID IS NULL
+     ORDER BY i.dateAdded`,
+    ...ids,
+  )
+  for (const row of notes) {
+    const parent = byParent.get(row.parentItemID)
+    if (!parent) continue
+    parent.children.push({
+      key: row.key,
+      kind: 'note',
+      itemType: 'note',
+      title: row.title || plainNote(row.note).split('\n')[0] || '笔记',
+    })
+  }
+  // Zotero orders children attachments before notes within a parent.
+  for (const item of items) {
+    item.children.sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'attachment' ? -1 : 1))
+  }
 }
 
 /** Attach creators to raw list rows and shape display values. */

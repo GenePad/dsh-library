@@ -27,6 +27,7 @@ const toolDefs = new Map()
 const disposers = []
 const prompts = []
 const createdSessions = []
+const llmCalls = []
 let running = false
 const agent = {
   get status() { return running ? 'running' : 'idle' },
@@ -44,8 +45,38 @@ const mockCtx = {
     return dispose
   },
   inject(_deps, callback) {
+    // Optional service bridges (llm / agentDefaultModel) resolve through this
+    // map; unknown services stay undefined so the plugin degrades gracefully.
+    const services = {
+      llm: {
+        async prepareCall(config, signal, configure) {
+          const controls = configure?.({}, { reasoning: { efforts: [{ id: 'off' }, { id: 'high' }] } }) ?? {}
+          llmCalls.push({ ...config, ...controls })
+          return {
+            config: { provider: config.provider, model: config.model, maxTokens: config.maxTokens, ...controls },
+            async *stream(options) {
+              assert.equal(options.messages.length, 1, 'translate sends exactly one user message')
+              assert.equal(options.messages[0].role, 'user')
+              assert.equal(options.messages[0].content[0].text, 'The sample text.')
+              assert.ok(options.system.includes('翻译'), 'system prompt travels')
+              yield { type: 'reasoning-delta', index: 0, text: '思考过程。' }
+              yield { type: 'text-delta', index: 1, text: '这是' }
+              yield { type: 'text-delta', index: 1, text: '译文。' }
+              yield { type: 'finish', reason: { kind: 'stop' } }
+            },
+          }
+        },
+        listProviders() { return [{ id: 'deepseek', name: 'DeepSeek' }] },
+        async listModels(provider) {
+          assert.equal(provider, 'deepseek')
+          return [{ provider: 'deepseek', id: 'deepseek-chat', name: 'DeepSeek Chat' }]
+        },
+      },
+      agentDefaultModel: { currentSelection: () => ({ provider: 'deepseek', model: 'deepseek-chat' }) },
+    }
     const scoped = {
       ...mockCtx,
+      ...Object.fromEntries(_deps.map(dep => [dep, services[dep]])),
       tools: { register(definition) { toolDefs.set(definition.name, definition); return () => toolDefs.delete(definition.name) } },
       effect(fn) { const dispose = fn(); if (typeof dispose === 'function') disposers.push(dispose); return dispose },
     }
@@ -80,15 +111,17 @@ const mockCtx = {
 
 apply(mockCtx, { zoteroDataDir: dataDir })
 
-assert.equal(routes.length, 2, 'API + binary PDF routes registered')
+assert.equal(routes.length, 3, 'API + binary PDF + translate routes registered')
 assert.equal(routes[0].path, '/api/library')
 assert.deepEqual(routes[0].methods, ['POST'])
 assert.equal(routes[1].path, '/api/library/file')
 assert.deepEqual(routes[1].methods, ['GET'])
+assert.equal(routes[2].path, '/api/library/translate')
+assert.deepEqual(routes[2].methods, ['POST'])
 assert.deepEqual([...toolDefs.keys()].sort(), [
-  'library_add', 'library_annotations', 'library_cite', 'library_collections', 'library_import', 'library_item',
-  'library_open', 'library_read', 'library_search', 'library_status', 'library_sync', 'library_trash',
-  'library_update',
+  'library_add', 'library_annotations', 'library_attach', 'library_cite', 'library_collection',
+  'library_collections', 'library_import', 'library_item', 'library_lookup', 'library_open',
+  'library_read', 'library_search', 'library_status', 'library_sync', 'library_trash', 'library_update',
 ])
 
 const call = async (endpoint, payload) => {
@@ -206,7 +239,7 @@ if (hasRealLibrary) {
   // Create → update → tags → trash → restore → delete.
   const created = await call('create', {
     itemType: 'journalArticle',
-    fields: { title: 'dsh-library smoke item', date: '2026', DOI: '10.0000/smoke' },
+    fields: { title: 'dsh-library smoke item', date: '2026', DOI: '10.0000/smoke', pages: '1-10' },
     creators: [{ firstName: 'San', lastName: 'Zhang', creatorType: 'author' }],
     tags: ['smoke'],
   })
@@ -216,6 +249,54 @@ if (hasRealLibrary) {
   assert.equal(createdDetail.value.title, 'dsh-library smoke item')
   assert.equal(createdDetail.value.creators[0].lastName, 'Zhang')
   assert.deepEqual(createdDetail.value.tags.map(tag => tag.name), ['smoke'])
+
+  // Item-type schema (the item pane's type menu / field list) + Zotero's type
+  // change: fields transfer across base mappings, the rest are dropped after a
+  // confirm round trip (plan → apply).
+  const schemaTypes = await call('schema', {})
+  assert.equal(schemaTypes.ok, true, JSON.stringify(schemaTypes))
+  assert.ok(schemaTypes.value.some(type => type.itemType === 'journalArticle'
+    && type.creatorTypes.some(creator => creator.creatorType === 'author')), 'item-type shapes served from the bundled schema')
+  const plan = await call('change-type', { key, itemType: 'book' })
+  assert.equal(plan.ok, true, JSON.stringify(plan))
+  assert.ok(Array.isArray(plan.value.dropped) && Array.isArray(plan.value.transferred), `type change returns a plan (${JSON.stringify(plan.value)})`)
+  assert.ok(plan.value.dropped.includes('pages'), 'journal-only fields are listed for the confirm dialog')
+  const applied = await call('change-type', { key, itemType: 'book', confirm: true })
+  assert.equal(applied.ok, true, JSON.stringify(applied))
+  const bookDetail = await call('item', { key })
+  assert.equal(bookDetail.value.itemType, 'book', 'type row switched to book')
+  assert.ok(!bookDetail.value.fields.some(field => field.field === 'pages'), 'dropped fields removed on type change')
+  assert.ok(bookDetail.value.fields.some(field => field.field === 'DOI' && field.value === '10.0000/smoke'), 'fields valid for both types survive')
+  assert.ok(bookDetail.value.fields.some(field => field.field === 'title' && field.value === 'dsh-library smoke item'), 'title survived the type change')
+  await call('change-type', { key, itemType: 'journalArticle', confirm: true })
+
+  // Notes and web-link attachments (Zotero's 添加笔记 / 添加网页链接).
+  const noteCreated = await call('note-create', { parentKey: key, text: '第一段\n第二段' })
+  assert.equal(noteCreated.ok, true, JSON.stringify(noteCreated))
+  const withNote = await call('item', { key })
+  assert.equal(withNote.value.notes.length, 1, 'child note created under the item')
+  const noteUpdated = await call('note-update', { key: withNote.value.notes[0].key, text: '改过的笔记' })
+  assert.equal(noteUpdated.ok, true, 'note body updated')
+  const noteUrl = await call('attachment-url', { parentKey: key, url: 'https://example.com/paper' })
+  assert.equal(noteUrl.ok, true, JSON.stringify(noteUrl))
+  const urlDetail = await call('item', { key })
+  assert.equal(urlDetail.value.attachments.length, 1, 'web-link attachment listed under the parent')
+  assert.equal(urlDetail.value.attachments[0].linkMode, 3, 'web link stored as linkMode 3')
+  const badUrl = await call('attachment-url', { parentKey: key, url: 'javascript:alert(1)' })
+  assert.equal(badUrl.ok, false, 'non-http(s) web links rejected')
+
+  // Agent capability trio: 主动入库（lookup）/ 主动挂附件 / 主动分类.
+  const lookupMiss = await toolDefs.get('library_lookup').execute({ identifier: 'not-an-identifier' })
+  assert.deepEqual(lookupMiss, { found: false, identifier: 'not-an-identifier' }, 'identifier miss reported without throwing')
+  const lookupQuery = await toolDefs.get('library_lookup').execute({ query: 'zoterotestquery' })
+  assert.ok(lookupQuery && Array.isArray(lookupQuery.candidates), 'title query answers with a candidate list (possibly empty offline)')
+  const attachedUrl = await toolDefs.get('library_attach').execute({ key, url: 'https://example.com/tool-link' })
+  assert.equal(attachedUrl.kind, 'url', 'library_attach links a web page')
+  const made = await toolDefs.get('library_collection').execute({ action: 'create', name: 'Tool 分类' })
+  assert.ok(Number.isInteger(made.collectionID), 'library_collection creates a collection')
+  await toolDefs.get('library_collection').execute({ action: 'rename', id: made.collectionID, name: 'Tool 分类 2' })
+  const trashedCol = await toolDefs.get('library_collection').execute({ action: 'trash', id: made.collectionID })
+  assert.equal(trashedCol.changed, 1, 'library_collection trashes a collection')
 
   const updated = await call('update', { key, patch: { fields: { abstractNote: 'abstract text' } } })
   assert.equal(updated.ok, true, JSON.stringify(updated))
@@ -297,6 +378,14 @@ if (hasRealLibrary) {
     assert.equal(parentDetail.value.title, 'dsh-library imported parent')
     assert.equal(parentDetail.value.attachments.length, 1)
 
+    // List rows carry their children so the item tree can expand a parent into
+    // attachments/notes (Zotero's tree expansion).
+    const expandedList = await call('items', { query: 'dsh-library imported parent' })
+    const parentRow = expandedList.value.items.find(item => item.key === withMeta.value.parentKey)
+    assert.ok(Array.isArray(parentRow?.children)
+      && parentRow.children.some(child => child.kind === 'attachment' && child.key === parentDetail.value.attachments[0].key),
+    'list rows carry expandable attachment children')
+
     // Regression for double-click open: a parent item's PDF child must resolve
     // to a real path (delete the file so the open fails gracefully instead of
     // spawning a reader during the test).
@@ -315,11 +404,39 @@ if (hasRealLibrary) {
     const fileBytes = Buffer.from(await fileResponse.arrayBuffer())
     assert.ok(fileBytes.equals(fs.readFileSync(childPath)), 'binary route bytes match the stored file')
 
+    // 打开方式 (open-with control): the association query answers a shape-safe
+    // app list for the attachment's file type (real registry on Windows), and
+    // launching refuses ids outside that list — no spawn ever happens. Runs
+    // before the unlink below: the query needs the file on disk.
+    const openApps = await call('open-apps', { key: childAttachment.key })
+    assert.equal(openApps.ok, true, `open-apps answered (${openApps.error?.message ?? ''})`)
+    assert.ok(Array.isArray(openApps.value.apps), 'open-apps returns the application list')
+    for (const app of openApps.value.apps) {
+      assert.equal(typeof app.id, 'string', 'every application carries an id')
+      assert.equal(typeof app.name, 'string', 'every application carries a name')
+    }
+    const openWithUnknown = await call('open-with', { key: childAttachment.key, application: 'totally.not.registered' })
+    assert.equal(openWithUnknown.ok, false, 'open-with refuses ids outside the association list')
+
     fs.unlinkSync(childPath)
     const openMissing = await call('open', { key: withMeta.value.parentKey })
     assert.equal(openMissing.ok, false, 'opening a missing file reports an error')
-    assert.match(openMissing.error.message, /missing on disk/, `resolved path reported: ${openMissing.error.message}`)
+    assert.match(openMissing.error.message, /附件文件不存在/, `resolved path reported: ${openMissing.error.message}`)
     assert.ok(openMissing.error.message.includes('.pdf'), 'the PDF child path was resolved')
+    // Regression: the reader's 打开方式 icon calls `open` with the ATTACHMENT
+    // key (a top-level attachment). The self row carries no `key` field — the
+    // old openRecord fed it into path.join and crashed with ERR_INVALID_ARG_TYPE
+    // ("the path argument must be of type string, received undefined").
+    const openSelfMissing = await call('open', { key: childAttachment.key })
+    assert.equal(openSelfMissing.ok, false, 'opening by attachment key resolves the self path')
+    assert.ok(openSelfMissing.error.message.includes('.pdf'), `self path resolved instead of a path-argument crash: ${openSelfMissing.error.message}`)
+
+    // open-url (viewer hyperlinks): only http(s) may reach the OS shell, and
+    // only well-formed URLs — rejections happen before any spawn.
+    const badScheme = await call('open-url', { url: 'javascript:alert(1)' })
+    assert.equal(badScheme.ok, false, 'non-http(s) links are rejected')
+    const malformed = await call('open-url', { url: 'not a url' })
+    assert.equal(malformed.ok, false, 'malformed links are rejected')
 
     // needsMetadataHelp flags a lookup that produced nothing usable.
     assert.equal(imported.value.needsMetadataHelp, true, 'lookup:false import asks for agent help')
@@ -384,6 +501,19 @@ const opened = await call('chat-open', {})
 assert.equal(opened.ok, true, JSON.stringify(opened))
 assert.equal(opened.value.sessionId, 'session-smoke')
 assert.ok(createdSessions.length >= 1)
+
+// Dock binding: an article open in the reader keeps ONE bound conversation —
+// created on first open, reused after, re-bound by 新对话 (fresh); plain list
+// opens stay unbound and start new conversations.
+const boundOpen = await call('chat-open', { bindKey: 'BBBBBBBB', title: 'A test paper' })
+assert.equal(boundOpen.value.bound, true, 'reader open is bound to the article')
+assert.equal(boundOpen.value.created, true, 'first open of an article creates its bound conversation')
+const boundAgain = await call('chat-open', { bindKey: 'BBBBBBBB' })
+assert.equal(boundAgain.value.created, false, 'reopening the article reuses its bound conversation')
+const rebound = await call('chat-open', { bindKey: 'BBBBBBBB', fresh: true })
+assert.equal(rebound.value.created, true, '新对话 rebinds the article to a new session')
+const listOpen = await call('chat-open', { fresh: true })
+assert.equal(listOpen.value.bound, false, 'list-view open is unbound')
 const page = await call('chat-page', { maxMessages: 50 })
 assert.equal(page.ok, true)
 const roles = page.value.messages.map(message => message.role)
@@ -467,6 +597,50 @@ if (hasRealLibrary) {
   assert.equal(backToZotero.value.available, true)
   assert.equal(backToZotero.value.source, 'override')
 }
+
+// --- reader translation ------------------------------------------------------
+const translateModels = await call('translate-models', {})
+assert.equal(translateModels.ok, true, JSON.stringify(translateModels))
+assert.equal(translateModels.value.current.provider, 'deepseek')
+assert.ok(translateModels.value.models.some(model => model.id === 'deepseek/deepseek-chat'), 'configured models listed for the settings dropdown')
+
+const translateCall = async (payload) => routes[2].fetch(new Request('http://localhost/api/library/translate', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify(payload),
+}))
+const empty = await translateCall({ text: '   ' })
+assert.equal(empty.status, 400, 'empty selections are rejected pre-flight')
+assert.equal((await empty.json()).error.code, 'library/invalid')
+
+const streamed = await translateCall({ text: 'The sample text.' })
+assert.equal(streamed.status, 200)
+assert.match(streamed.headers.get('content-type') ?? '', /x-ndjson/)
+const events = []
+{
+  const reader = streamed.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    let newline
+    while ((newline = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, newline).trim()
+      buffer = buffer.slice(newline + 1)
+      if (line !== '') events.push(JSON.parse(line))
+    }
+  }
+}
+assert.deepEqual(events.map(event => event.type), ['thinking', 'answer', 'answer', 'done'], 'thinking → answer → done event order')
+assert.equal(events[2].text, '译文。', 'deltas stream through verbatim')
+// Thinking defaults off → the 'off' effort is selected against the model's
+// declared capabilities, and the route follows dsh's current model.
+assert.equal(llmCalls.length, 1)
+assert.equal(llmCalls[0].provider, 'deepseek')
+assert.equal(llmCalls[0].model, 'deepseek-chat')
+assert.equal(llmCalls[0].reasoningEffort, 'off')
 
 // Every effect must expose a disposer; disposing must not throw.
 for (const dispose of disposers.reverse()) dispose()

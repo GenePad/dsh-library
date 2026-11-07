@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { Button } from './platform.jsx'
-import { AttachmentIcon, ChevronDown, LibraryIcon, NoteIcon, PdfIcon } from './icons.jsx'
+import { AttachmentIcon, ChevronDown, ChevronRightIcon, LibraryIcon, NoteIcon, PdfIcon } from './icons.jsx'
 import { formatDate, itemTypeLabel } from './util.js'
 
 const COLUMNS_STORAGE = 'dsh-library:columns'
@@ -69,6 +69,17 @@ export function ItemsPane({
   const menuRef = React.useRef(null)
   const [dragging, setDragging] = React.useState(false)
   const dragDepth = React.useRef(0)
+  // Zotero-style expansion: a parent with attachments/notes shows a twisty and
+  // lists its children as indented rows.
+  const [expanded, setExpanded] = React.useState(() => new Set())
+  const toggleExpanded = (key) => {
+    setExpanded((previous) => {
+      const next = new Set(previous)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   React.useEffect(() => {
     try {
@@ -166,7 +177,8 @@ export function ItemsPane({
       onDrop={handleDrop}
       style={{ position: 'relative' }}
     >
-      <div className="lib-table-head" style={{ gridTemplateColumns: `${template} 24px` }}>
+      <div className="lib-table-head" style={{ gridTemplateColumns: `16px ${template} 24px` }}>
+        <span />
         {visible.map(headerCell)}
         <div className="lib-colmenu-wrap" ref={menuRef}>
           <button
@@ -202,31 +214,72 @@ export function ItemsPane({
         </div>
       </div>
       <div className="lib-items">
-        {rows.map(item => {
+        {rows.map((item) => {
           const selected = selectedKeys.includes(item.key)
+          const children = Array.isArray(item.children) ? item.children : []
+          const isExpanded = expanded.has(item.key)
           return (
-            <div
-              key={item.key}
-              className={`lib-itemrow${selected ? ' selected' : ''}${activeKey === item.key ? ' active' : ''}`}
-              style={{ gridTemplateColumns: `${template} 24px` }}
-              onClick={(event) => onSelect(item.key, { toggle: event.ctrlKey || event.metaKey, range: event.shiftKey })}
-              onDoubleClick={() => openItem(item)}
-              title={`${item.title}\n${itemTypeLabel(item.itemType)}${item.creators ? ` · ${item.creators}` : ''}\n双击打开附件`}
-            >
-              {visible.map((column, index) => (index === 0
-                ? (
-                    <span className="lib-cell strong" key={column.id}>
-                      <span className="lib-title">
-                        <span className="lib-type"><TypeIcon itemType={item.itemType} /></span>
-                        <span className="lib-title-text">{item.title}</span>
-                        {item.hasAttachment ? <span className="lib-attach"><AttachmentIcon size={12} /></span> : null}
+            <React.Fragment key={item.key}>
+              <div
+                className={`lib-itemrow${selected ? ' selected' : ''}${activeKey === item.key ? ' active' : ''}`}
+                style={{ gridTemplateColumns: `16px ${template} 24px` }}
+                onClick={(event) => onSelect(item.key, { toggle: event.ctrlKey || event.metaKey, range: event.shiftKey })}
+                onDoubleClick={() => openItem(item)}
+                title={`${item.title}\n${itemTypeLabel(item.itemType)}${item.creators ? ` · ${item.creators}` : ''}\n双击打开附件`}
+              >
+                <span className="lib-twisty-cell">
+                  {children.length > 0 ? (
+                    <button
+                      type="button"
+                      className="lib-twisty"
+                      title={isExpanded ? '收起附件与笔记' : '展开附件与笔记'}
+                      aria-expanded={isExpanded}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        toggleExpanded(item.key)
+                      }}
+                    >
+                      {isExpanded ? <ChevronDown size={11} /> : <ChevronRightIcon size={11} />}
+                    </button>
+                  ) : null}
+                </span>
+                {visible.map((column, index) => (index === 0
+                  ? (
+                      <span className="lib-cell strong" key={column.id}>
+                        <span className="lib-title">
+                          <span className="lib-type"><TypeIcon itemType={item.itemType} /></span>
+                          <span className="lib-title-text">{item.title}</span>
+                          {item.hasAttachment ? <span className="lib-attach"><AttachmentIcon size={12} /></span> : null}
+                        </span>
                       </span>
+                    )
+                  : <span className={`lib-cell${column.numeric ? ' num' : ''}`} key={column.id}>{cellValue(item, column.id)}</span>
+                ))}
+                <span />
+              </div>
+              {isExpanded ? children.map(child => (
+                <div
+                  key={child.key}
+                  className={`lib-itemrow lib-childrow${selectedKeys.includes(child.key) ? ' selected' : ''}${activeKey === child.key ? ' active' : ''}`}
+                  style={{ gridTemplateColumns: `16px ${template} 24px` }}
+                  onClick={(event) => onSelect(child.key, { toggle: event.ctrlKey || event.metaKey, range: false })}
+                  onDoubleClick={() => onOpen(child.key)}
+                  title={`${child.title}\n${itemTypeLabel(child.itemType)}\n双击打开`}
+                >
+                  <span className="lib-twisty-cell" />
+                  <span className="lib-cell strong" style={{ paddingLeft: 16 }}>
+                    <span className="lib-title">
+                      <span className="lib-type">
+                        {child.kind === 'note' ? <NoteIcon size={12} /> : <PdfIcon size={12} />}
+                      </span>
+                      <span className="lib-title-text">{child.title}</span>
                     </span>
-                  )
-                : <span className={`lib-cell${column.numeric ? ' num' : ''}`} key={column.id}>{cellValue(item, column.id)}</span>
-              ))}
-              <span />
-            </div>
+                  </span>
+                  {visible.slice(1).map(column => <span className="lib-cell" key={column.id} />)}
+                  <span />
+                </div>
+              )) : null}
+            </React.Fragment>
           )
         })}
         {rows.length === 0 && !loading ? (

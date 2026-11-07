@@ -2,8 +2,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { readAnnotations, readAttachmentRows, readCollections, readItem, readItems, readStats, readTags, attachmentTarget } from './read.js'
-import { createItem, trashItems, updateItem, deleteForever } from './write.js'
+import { createItem, trashItems, updateItem, deleteForever, createCollection, renameCollection, trashCollection, createUrlAttachment } from './write.js'
 import { importFile } from './ingest.js'
+import { lookupDoi, lookupArxiv, lookupIsbn, lookupPmid, resolveMetadata, searchCrossref } from './metadata.js'
 import { extractPdfText, pdfPageTexts } from './pdf.js'
 import { openExternal } from './open.js'
 import { WebDavClient, syncStorage } from './webdav.js'
@@ -269,7 +270,7 @@ export function createTools(deps) {
     },
     {
       name: 'library_add',
-      description: '在文库中新建条目。itemType 用 Zotero 类型名（journalArticle、book、preprint、conferencePaper、thesis、report、webpage、document、note…），fields 放 title、abstractNote、date、DOI、url、publicationTitle、volume、issue、pages、publisher、ISBN、language 等字段。creators 为 [{firstName,lastName,creatorType}]，机构作者用 [{fieldMode:1,lastName}]。返回新条目 key。',
+      description: '在文库中新建条目（先 library_lookup 检索确认元数据再入库）。itemType 用 Zotero 类型名（journalArticle、book、preprint、conferencePaper、thesis、report、webpage、document、note…），fields 放 title、abstractNote、date、DOI、url、publicationTitle、volume、issue、pages、publisher、ISBN、language 等字段。creators 为 [{firstName,lastName,creatorType}]，机构作者用 [{fieldMode:1,lastName}]。返回新条目 key。',
       parameters: {
         type: 'object',
         properties: {
@@ -292,6 +293,110 @@ export function createTools(deps) {
           collectionIDs: args.collectionIDs,
         })
         return { key: created.key }
+      },
+    },
+    {
+      name: 'library_lookup',
+      description: '检索一条文献的元数据而不入库：给 identifier（DOI / ISBN / arXiv id / PMID）返回规范元数据草稿（itemType、fields、creators、tags、来源）；给 query（题名片段）返回 Crossref 候选列表。用户让你「收录某篇文章」或要补全字段时先调它，把结果报给用户确认后再用 library_add 写入库。',
+      parameters: {
+        type: 'object',
+        properties: {
+          identifier: { type: 'string', description: 'DOI / ISBN / arXiv id / PMID，可带前缀（doi: 10.xxxx/xxx、arXiv:2401.01234）' },
+          query: { type: 'string', description: '没有标识符时按题名检索（Crossref），返回候选' },
+        },
+      },
+      output: { schema: JSON_SCHEMA, render: renderJson },
+      timeoutMs: 60_000,
+      async execute(args = {}) {
+        const identifier = String(args.identifier ?? '').trim()
+        if (identifier !== '') {
+          const lower = identifier.toLowerCase()
+          const explicit = /^(doi:\s*|https?:\/\/doi\.org\/)(.+)$/i.exec(identifier)
+          if (explicit) {
+            const draft = await lookupDoi(explicit[2])
+            return draft ?? { found: false, identifier }
+          }
+          const arXiv = /^arxiv[:\s]*(.+)$/i.exec(identifier)
+          if (arXiv) return await lookupArxiv(arXiv[1]) ?? { found: false, identifier }
+          if (/^\d{5,9}$/.test(identifier) || /^pmid/i.test(lower)) {
+            const draft = await lookupPmid(identifier.replace(/\D/g, ''))
+            return draft ?? { found: false, identifier }
+          }
+          const draft = await resolveMetadata({ identifier })
+          return draft ?? { found: false, identifier }
+        }
+        const query = String(args.query ?? '').trim()
+        if (query === '') throw new Error('Provide an identifier or a query')
+        const candidates = await searchCrossref(query, { rows: 5 })
+        return { query, candidates }
+      },
+    },
+    {
+      name: 'library_attach',
+      description: '给已有条目添加附件：path 为本地文件（复制进 Zotero 存储，PDF 会提取全文）或 url 为网页链接（不存文件）。用户要求「把某 PDF 关联到这条文献」时用。返回附件 key。',
+      parameters: {
+        type: 'object',
+        properties: {
+          key: { type: 'string', description: '要挂附件的条目 key（8 位）' },
+          path: { type: 'string', description: '文件绝对路径' },
+          url: { type: 'string', description: '网页链接（http/https）；给了 path 就忽略' },
+          title: { type: 'string', description: '网页链接附件的标题，默认用 URL' },
+        },
+        required: ['key'],
+      },
+      output: { schema: JSON_SCHEMA, render: renderJson },
+      timeoutMs: 180_000,
+      async execute(args = {}) {
+        const db = getDb()
+        const key = requireKey(args)
+        const meta = db.schema()
+        const parent = db.get('SELECT itemID FROM items WHERE libraryID = ? AND key = ?', meta.libraryID, key)
+        if (!parent) throw new Error(`No item with key ${key}`)
+        if (typeof args.path === 'string' && args.path.trim() !== '') {
+          const result = await importFile(db, paths, {
+            filePath: String(args.path),
+            parentKey: key,
+            lookup: false,
+            logger,
+          })
+          return { attachmentKey: result.attachmentKey, fileName: result.fileName, kind: 'file' }
+        }
+        const url = String(args.url ?? '').trim()
+        if (url === '') throw new Error('Provide a file path or a url')
+        const created = createUrlAttachment(db, { parentKey: key, url, title: typeof args.title === 'string' ? args.title : undefined })
+        return { attachmentKey: created.key, url, kind: 'url' }
+      },
+    },
+    {
+      name: 'library_collection',
+      description: '管理分类（collections）：create 新建（可指定父分类）、rename 重命名、trash 移入回收站。整理文库、按主题归类时配合 library_update 的 addCollections/removeCollections 把条目移入移出。',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['create', 'rename', 'trash'], description: '默认 create' },
+          name: { type: 'string', description: '分类名（create/rename 必需）' },
+          id: { type: 'number', description: '分类 id（rename/trash 必需，来自 library_collections）' },
+          parentID: { type: 'number', description: '父分类 id（create 可选）' },
+        },
+      },
+      output: { schema: JSON_SCHEMA, render: renderJson },
+      async execute(args = {}) {
+        const db = getDb()
+        const action = args.action === 'rename' || args.action === 'trash' ? args.action : 'create'
+        if (action === 'create') {
+          const created = createCollection(db, {
+            name: String(args.name ?? ''),
+            parentID: Number.isInteger(args.parentID) ? args.parentID : null,
+          })
+          return { action, key: created.key, collectionID: created.collectionID }
+        }
+        if (!Number.isInteger(args.id)) throw new Error(`"${action}" needs a collection id`)
+        if (action === 'rename') {
+          renameCollection(db, args.id, String(args.name ?? ''))
+          return { action, id: args.id }
+        }
+        const changed = trashCollection(db, args.id, true)
+        return { action, id: args.id, changed }
       },
     },
     {

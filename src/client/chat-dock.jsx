@@ -35,11 +35,13 @@ export function LibraryChatArea(props) {
 }
 
 /**
- * The "文献助手" dock. Clicking the bar opens a floating panel that renders the
- * NATIVE dsh conversation (the shared `conversation.content` Factory inside a
- * SessionProvider bound to the Library workspace session) — the transcript,
- * tool cards, and composer are all dsh's own components. A light poll only
- * feeds the running dot and the refresh-on-turn-end hook.
+ * The "文献助手" dock. The bar toggles: clicking it when open collapses the
+ * panel; clicking it when closed picks a session by context — a NEW
+ * conversation in the plain list view, or the conversation BOUND to the
+ * article currently open in the reader (created on first open, rebindable
+ * through 新对话). The panel renders the NATIVE dsh conversation (the shared
+ * `conversation.content` Factory inside a SessionProvider bound to the Library
+ * workspace session) — transcript, tool cards and composer are dsh's own.
  */
 export function ChatDock({ onLibraryChanged, openNativeSession, retainSession, SessionProvider, renderSlot, getContext, controller }) {
   const [open, setOpen] = React.useState(false)
@@ -76,9 +78,14 @@ export function ChatDock({ onLibraryChanged, openNativeSession, retainSession, S
     }
   }, [open, sessionId, retainSession])
 
-  const ensureSession = async (fresh) => {
+  /**
+   * Open a session host-side. Options: `{fresh}` starts a new conversation;
+   * `{bindKey, title}` opens (or creates) the conversation bound to that
+   * article; `{}` reuses the current session (the AI-fix handoff).
+   */
+  const ensureSession = async (options = {}) => {
     setError('')
-    const value = await api.call('chat-open', fresh ? { fresh: true } : {})
+    const value = await api.call('chat-open', options)
     show(value)
     return value.sessionId
   }
@@ -92,16 +99,34 @@ export function ChatDock({ onLibraryChanged, openNativeSession, retainSession, S
     }
   }
 
-  const openDock = async () => {
+  /**
+   * Toggle the dock. Opening decides the session from the current view:
+   * reader tab → the article's bound conversation (create if unbound);
+   * plain list → a fresh conversation each time.
+   */
+  const toggleDock = async () => {
+    if (open) {
+      setOpen(false)
+      return
+    }
     if (busy) return
     setBusy(true)
     try {
-      const id = await ensureSession(false)
-      if (retainSession === undefined) {
-        // No sessions service: fall back to handing over to the native view.
-        if (openNativeSession) openNativeSession(id)
+      const context = contextRef.current?.() ?? { mode: 'list' }
+      if (context.mode === 'reader' && context.itemKey) {
+        const id = await ensureSession({ bindKey: context.itemKey, title: context.itemTitle })
+        if (retainSession === undefined) {
+          if (openNativeSession) openNativeSession(id)
+        } else {
+          setOpen(true)
+        }
       } else {
-        setOpen(true)
+        const id = await ensureSession({ fresh: true })
+        if (retainSession === undefined) {
+          if (openNativeSession) openNativeSession(id)
+        } else {
+          setOpen(true)
+        }
       }
     } catch (failure) {
       setError(failure?.message ?? String(failure))
@@ -110,11 +135,20 @@ export function ChatDock({ onLibraryChanged, openNativeSession, retainSession, S
     }
   }
 
+  /**
+   * 新对话: in the list view a fresh conversation; while an article is open
+   * the old binding is dropped and a new session is bound to that article.
+   */
   const newChat = async () => {
     if (busy || running) return
     setBusy(true)
     try {
-      await ensureSession(true)
+      const context = contextRef.current?.() ?? { mode: 'list' }
+      if (context.mode === 'reader' && context.itemKey) {
+        await ensureSession({ fresh: true, bindKey: context.itemKey, title: context.itemTitle })
+      } else {
+        await ensureSession({ fresh: true })
+      }
       setOpen(true)
     } catch (failure) {
       setError(failure?.message ?? String(failure))
@@ -128,12 +162,12 @@ export function ChatDock({ onLibraryChanged, openNativeSession, retainSession, S
   // is prepended host-side, then the docked native conversation takes over.
   React.useImperativeHandle(controller, () => ({
     async open() {
-      await openDock()
+      await toggleDock()
     },
     async openAndSend(text, context) {
       setError('')
       try {
-        const id = await ensureSession(false)
+        const id = await ensureSession({})
         // The context preamble (list/item + abstract-first guidance) is
         // prepended host-side and only for messages sent from this dock.
         await api.call('chat-send', { text, context: context ?? contextRef.current?.() })
@@ -171,12 +205,15 @@ export function ChatDock({ onLibraryChanged, openNativeSession, retainSession, S
             <span className={`lib-dot${running ? ' running' : ''}`} />
             <span className="lib-chat-hint">{running ? '正在处理…' : 'Library 工作区 · 可读写当前文库'}</span>
             <span className="lib-chatdock-actions">
+              <button className="lib-newchat" title="开始一个新对话（阅读器打开文章时：解绑旧对话并绑定新对话）" onClick={() => void newChat()} disabled={running || busy}>
+                <PlusIcon size={12} />
+                <span>新对话</span>
+              </button>
               {sessionId && openNativeSession ? (
                 <button className="lib-iconbtn" title="在原生对话界面中打开" onClick={jumpNative}>
                   <ExternalIcon size={13} />
                 </button>
               ) : null}
-              <button className="lib-iconbtn" title="新对话" onClick={() => void newChat()} disabled={running}><PlusIcon size={14} /></button>
               <button className="lib-iconbtn" title="收起对话" onClick={() => setOpen(false)}><ChevronDown size={13} /></button>
             </span>
           </div>
@@ -191,16 +228,17 @@ export function ChatDock({ onLibraryChanged, openNativeSession, retainSession, S
           </div>
         </div>
       ) : null}
-      <div className="lib-chatdock-bar" onClick={() => void openDock()} title="打开文献助手（原生对话）">
+      <div className="lib-chatdock-bar" onClick={() => void toggleDock()} title={open ? '收起文献助手' : '打开文献助手（阅读器中打开文章时自动绑定到该文献）'}>
         <ChatIcon size={15} />
         <span className="lib-chat-title">文献助手</span>
         <span className={`lib-dot${running ? ' running' : ''}`} />
         <span className="lib-chat-hint">
-          {busy ? '正在打开…' : running ? '正在处理…' : sessionId ? '在 Library 工作区中运行，可读写当前文库' : '可总结文献、检索、整理分类与标签'}
+          {busy ? '正在打开…' : running ? '正在处理…' : open ? '' : sessionId ? '点击收起或再开一个对话' : '点击开始新对话；阅读器中的文献会各自绑定一个对话'}
         </span>
         <span className="lib-chatdock-actions" onClick={event => event.stopPropagation()}>
-          <button className="lib-iconbtn" title="新对话" onClick={() => void newChat()} disabled={busy || running}><PlusIcon size={14} /></button>
-          <span style={{ display: 'inline-flex' }}>{open ? <ChevronDown size={13} /> : null}</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center' }} className={open ? '' : 'lib-dock-closed-chevron'}>
+            {open ? <ChevronDown size={13} /> : null}
+          </span>
         </span>
       </div>
       {error ? <div className="lib-chatdock-error">{error}</div> : null}

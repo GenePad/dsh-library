@@ -5,14 +5,18 @@ import { ZoteroDb } from './db.js'
 import { locateZotero } from './locate.js'
 import { dataDir, loadSettings, loadState, publicSettings, saveSettings, saveState } from './settings.js'
 import { attachmentTarget, readAnnotations, readCollections, readItem, readItems, readStats, readTags } from './read.js'
-import { createItem, updateItem, trashItems, deleteForever, createCollection, renameCollection, trashCollection, createAnnotationRecord, updateAnnotationRecord, removeAnnotationRecord } from './write.js'
+import { createItem, updateItem, trashItems, deleteForever, createCollection, renameCollection, trashCollection, createAnnotationRecord, updateAnnotationRecord, removeAnnotationRecord, changeItemType, createNoteItem, updateNoteItem, createUrlAttachment } from './write.js'
+import { typeList, typeSchema, planTypeChange } from './schema.js'
+import { resolveEachIdentifier } from './metadata.js'
 import { importFile } from './ingest.js'
 import { createStorageWatcher } from './watcher.js'
 import { WebDavClient, syncStorage } from './webdav.js'
 import { openExternal, revealInFolder } from './open.js'
+import { fileApplications, openWithApplication } from './assoc.js'
 import { PluginUpdater } from './updater.js'
 import { createStandaloneLibrary } from './standalone.js'
-import { ensureSession, readPage, sendMessage, stopTurn, workspaceDir } from './chat.js'
+import { ensureSession, openSession, readPage, sendMessage, stopTurn, workspaceDir } from './chat.js'
+import { createTranslator } from './translate.js'
 import { safeFileName, safeUnlink } from './util.js'
 
 /** The library runtime shared by the API channel and tools. */
@@ -286,24 +290,43 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
     logger,
   })
 
+  // One-shot reader translations ride dsh's own llm service (bridged lazily by
+  // index.js — hosts without it keep the whole library working).
+  const translator = createTranslator({ extensions: config.extensions ?? {}, getSettings, logger })
+
   function openRecord(key, reveal = false) {
-    const detail = withDb(instance => readItem(instance, key, paths()))
-    // Prefer a PDF child, then any child attachment, then the item itself when
-    // it is a top-level attachment. Child rows carry rawPath/linkMode; the
-    // target is resolved here because readItem only resolves the self target.
-    const pdf = detail.attachments.find(entry => entry.contentType === 'application/pdf')
-    const attachment = detail.attachment ?? pdf ?? detail.attachments[0]
-    if (!attachment) throw Object.assign(new Error('This item has no attachment to open'), { code: 'library/not-found' })
-    const target = attachmentTarget(paths().storageDir, attachment.key, attachment.rawPath, attachment.linkMode)
+    // resolveAttachment handles both shapes: a top-level attachment key
+    // resolves to itself (its self row carries no `key` — feeding it into
+    // attachmentTarget made path.join receive `undefined`), anything else
+    // prefers its PDF child, then any child attachment.
+    const { target } = resolveAttachment(key)
     if (target.kind === 'url') {
       openExternal(target.url)
       return { opened: target.url }
     }
     if (target.kind !== 'file' || !fs.existsSync(target.path)) {
-      throw Object.assign(new Error(`Attachment file is missing on disk: ${target.path}`), { code: 'library/not-found' })
+      throw Object.assign(new Error(`附件文件不存在：${target.path}`), { code: 'library/not-found' })
     }
     const opened = reveal ? revealInFolder(target.path) : openExternal(target.path)
     return { opened: target.path, ok: opened }
+  }
+
+  // Open a web link from the built-in reader (PDF hyperlinks) in the system
+  // browser. Only http(s) is allowed — everything else (file:, javascript:, …)
+  // is rejected before it can reach the OS shell.
+  function openUrl(rawUrl) {
+    const value = String(rawUrl ?? '')
+    let parsed
+    try {
+      parsed = new URL(value)
+    } catch {
+      throw Object.assign(new Error(`Invalid URL: ${value}`), { code: 'library/invalid-url' })
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw Object.assign(new Error(`Only http(s) links can be opened, got "${parsed.protocol}"`), { code: 'library/invalid-url' })
+    }
+    const opened = openExternal(parsed.href)
+    return { opened: parsed.href, ok: opened }
   }
 
   // Resolve one attachment to its on-disk file for the built-in reader. Accepts
@@ -335,6 +358,18 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
       attachment,
       target,
     }
+  }
+
+  // 「打开方式」数据源：当前附件的注册应用（含默认标记与图标 data URL）。
+  function openApps(key) {
+    const { target } = resolveAttachment(key)
+    return fileApplications(target.path).then(apps => ({ apps }))
+  }
+
+  // 用用户在菜单里选中的注册应用打开附件；id 不在缓存列表内时拒绝。
+  function openWith(key, application) {
+    const { target } = resolveAttachment(key)
+    return openWithApplication(target.path, application)
   }
 
   // Metadata for the binary reader route (no base64 round trip).
@@ -381,6 +416,50 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
       bump()
       return { key, updated: true }
     },
+    changeType: (key, itemType, confirm) => withDb((instance) => {
+      // First call plans (the client confirms the dropped fields), the second applies.
+      if (confirm === true) {
+        ensureBackup()
+        const result = withDb(instance2 => changeItemType(instance2, key, itemType))
+        bump()
+        return result
+      }
+      const meta = instance.schema()
+      const row = instance.get('SELECT itemID, itemTypeID FROM items WHERE libraryID = ? AND key = ?', meta.libraryID, String(key ?? ''))
+      if (!row) throw Object.assign(new Error(`No item with key ${key}`), { code: 'library/not-found' })
+      const fromType = meta.itemTypeNames.get(row.itemTypeID)
+      const stored = instance.all(
+        'SELECT f.fieldName FROM itemData d JOIN fieldsCombined f ON f.fieldID = d.fieldID WHERE d.itemID = ?', row.itemID,
+      ).map(entry => entry.fieldName)
+      const plan = planTypeChange(fromType, itemType, stored)
+      return { key, itemType, transferred: plan.transfers, dropped: plan.dropped }
+    }),
+    /** Add-by-Identifier: resolve every DOI/ISBN/arXiv/PMID in a block of text. */
+    lookupMany: async text => {
+      const drafts = await resolveEachIdentifier(String(text ?? ''))
+      return { drafts }
+    },
+    noteCreate: input => {
+      ensureBackup()
+      const created = withDb(instance => createNoteItem(instance, input))
+      bump()
+      return { key: created.key }
+    },
+    noteUpdate: (key, text) => {
+      ensureBackup()
+      const updated = withDb(instance => updateNoteItem(instance, key, text))
+      bump()
+      return updated
+    },
+    createUrlAttachment: input => {
+      ensureBackup()
+      const created = withDb(instance => createUrlAttachment(instance, input))
+      bump()
+      return { key: created.key }
+    },
+    /** Item-type shapes for the item pane / create menu (bundled schema, no db). */
+    itemSchema: () => typeList(),
+    itemTypeSchema: itemType => typeSchema(itemType),
     trash: (keys, deleted) => {
       ensureBackup()
       const changed = withDb(instance => trashItems(instance, keys, deleted))
@@ -414,6 +493,9 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
     importFile: importOne,
     saveUpload,
     openRecord,
+    openUrl,
+    openApps,
+    openWith,
     attachmentFileInfo: key => attachmentFileInfo(key),
     /** Annotations of one attachment, positions parsed (the built-in reader). */
     annotations: key => withDb(instance => readAnnotations(instance, String(key ?? ''))),
@@ -459,10 +541,12 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
       return { saved: true }
     },
     chat: {
-      open: async (fresh) => {
-        const sessionId = await ensureSession(ctx, home, state, { fresh, logger })
+      open: async (options = {}) => {
+        const result = options && typeof options === 'object'
+          ? await openSession(ctx, home, state, { ...options, logger })
+          : await ensureSession(ctx, home, state, { fresh: options === true, logger })
         saveState(state)
-        return { sessionId }
+        return result
       },
       page: async (options) => {
         const page = await readPage(ctx, home, state, options)
@@ -485,6 +569,8 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
       check: () => updater.check(),
       apply: () => updater.apply(),
     },
+    translateModels: () => translator.listModels(),
+    translateStream: (text, signal) => translator.stream(text, signal),
     dispose() {
       watcher?.dispose()
       clearInterval(autoSyncTimer)

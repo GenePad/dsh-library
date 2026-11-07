@@ -50,6 +50,11 @@ export async function ensureSession(ctx, home, state, options = {}) {
       logger.warn?.(`library: could not archive the previous chat session: ${error?.message ?? error}`)
     }
   }
+  return createSession(ctx, home, state, { logger })
+}
+
+/** Create a fresh session in the Library workspace and set it as current. */
+async function createSession(ctx, home, state, { title, logger = console } = {}) {
   const workspaceId = await ensureWorkspace(ctx, home)
   const preset = await presetName(ctx)
   const { sessionId } = await ctx.sessionController.create({
@@ -60,12 +65,51 @@ export async function ensureSession(ctx, home, state, options = {}) {
   const resolved = await ctx.sessionController.resolveAgent(sessionId).catch(() => undefined)
   if (resolved && !('error' in resolved)) {
     try {
-      await ctx.sessionTitle.rename(resolved.agent.session, 'Library assistant')
+      await ctx.sessionTitle.rename(resolved.agent.session, title ?? 'Library assistant')
     } catch {
       // A title is cosmetic; a renamed failure must not block the chat.
     }
   }
   return sessionId
+}
+
+/**
+ * Open a session for the dock. Two modes mirror the dock's two entry points:
+ * - `bindKey` (an article is open in the reader): the item keeps ONE bound
+ *   conversation — it is reused on every open; `fresh` unbinds the old
+ *   session (it stays in the workspace) and binds a new one instead.
+ * - no `bindKey` (plain list view): every open starts a new conversation,
+ *   like the toolbar's 新对话.
+ * @param {object} ctx
+ * @param {string} home
+ * @param {object} state
+ * @param {{fresh?:boolean, bindKey?:string, title?:string, logger?:object}} [options]
+ */
+export async function openSession(ctx, home, state, options = {}) {
+  const logger = options.logger ?? console
+  const bindKey = /^[23456789ABCDEFGHIJKLMNPQRSTUVWXYZ]{8}$/.test(String(options.bindKey ?? ''))
+    ? String(options.bindKey)
+    : ''
+  if (bindKey) {
+    state.itemBindings = state.itemBindings && typeof state.itemBindings === 'object' ? state.itemBindings : {}
+    const bound = options.fresh === true ? undefined : state.itemBindings[bindKey]
+    if (bound) {
+      const resolved = await ctx.sessionController.resolveAgent(bound).catch(() => undefined)
+      if (resolved && !('error' in resolved)) {
+        state.chatSessionId = bound
+        return { sessionId: bound, created: false, bound: true }
+      }
+      // A dangling binding (session pruned) falls through to a fresh create.
+    }
+    const sessionId = await createSession(ctx, home, state, { title: options.title, logger })
+    state.itemBindings[bindKey] = sessionId
+    // Cap the binding map so state.json stays small.
+    const keys = Object.keys(state.itemBindings)
+    for (const stale of keys.slice(0, Math.max(0, keys.length - 200))) delete state.itemBindings[stale]
+    return { sessionId, created: true, bound: true }
+  }
+  const sessionId = await ensureSession(ctx, home, state, { fresh: options.fresh === true, logger })
+  return { sessionId, created: options.fresh === true, bound: false }
 }
 
 /**
@@ -87,6 +131,8 @@ export function chatGuidance(context) {
     '「文献助手·上下文」',
     '- 回答文献问题优先使用 library_search / library_item 工具，从标题、摘要（abstractNote）、标签等元数据中提取信息，不要一上来就阅读全文。',
     '- 只有当用户明确要求读原文，或问题明显需要全文细节（具体数值、图表、某页内容、方法细节）时才使用 library_read，并优先用它的 search 参数检索定位，而不是从头通读。',
+    '- 用户要求「入库/收录/添加文献」时：有文件用 library_import；只有 DOI/ISBN/arXiv/PMID 或题名时先用 library_lookup 检索元数据，再把检索结果（含作者/年份/期刊）报给用户确认后用 library_add 建条目，并用 library_update 的 addCollections 归入分类。',
+    '- 整理分类时先 library_collections 看现有分类树，再建分类（library_collection 的 create）或把条目移入/移出（library_update）。',
   ]
   if (mode === 'reader' && (title || key)) {
     lines.push(`- 当前已在内置阅读器中打开文献《${title}》${key ? `（key: ${key}）` : ''}，用户的问题大概率与这篇文献的内容相关。`)

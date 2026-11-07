@@ -75,6 +75,23 @@ export function createChannel(runtime) {
           }))
         case 'update':
           return ok(runtime.update(String(body.key ?? ''), body.patch && typeof body.patch === 'object' ? body.patch : {}))
+        case 'change-type':
+          return ok(runtime.changeType(String(body.key ?? ''), String(body.itemType ?? ''), body.confirm === true))
+        case 'note-create':
+          return ok(runtime.noteCreate({
+            parentKey: typeof body.parentKey === 'string' ? body.parentKey : undefined,
+            text: String(body.text ?? ''),
+          }))
+        case 'note-update':
+          return ok(runtime.noteUpdate(String(body.key ?? ''), String(body.text ?? '')))
+        case 'attachment-url':
+          return ok(runtime.createUrlAttachment({
+            parentKey: typeof body.parentKey === 'string' ? body.parentKey : undefined,
+            url: String(body.url ?? ''),
+            title: typeof body.title === 'string' ? body.title : undefined,
+          }))
+        case 'schema':
+          return ok(runtime.itemSchema())
         case 'trash':
           return ok(runtime.trash(Array.isArray(body.keys) ? body.keys.map(String) : [], body.restore !== true))
         case 'delete':
@@ -107,11 +124,24 @@ export function createChannel(runtime) {
           return ok(result)
         }
         case 'lookup': {
-          const draft = await resolveMetadata({ identifier: String(body.identifier ?? '') })
+          const identifier = String(body.identifier ?? '')
+          // Multi-value input (one id per line) resolves each like Zotero's
+          // lookup panel; a single id keeps the old single-draft shape.
+          if (/[\r\n]/.test(identifier.trim())) {
+            const drafts = await runtime.lookupMany(identifier)
+            return ok(drafts.filter(Boolean))
+          }
+          const draft = await resolveMetadata({ identifier })
           return ok(draft ?? null)
         }
         case 'open':
           return ok(runtime.openRecord(String(body.key ?? ''), body.reveal === true))
+        case 'open-url':
+          return ok(runtime.openUrl(body.url))
+        case 'open-apps':
+          return ok(await runtime.openApps(String(body.key ?? '')))
+        case 'open-with':
+          return ok(await runtime.openWith(String(body.key ?? ''), body.application))
         case 'annotations-list':
           return ok({ annotations: runtime.annotations(String(body.key ?? '')) })
         case 'annotation-create':
@@ -129,7 +159,11 @@ export function createChannel(runtime) {
         case 'sync-status':
           return ok(runtime.syncStatus())
         case 'chat-open':
-          return ok(await runtime.chat.open(body.fresh === true))
+          return ok(await runtime.chat.open({
+            fresh: body.fresh === true,
+            bindKey: typeof body.bindKey === 'string' ? body.bindKey : undefined,
+            title: typeof body.title === 'string' ? body.title : undefined,
+          }))
         case 'chat-page':
           return ok(await runtime.chat.page({
             beforeSeq: Number.isInteger(body.beforeSeq) ? body.beforeSeq : undefined,
@@ -153,6 +187,8 @@ export function createChannel(runtime) {
           return ok(await runtime.updates.check())
         case 'update-apply':
           return ok(await runtime.updates.apply())
+        case 'translate-models':
+          return ok(await runtime.translateModels())
         default:
           return fail(Object.assign(new Error(`Unknown endpoint "${endpoint}"`), { code: 'library/not-found' }))
       }

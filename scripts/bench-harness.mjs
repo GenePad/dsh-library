@@ -17,6 +17,7 @@ const mockDataJs = JSON.stringify({
   items: { total: 1, offset: 0, limit: 100, items: [{ key: 'AAAAAAAA', itemType: 'journalArticle', title: 'A test paper', date: '2024', year: 2024, doi: '', creators: 'Zhang', creatorList: [], publicationTitle: '', publisher: '', tags: [], firstCreator: 'Zhang', hasAttachment: true, dateAdded: '2026-01-01 00:00:00', dateModified: '2026-01-01 00:00:00' }] },
   item: { key: 'AAAAAAAA', itemType: 'journalArticle', title: 'A test paper', dateAdded: '', dateModified: '', version: 0, synced: false, deleted: false, fields: [{ field: 'title', value: 'A test paper' }], creators: [], tags: [], collections: [], attachments: [{ key: 'CCCCCCCC', title: 'sample.pdf', rawPath: 'storage:sample.pdf', linkMode: 0, contentType: 'application/pdf', syncState: 2, size: 1, target: { kind: 'file', path: 'C:/tmp/sample.pdf' } }], notes: [], annotations: [] },
   annotations: { annotations: [] },
+  schema: [{ itemType: 'journalArticle', fields: ['title', 'date'], fieldBases: {}, creatorTypes: [{ creatorType: 'author', primary: true }] }],
 })
 
 /**

@@ -9,39 +9,81 @@ export const name = 'dsh-library'
 export const inject = ['slots', 'layout']
 
 /**
+ * Jump the open settings panel to the 文库 section. The shell's nav rows expose
+ * no section ids (SettingsRoot renders plain buttons keyed by label), so match
+ * our section's label inside the modal nav; the modal mounts through a portal
+ * a frame after open, hence the short retry.
+ */
+function selectLibrarySection(attempt = 0) {
+  const panel = document.querySelector('[role="dialog"][data-shortcut-modal="settings"]')
+  const button = panel
+    ? [...panel.querySelectorAll('nav button')].find(node => node.textContent?.trim() === '文库')
+    : undefined
+  if (button) {
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    return
+  }
+  if (attempt < 24) setTimeout(() => selectLibrarySection(attempt + 1), 50)
+}
+
+/**
  * The settings panel's open state is shell-owned and exposes no service, so
- * the library's gear button replays the shell's own "settings.open" shortcut:
- * resolve the effective binding from the catalog (user remaps honored) and
- * synthesize that key event.
+ * the library's gear button runs the shell's own "settings.open" command and
+ * then lands on the 文库 section (already open → just jump, no toggle-close).
+ * Primary path invokes the command in the shortcut registry (desktop gestures
+ * arrive over the native Electron bridge and are NEVER dispatched from DOM key
+ * events, so a synthesized KeyboardEvent is silently ignored there); the
+ * fallback replays the effective binding as a key event for web-shaped hosts.
  */
 function dispatchSettingsShortcut(shortcuts) {
-  let binding = null
-  try {
-    const row = shortcuts?.catalog?.getSnapshot?.().find(entry => entry.id === 'settings.open')
-    binding = row?.binding ?? null
-  } catch {
-    // Service unavailable — fall through to the platform defaults below.
+  const panel = document.querySelector('[role="dialog"][data-shortcut-modal="settings"]')
+  if (!panel) {
+    const registry = shortcuts?.registry
+    let opened = false
+    if (registry && typeof registry.invoke === 'function') {
+      try {
+        // Mirror the shell's own modal detection (shortcuts/dom.ts): an open
+        // foreign dialog must not be covered silently.
+        const modals = document.querySelectorAll('[role="dialog"][aria-modal="true"], [role="menu"]')
+        const top = modals.length > 0 ? modals[modals.length - 1] : undefined
+        const modal = top ? (top.dataset?.shortcutModal ?? 'other') : null
+        registry.invoke('settings.open', { target: document.activeElement ?? document.body, region: 'page', modal })
+        opened = true
+      } catch {
+        // Registry shape changed across a dsh upgrade — fall through.
+      }
+    }
+    if (!opened) {
+      let binding = null
+      try {
+        const row = shortcuts?.catalog?.getSnapshot?.().find(entry => entry.id === 'settings.open')
+        binding = row?.binding ?? null
+      } catch {
+        // Service unavailable — fall through to the platform defaults below.
+      }
+      if (!binding) {
+        const runtime = shortcuts?.runtime ?? 'desktop'
+        const platform = shortcuts?.platform ?? 'windows'
+        binding = runtime === 'web'
+          ? { code: 'Comma', modifiers: ['control', 'alt'] }
+          : { code: 'Comma', modifiers: [platform === 'macos' ? 'meta' : 'control'] }
+      }
+      try {
+        window.dispatchEvent(new KeyboardEvent('keydown', {
+          code: binding.code,
+          ctrlKey: binding.modifiers.includes('control'),
+          altKey: binding.modifiers.includes('alt'),
+          shiftKey: binding.modifiers.includes('shift'),
+          metaKey: binding.modifiers.includes('meta'),
+          bubbles: true,
+          cancelable: true,
+        }))
+      } catch (error) {
+        console.warn('[dsh-library] opening the settings panel failed', error)
+      }
+    }
   }
-  if (!binding) {
-    const runtime = shortcuts?.runtime ?? 'desktop'
-    const platform = shortcuts?.platform ?? 'windows'
-    binding = runtime === 'web'
-      ? { code: 'Comma', modifiers: ['control', 'alt'] }
-      : { code: 'Comma', modifiers: [platform === 'macos' ? 'meta' : 'control'] }
-  }
-  try {
-    window.dispatchEvent(new KeyboardEvent('keydown', {
-      code: binding.code,
-      ctrlKey: binding.modifiers.includes('control'),
-      altKey: binding.modifiers.includes('alt'),
-      shiftKey: binding.modifiers.includes('shift'),
-      metaKey: binding.modifiers.includes('meta'),
-      bubbles: true,
-      cancelable: true,
-    }))
-  } catch (error) {
-    console.warn('[dsh-library] opening the settings panel failed', error)
-  }
+  selectLibrarySection()
 }
 
 export function apply(ctx) {

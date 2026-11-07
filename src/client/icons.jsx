@@ -88,6 +88,22 @@ export function ChevronDown({ size = 12 }) {
   )
 }
 
+export function ChevronLeftIcon({ size = 12 }) {
+  return (
+    <Svg size={size}>
+      <path {...stroke} d="m15 5-7 7 7 7" />
+    </Svg>
+  )
+}
+
+export function ChevronRightIcon({ size = 12 }) {
+  return (
+    <Svg size={size}>
+      <path {...stroke} d="m9 5 7 7-7 7" />
+    </Svg>
+  )
+}
+
 export function PlusIcon({ size = 14 }) {
   return (
     <Svg size={size}>
@@ -196,4 +212,64 @@ export function CopyIcon({ size = 14 }) {
     </Svg>
   )
 }
+
+export function WandIcon({ size = 14 }) {
+  return (
+    <Svg size={size}>
+      <path {...stroke} d="m14.5 5.5 4 4L8 20l-4 .5L4.5 16z" />
+      <path {...stroke} d="m13 7 4 4M17 3v3M21.5 5.5h-3M19 9l2 2" />
+    </Svg>
+  )
+}
+
+export function MinusIcon({ size = 13 }) {
+  return (
+    <Svg size={size}>
+      <path {...stroke} d="M5 12h14" />
+    </Svg>
+  )
+}
+
+export function ArrowUpIcon({ size = 12 }) {
+  return (
+    <Svg size={size}>
+      <path {...stroke} d="M12 19V5M6 11l6-6 6 6" />
+    </Svg>
+  )
+}
+
+export function ArrowDownIcon({ size = 12 }) {
+  return (
+    <Svg size={size}>
+      <path {...stroke} d="M12 5v14M6 13l6 6 6-6" />
+    </Svg>
+  )
+}
+
+export function ChevronUp({ size = 12 }) {
+  return (
+    <Svg size={size}>
+      <path {...stroke} d="m5 15 7-7 7 7" />
+    </Svg>
+  )
+}
+
+export function LinkIcon({ size = 12 }) {
+  return (
+    <Svg size={size}>
+      <path {...stroke} d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 1 0-5.7-5.6L11.6 6.8" />
+      <path {...stroke} d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 1 0 5.7 5.6l1.4-1.4" />
+    </Svg>
+  )
+}
+
+export function SwitchFieldIcon({ size = 12 }) {
+  return (
+    <Svg size={size}>
+      <path {...stroke} d="M4 7h10M4 12h16M4 17h16" />
+      <circle cx="17.5" cy="7" r="2.4" fill="currentColor" stroke="none" />
+    </Svg>
+  )
+}
+
 

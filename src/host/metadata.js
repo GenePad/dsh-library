@@ -5,6 +5,9 @@ const DOI_RE = /\b(10\.\d{4,9}\/[-._;()/:A-Z0-9]+)\b/i
 const ARXIV_RE = /(?:arxiv[:\s./]*)(\d{4}\.\d{4,5})(?:v\d+)?/i
 const ARXIV_OLD_RE = /(?:arxiv[:\s./]*)([a-z-]+(?:\.[A-Z]{2})?\/\d{7})(?:v\d+)?/i
 const ISBN_RE = /\b(97[89]\d{10}|\d{9}[\dX])\b/
+// PMID only with explicit context — bare digit runs would match years and page
+// numbers all over the place (Zotero requires the same).
+const PMID_RE = /\b(?:pmid[:\s]*|pubmed[:\s\/]*id[:\s]*)(\d{5,9})\b/i
 
 /** Detect identifiers inside arbitrary text (a file name, a pasted line, a PDF first page). */
 export function detectIdentifiers(text) {
@@ -16,6 +19,34 @@ export function detectIdentifiers(text) {
   if (arxiv) found.arxiv = arxiv[1]
   const isbn = ISBN_RE.exec(value.replace(/[-\s]/g, ''))
   if (isbn) found.isbn = isbn[1]
+  const pmid = PMID_RE.exec(value)
+  if (pmid) found.pmid = pmid[1]
+  return found
+}
+
+/**
+ * Every identifier in a text, in order of appearance — the Add-by-Identifier
+ * box accepts one id per line (Zotero's lookup panel behaviour).
+ */
+export function extractIdentifiers(text) {
+  const value = String(text ?? '')
+  const found = []
+  const seen = new Set()
+  const push = (kind, id) => {
+    const entry = { kind, id }
+    const signature = `${kind}:${id}`
+    if (!seen.has(signature)) {
+      seen.add(signature)
+      found.push(entry)
+    }
+  }
+  for (const match of value.matchAll(new RegExp(DOI_RE.source, 'gi'))) push('doi', match[1].replace(/[.,;]+$/, ''))
+  for (const pattern of [ARXIV_RE, ARXIV_OLD_RE]) {
+    const match = pattern.exec(value)
+    if (match) push('arxiv', match[1])
+  }
+  for (const match of value.replace(/[-\s]/g, ' ').matchAll(new RegExp(ISBN_RE.source, 'g'))) push('isbn', match[1])
+  for (const match of value.matchAll(new RegExp(PMID_RE.source, 'gi'))) push('pmid', match[1])
   return found
 }
 
@@ -202,6 +233,64 @@ export async function lookupArxiv(arxivId) {
   } catch {
     return undefined
   }
+}
+
+/** Resolve a PubMed id through NCBI's eutils summary API. */
+export async function lookupPmid(pmid) {
+  try {
+    const response = await fetch(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=${encodeURIComponent(pmid)}&retmode=json`, {
+      signal: AbortSignal.timeout(20_000),
+    })
+    if (!response.ok) return undefined
+    const data = await response.json()
+    const result = data?.result?.[String(pmid)]
+    if (!result || result.error) return undefined
+    const fields = {
+      title: String(result.title ?? '').replace(/\s*\.\s*$/, ''),
+      publicationTitle: String(result.fulljournalname ?? result.source ?? ''),
+      journalAbbreviation: String(result.source ?? ''),
+      date: String(result.pubdate ?? ''),
+      volume: String(result.volume ?? ''),
+      issue: String(result.issue ?? ''),
+      pages: String(result.pages ?? ''),
+    }
+    for (const key of Object.keys(fields)) if (fields[key] === '') delete fields[key]
+    if (Array.isArray(result.articleids)) {
+      const doi = result.articleids.find(entry => entry.idtype === 'doi')?.value
+      if (doi) fields.DOI = String(doi)
+    }
+    const creators = (Array.isArray(result.authors) ? result.authors : []).map(author => {
+      const name = String(author.name ?? '')
+      const parts = name.split(/\s+/)
+      return parts.length > 1
+        ? { firstName: parts.slice(0, -1).join(' '), lastName: parts.at(-1), creatorType: 'author' }
+        : { fieldMode: 1, lastName: name, creatorType: 'author' }
+    }).filter(creator => creator.lastName)
+    if (Object.keys(fields).length === 0) return undefined
+    return { itemType: 'journalArticle', fields, creators, tags: [], source: 'pubmed', identifier: `pmid:${pmid}` }
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Resolve every identifier in a block of text (the Add-by-Identifier box).
+ * Returns one draft per identifier, `undefined` for the ones that missed, so
+ * the caller can report partial failures like Zotero's lookup does.
+ */
+export async function resolveEachIdentifier(text) {
+  const identifiers = extractIdentifiers(text).slice(0, 50)
+  return Promise.all(identifiers.map(async ({ kind, id }) => {
+    try {
+      if (kind === 'doi') return await lookupDoi(id) ?? undefined
+      if (kind === 'arxiv') return await lookupArxiv(id) ?? undefined
+      if (kind === 'isbn') return await lookupIsbn(id) ?? undefined
+      if (kind === 'pmid') return await lookupPmid(id) ?? undefined
+    } catch {
+      // One failed identifier must not kill the batch.
+    }
+    return undefined
+  }))
 }
 
 /** Turn a Zotero-style file name into a bibliographic query. */
