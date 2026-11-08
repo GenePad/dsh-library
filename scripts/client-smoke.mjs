@@ -461,6 +461,30 @@ assert.ok(text.includes('Cas-Screen'), 'collection tree rendered')
 assert.ok(text.includes('AAV'), 'tag rendered')
 assert.ok(text.includes('文献助手'), 'assistant dock bar rendered')
 assert.ok(text.includes('文库'), 'footer entry rendered')
+// The active collection row carries a PERSISTENT selected highlight (solid
+// accent, Zotero-style), not just hover.
+assert.ok(
+  container.querySelector('.lib-left .lib-row.selected')?.textContent.includes('我的文库'),
+  '我的文库 row selected by default',
+)
+await act(async () => {
+  const unfiled = [...container.querySelectorAll('.lib-left .lib-row')].find(node => node.textContent.includes('未分类'))
+  unfiled.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  for (let i = 0; i < 3; i += 1) await tick()
+})
+assert.ok(
+  [...container.querySelectorAll('.lib-left .lib-row')].find(node => node.textContent.includes('未分类'))?.classList.contains('selected'),
+  'clicking a smart view moves the selected highlight',
+)
+assert.ok(
+  ![...container.querySelectorAll('.lib-left .lib-row')].find(node => node.textContent.includes('我的文库'))?.classList.contains('selected'),
+  'the previous selection loses its highlight',
+)
+await act(async () => {
+  const all = [...container.querySelectorAll('.lib-left .lib-row')].find(node => node.textContent.includes('我的文库'))
+  all.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  for (let i = 0; i < 3; i += 1) await tick()
+})
 
 // The toolbar gear opens dsh's native settings panel through the shell's own
 // settings.open command.
