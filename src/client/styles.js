@@ -159,25 +159,35 @@ const CSS = `
 .lib-tagchip .lib-count { color: var(--lib-text-3); font-variant-numeric: tabular-nums; }
 
 .lib-items { flex: 1; overflow: auto; min-height: 0; position: relative; }
-/* The header is the first child of the scroll container: sticky keeps it on
-   top while scrolling vertically, and horizontal scrolling moves it in sync
-   with the rows (it can never spill into the right pane anymore). */
+/* One shared-width table: header + rows live inside .lib-table, whose width
+   is the widest row's content (max-content) or the viewport, whichever is
+   larger — every grid then resolves identical tracks and columns line up.
+   The header sticks while scrolling vertically; horizontal scrolling moves
+   header and rows in sync. */
+.lib-table { width: max-content; min-width: 100%; position: relative; }
 .lib-table-head {
   display: grid; gap: 8px; align-items: center;
   height: 26px; padding: 0 10px; border-bottom: 1px solid var(--lib-border); background: var(--lib-bg);
   font-size: 11px; color: var(--lib-text-3); position: sticky; top: 0; z-index: 2;
-  width: max-content; min-width: 100%;
 }
+.lib-table-head button, .lib-table-head > span { position: relative; }
 .lib-table-head button { color: inherit; font-size: inherit; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lib-table-head button.sorted { color: var(--lib-text); font-weight: 600; }
 .lib-table-head .num { text-align: right; }
+/* Column width handle: the cell's right edge. */
+.lib-colresize {
+  position: absolute; top: 0; right: 0; width: 7px; height: 100%;
+  cursor: col-resize; border-radius: 3px; z-index: 1;
+}
+.lib-colresize:hover { background: color-mix(in srgb, var(--lib-accent) 35%, transparent); }
+body.lib-col-resizing { cursor: col-resize; user-select: none; }
+body.lib-col-resizing .lib-colresize { background: color-mix(in srgb, var(--lib-accent) 45%, transparent); }
 .lib-colbtn { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 18px; border-radius: 4px; color: var(--lib-text-3); background: var(--lib-bg); }
 .lib-colbtn:hover, .lib-colbtn.open { background: var(--lib-bg-hover); color: var(--lib-text); }
 .lib-itemrow {
   display: grid; gap: 8px; align-items: center;
   min-height: 28px; padding: 3px 10px; border-bottom: 1px solid var(--lib-border-soft);
   cursor: default; user-select: none;
-  width: max-content; min-width: 100%;
 }
 .lib-itemrow:hover { background: var(--lib-bg-hover); }
 .lib-itemrow.selected { background: var(--lib-accent-soft); }

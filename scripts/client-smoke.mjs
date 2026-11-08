@@ -598,6 +598,25 @@ await act(async () => {
 assert.ok(headerLabels().findIndex(text => text.includes('其他')) < headerLabels().findIndex(text => text.includes('年份')), 'dragging a header cell reorders the columns')
 const columnsSaved = JSON.parse(localStorage.getItem('dsh-library:columns'))
 assert.ok(columnsSaved.includes('extra') && columnsSaved.includes('pages'), 'visible columns persisted across sessions')
+// Header and rows share the .lib-table width wrapper so their grid tracks
+// resolve identically (alignment).
+assert.ok(container.querySelector('.lib-items > .lib-table > .lib-table-head'), 'header and rows share the .lib-table width wrapper')
+assert.ok(container.querySelector('.lib-table .lib-itemrow'), 'item rows render inside the shared-width table')
+// Column widths are user-adjustable: dragging a cell's right edge persists a
+// new width and drives both header and row grids; double-click resets it.
+await act(async () => {
+  const handle = container.querySelector('.lib-table-head button .lib-colresize')
+  assert.ok(handle, 'width resize handle rendered in the header cells')
+  handle.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: 200 }))
+  document.dispatchEvent(new window.MouseEvent('mousemove', { bubbles: true, clientX: 240 }))
+  document.dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true }))
+  await tick()
+})
+const widthsSaved = JSON.parse(localStorage.getItem('dsh-library:column-widths'))
+assert.ok(widthsSaved && Object.keys(widthsSaved).length > 0, 'dragging the edge persists a column width')
+const savedWidth = Object.values(widthsSaved)[0]
+assert.ok(container.querySelector('.lib-itemrow').style.gridTemplateColumns.includes(`${savedWidth}px`), 'the new width drives the row grid')
+assert.ok(container.querySelector('.lib-table-head').style.gridTemplateColumns.includes(`${savedWidth}px`), 'the new width drives the header grid too')
 
 // 新建条目 = Zotero's type menu: pick a type, an empty item is created and
 // selected for editing in the item pane.

@@ -1,7 +1,7 @@
 import * as React from 'react'
 import * as api from './api.js'
 import { CollectionsPane } from './collections-pane.jsx'
-import { ItemsPane, restoreColumns, columnFieldNames } from './items-pane.jsx'
+import { ItemsPane, restoreColumns, restoreColumnWidths, columnFieldNames } from './items-pane.jsx'
 import { DetailsPane } from './details-pane.jsx'
 import { ChatDock } from './chat-dock.jsx'
 import { SETTINGS_SAVED_EVENT } from './settings-section.jsx'
@@ -124,6 +124,8 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
   // Visible list columns (Zotero's column picker): owned here so the items
   // request can carry the matching field names to the host.
   const [columns, setColumns] = React.useState(restoreColumns)
+  // User-adjusted column widths (px per column id); defaults stay in COLUMN_DEFS.
+  const [columnWidths, setColumnWidths] = React.useState(restoreColumnWidths)
   // Locate requests (newly imported / show-in-library): {key, nonce}; the
   // nonce makes repeated locates of the same key re-trigger the scroll.
   const [reveal, setReveal] = React.useState(null)
@@ -326,10 +328,11 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
       localStorage.setItem(SORT_STORAGE, JSON.stringify({ sort, desc }))
       localStorage.setItem(DETAILS_STORAGE, detailsOpen ? '1' : '0')
       localStorage.setItem('dsh-library:columns', JSON.stringify(columns))
+      localStorage.setItem('dsh-library:column-widths', JSON.stringify(columnWidths))
     } catch {
       // Preferences are optional.
     }
-  }, [view, sort, desc, detailsOpen, columns])
+  }, [view, sort, desc, detailsOpen, columns, columnWidths])
 
   // Reload whenever the view, search text or sort changes.
   React.useEffect(() => {
@@ -1231,6 +1234,13 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
                     importing={importing}
                     columns={columns}
                     onSetColumns={setColumns}
+                    columnWidths={columnWidths}
+                    onSetColumnWidth={(id, width) => setColumnWidths(previous => {
+                      const next = { ...previous }
+                      if (Number.isFinite(width)) next[id] = width
+                      else delete next[id]
+                      return next
+                    })}
                     reveal={reveal}
                     onContextMenu={setContextMenu}
                   />

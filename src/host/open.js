@@ -30,7 +30,12 @@ export function revealInFolder(target) {
   if (value === '') return false
   try {
     if (process.platform === 'win32') {
-      spawn('explorer.exe', [`/select,${value}`], { detached: true, stdio: 'ignore' }).unref()
+      // The flag and the path must be SEPARATE arguments. Node quotes an
+      // argument containing spaces as a whole (`"/select,C:\a b\c.pdf"`),
+      // which Explorer cannot parse — it silently opens the default shell
+      // folder (Documents) instead. With `/select,` on its own the path is
+      // quoted alone, and file names containing commas survive too.
+      spawn('explorer.exe', ['/select,', value], { detached: true, stdio: 'ignore' }).unref()
     } else if (process.platform === 'darwin') {
       spawn('open', ['-R', value], { detached: true, stdio: 'ignore' }).unref()
     } else {

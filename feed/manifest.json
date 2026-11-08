@@ -1,23 +1,23 @@
 {
-  "version": "0.1.7",
+  "version": "0.1.8",
   "base": "../",
-  "publishedAt": 1794108209174,
+  "publishedAt": 1794109826914,
   "notes": "",
   "files": [
     {
       "path": "package.json",
       "size": 1657,
-      "sha256": "3a923744c885d2854b77a0cfd7ea6b911986d440ab84f9c312be3e6b34e9299c"
+      "sha256": "c31cd18ac5aee731d5317bd85be47cfdb5c158530e486aa4d9787969d1f7c0ad"
     },
     {
       "path": "index.js",
       "size": 6894,
-      "sha256": "f373df21db0b0950057e620f8bb4e3e10b62f8d6dbda55df662db95da1310280"
+      "sha256": "82325f6cca826f60e70f2848f782db65e4b06f2655b43e6d1e4b6063c875f84b"
     },
     {
       "path": "client.js",
-      "size": 1849620,
-      "sha256": "44c94e1ec2e3ba8e84b59fe60bc9ce5ec17078030397f1b182888200ecffc071"
+      "size": 1851627,
+      "sha256": "c2af8192209f6e8fdd0c90cd540e236972ecedf74a23a8cb978cec28e0dbcc65"
     },
     {
       "path": "cordis.patch.yml",
@@ -76,8 +76,8 @@
     },
     {
       "path": "src/client/items-pane.jsx",
-      "size": 20141,
-      "sha256": "e09afe0e50bba94314b9be1361cdf0e01cd30ebde3c1b4096f0f313c1758f54c"
+      "size": 22883,
+      "sha256": "49a301ba562620bb01e219a0a06b9e3ba1df605569d0c5118c992963d5a96465"
     },
     {
       "path": "src/client/labels.js",
@@ -86,8 +86,8 @@
     },
     {
       "path": "src/client/library-page.jsx",
-      "size": 53678,
-      "sha256": "4896fdb2a751d08aae9e3bbd5a3b6d39e56bbe3d14b9833eeda44e55fae88e3a"
+      "size": 54310,
+      "sha256": "b8f2e88e69b08d12b96cf2a872cb85f3e698dec62fa0aecb75798b642d70ac0c"
     },
     {
       "path": "src/client/pdf-util.js",
@@ -111,8 +111,8 @@
     },
     {
       "path": "src/client/styles.js",
-      "size": 50321,
-      "sha256": "1a6c9f0e490e118c61bd6900be5be92dc61f667c94ebbede0ef4b3d8745e0774"
+      "size": 50954,
+      "sha256": "fa863a15f3a0c3a660c1c31fd696bfde74ff2bb6f26039b1789c5ceb4b450b4f"
     },
     {
       "path": "src/client/util.js",
@@ -161,8 +161,8 @@
     },
     {
       "path": "src/host/open.js",
-      "size": 1589,
-      "sha256": "0cbfe9da3f0a11b6a26f842d257fd1742b92e7fa1048155f4cf238e03bcd7ed1"
+      "size": 1964,
+      "sha256": "490a7609dbfd3ad7202a10193b75b6a3fdf1c24913d76a40641c9fafe1ce5353"
     },
     {
       "path": "src/host/pdf.js",
@@ -261,8 +261,8 @@
     },
     {
       "path": "AGENTS.md",
-      "size": 38717,
-      "sha256": "a358f162305af075715c9d540ac48e37b5760834f6347b28c88fca87f1ea001d"
+      "size": 45110,
+      "sha256": "74752d2d1d2f7bf92fa471460200250b48a76c82e68fcec69dd584e5f91b3ecc"
     }
   ]
 }

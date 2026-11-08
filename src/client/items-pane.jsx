@@ -13,49 +13,71 @@ const COLUMNS_STORAGE = 'dsh-library:columns'
  * sort key ('field:<name>' sorts by any field).
  */
 export const COLUMN_DEFS = [
-  { id: 'title', label: '标题', width: 'minmax(160px, 1fr)', fixed: true, sort: 'title' },
-  { id: 'creator', label: '创建者', width: '150px', sort: 'creator' },
-  { id: 'itemType', label: FIELD_LABELS.itemType, width: '82px', sort: 'itemType' },
-  { id: 'date', label: FIELD_LABELS.date, width: '110px', sort: 'date' },
-  { id: 'year', label: '年份', width: '52px', sort: 'date', numeric: true },
-  { id: 'publisher', label: FIELD_LABELS.publisher, width: '130px', field: 'publisher' },
-  { id: 'publicationTitle', label: FIELD_LABELS.publicationTitle, width: '170px', field: 'publicationTitle' },
-  { id: 'journalAbbreviation', label: FIELD_LABELS.journalAbbreviation, width: '90px', field: 'journalAbbreviation' },
-  { id: 'language', label: FIELD_LABELS.language, width: '80px', field: 'language' },
-  { id: 'accessDate', label: FIELD_LABELS.accessDate, width: '110px', field: 'accessDate', sort: 'field:accessDate' },
-  { id: 'libraryCatalog', label: FIELD_LABELS.libraryCatalog, width: '90px', field: 'libraryCatalog' },
-  { id: 'callNumber', label: FIELD_LABELS.callNumber, width: '100px', field: 'callNumber' },
-  { id: 'rights', label: FIELD_LABELS.rights, width: '90px', field: 'rights' },
-  { id: 'dateAdded', label: FIELD_LABELS.dateAdded, width: '96px', sort: 'dateAdded' },
-  { id: 'dateModified', label: FIELD_LABELS.dateModified, width: '96px', sort: 'dateModified' },
-  { id: 'archive', label: FIELD_LABELS.archive, width: '90px', field: 'archive' },
-  { id: 'archiveLocation', label: FIELD_LABELS.archiveLocation, width: '100px', field: 'archiveLocation' },
-  { id: 'place', label: FIELD_LABELS.place, width: '80px', field: 'place' },
-  { id: 'volume', label: FIELD_LABELS.volume, width: '60px', field: 'volume' },
-  { id: 'edition', label: FIELD_LABELS.edition, width: '70px', field: 'edition' },
-  { id: 'number', label: FIELD_LABELS.number, width: '70px', field: 'number' },
-  { id: 'pages', label: FIELD_LABELS.pages, width: '80px', field: 'pages' },
-  { id: 'issue', label: FIELD_LABELS.issue, width: '60px', field: 'issue' },
-  { id: 'series', label: FIELD_LABELS.series, width: '90px', field: 'series' },
-  { id: 'seriesTitle', label: FIELD_LABELS.seriesTitle, width: '100px', field: 'seriesTitle' },
-  { id: 'court', label: FIELD_LABELS.court, width: '100px', field: 'court' },
-  { id: 'medium', label: FIELD_LABELS.medium, width: '80px', field: 'medium' },
-  { id: 'type', label: FIELD_LABELS.type, width: '80px', field: 'type' },
-  { id: 'system', label: FIELD_LABELS.system, width: '80px', field: 'system' },
-  { id: 'shortTitle', label: FIELD_LABELS.shortTitle, width: '120px', field: 'shortTitle' },
-  { id: 'extra', label: FIELD_LABELS.extra, width: '110px', field: 'extra' },
-  { id: 'doi', label: 'DOI', width: '110px', field: 'DOI', sort: 'field:DOI' },
-  { id: 'tags', label: FIELD_LABELS.tags, width: '150px' },
-  { id: 'hasAttachment', label: '附件', width: '36px', icon: 'attachment', sort: 'hasAttachment' },
-  { id: 'numNotes', label: '笔记', width: '36px', icon: 'note', sort: 'numNotes', numeric: true },
+  { id: 'title', label: '标题', width: 260, fixed: true, sort: 'title' },
+  { id: 'creator', label: '创建者', width: 150, sort: 'creator' },
+  { id: 'itemType', label: FIELD_LABELS.itemType, width: 82, sort: 'itemType' },
+  { id: 'date', label: FIELD_LABELS.date, width: 110, sort: 'date' },
+  { id: 'year', label: '年份', width: 52, sort: 'date', numeric: true },
+  { id: 'publisher', label: FIELD_LABELS.publisher, width: 130, field: 'publisher' },
+  { id: 'publicationTitle', label: FIELD_LABELS.publicationTitle, width: 170, field: 'publicationTitle' },
+  { id: 'journalAbbreviation', label: FIELD_LABELS.journalAbbreviation, width: 90, field: 'journalAbbreviation' },
+  { id: 'language', label: FIELD_LABELS.language, width: 80, field: 'language' },
+  { id: 'accessDate', label: FIELD_LABELS.accessDate, width: 110, field: 'accessDate', sort: 'field:accessDate' },
+  { id: 'libraryCatalog', label: FIELD_LABELS.libraryCatalog, width: 90, field: 'libraryCatalog' },
+  { id: 'callNumber', label: FIELD_LABELS.callNumber, width: 100, field: 'callNumber' },
+  { id: 'rights', label: FIELD_LABELS.rights, width: 90, field: 'rights' },
+  { id: 'dateAdded', label: FIELD_LABELS.dateAdded, width: 96, sort: 'dateAdded' },
+  { id: 'dateModified', label: FIELD_LABELS.dateModified, width: 96, sort: 'dateModified' },
+  { id: 'archive', label: FIELD_LABELS.archive, width: 90, field: 'archive' },
+  { id: 'archiveLocation', label: FIELD_LABELS.archiveLocation, width: 100, field: 'archiveLocation' },
+  { id: 'place', label: FIELD_LABELS.place, width: 80, field: 'place' },
+  { id: 'volume', label: FIELD_LABELS.volume, width: 60, field: 'volume' },
+  { id: 'edition', label: FIELD_LABELS.edition, width: 70, field: 'edition' },
+  { id: 'number', label: FIELD_LABELS.number, width: 70, field: 'number' },
+  { id: 'pages', label: FIELD_LABELS.pages, width: 80, field: 'pages' },
+  { id: 'issue', label: FIELD_LABELS.issue, width: 60, field: 'issue' },
+  { id: 'series', label: FIELD_LABELS.series, width: 90, field: 'series' },
+  { id: 'seriesTitle', label: FIELD_LABELS.seriesTitle, width: 100, field: 'seriesTitle' },
+  { id: 'court', label: FIELD_LABELS.court, width: 100, field: 'court' },
+  { id: 'medium', label: FIELD_LABELS.medium, width: 80, field: 'medium' },
+  { id: 'type', label: FIELD_LABELS.type, width: 80, field: 'type' },
+  { id: 'system', label: FIELD_LABELS.system, width: 80, field: 'system' },
+  { id: 'shortTitle', label: FIELD_LABELS.shortTitle, width: 120, field: 'shortTitle' },
+  { id: 'extra', label: FIELD_LABELS.extra, width: 110, field: 'extra' },
+  { id: 'doi', label: 'DOI', width: 110, field: 'DOI', sort: 'field:DOI' },
+  { id: 'tags', label: FIELD_LABELS.tags, width: 150 },
+  { id: 'hasAttachment', label: '附件', width: 36, icon: 'attachment', sort: 'hasAttachment' },
+  { id: 'numNotes', label: '笔记', width: 36, icon: 'note', sort: 'numNotes', numeric: true },
 ]
 const DEFAULT_COLUMNS = ['title', 'creator', 'year', 'hasAttachment']
 const KNOWN = new Set(COLUMN_DEFS.map(column => column.id))
 const COLUMN_BY_ID = new Map(COLUMN_DEFS.map(column => [column.id, column]))
+const COLUMN_WIDTH_STORAGE = 'dsh-library:column-widths'
+const COLUMN_MIN_WIDTH = 24
+const COLUMN_MAX_WIDTH = 1000
 // Columns whose values come from dedicated list fields, not itemData.
 const SPECIAL_COLUMNS = new Set([
   'title', 'creator', 'itemType', 'date', 'year', 'dateAdded', 'dateModified', 'tags', 'hasAttachment', 'numNotes',
 ])
+
+/** Persisted per-column pixel widths; unknown ids and junk values are dropped. */
+export function restoreColumnWidths() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(COLUMN_WIDTH_STORAGE) ?? 'null')
+    if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+      const widths = {}
+      for (const [id, value] of Object.entries(saved)) {
+        if (KNOWN.has(id) && Number.isFinite(value) && value >= COLUMN_MIN_WIDTH && value <= COLUMN_MAX_WIDTH) {
+          widths[id] = Math.round(value)
+        }
+      }
+      return widths
+    }
+  } catch {
+    // A malformed preference falls back to the defaults.
+  }
+  return {}
+}
 
 /** Persisted visible-column order; the title column always stays. */
 export function restoreColumns() {
@@ -117,7 +139,7 @@ export function ItemsPane({
   items, total, view, sort, desc, loading,
   selectedKeys, activeKey, onSelect, onOpen, onSort, onLoadMore, onNotify,
   onImportFiles, importing,
-  columns, onSetColumns, reveal, onContextMenu,
+  columns, onSetColumns, columnWidths, onSetColumnWidth, reveal, onContextMenu,
 }) {
   const [menuOpen, setMenuOpen] = React.useState(false)
   const menuRef = React.useRef(null)
@@ -137,6 +159,8 @@ export function ItemsPane({
   // Column drag state for header reordering (Zotero lets you drag headers).
   const dragColumnId = React.useRef(null)
   const listRef = React.useRef(null)
+  // While a width handle is dragged, native HTML5 reordering must stay off.
+  const [resizing, setResizing] = React.useState(false)
 
   React.useEffect(() => {
     if (!menuOpen) return undefined
@@ -196,7 +220,10 @@ export function ItemsPane({
   const rows = items ?? []
   const viewName = view.kind === 'collection' ? view.name : view.kind === 'tag' ? `#${view.name}` : ''
   const visible = columns.map(id => COLUMN_DEFS.find(column => column.id === id)).filter(Boolean)
-  const template = visible.map(column => column.width).join(' ')
+  // Explicit pixel widths (Zotero-style): every row and the header get the
+  // same fixed tracks, so columns always line up; spare viewport width stays
+  // blank at the right edge instead of stretching a column.
+  const template = visible.map(column => `${Math.round(columnWidths?.[column.id] ?? column.width)}px`).join(' ')
 
   const toggleColumn = (id, fixed) => {
     if (fixed) return
@@ -204,6 +231,41 @@ export function ItemsPane({
       ? (previous.length > 1 ? previous.filter(value => value !== id) : previous)
       : [...previous, id]))
   }
+
+  // Zotero-style width resize: drag the cell's right edge; double-click resets.
+  const startColumnResize = (event, column) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const startX = event.clientX
+    const startWidth = Math.round(columnWidths?.[column.id] ?? column.width)
+    setResizing(true)
+    const onMove = (moveEvent) => {
+      const width = Math.min(COLUMN_MAX_WIDTH, Math.max(COLUMN_MIN_WIDTH, startWidth + moveEvent.clientX - startX))
+      onSetColumnWidth(column.id, width)
+    }
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      document.body.classList.remove('lib-col-resizing')
+      setResizing(false)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+    document.body.classList.add('lib-col-resizing')
+  }
+  const resizeHandle = column => (
+    <span
+      className="lib-colresize"
+      title="拖动调整列宽；双击恢复默认宽度"
+      onMouseDown={event => startColumnResize(event, column)}
+      onDoubleClick={(event) => {
+        event.stopPropagation()
+        onSetColumnWidth(column.id, undefined)
+      }}
+      onClick={event => event.stopPropagation()}
+      onMouseUp={event => event.stopPropagation()}
+    />
+  )
 
   const startColumnDrag = (id) => (event) => {
     dragColumnId.current = id
@@ -230,28 +292,30 @@ export function ItemsPane({
         <span
           key={column.id}
           className={column.numeric ? 'num' : ''}
-          draggable
+          draggable={!resizing}
           onDragStart={startColumnDrag(column.id)}
           onDragOver={event => event.preventDefault()}
           onDrop={dropColumnOn(column.id)}
         >
           {label}
+          {resizeHandle(column)}
         </span>
       )
     }
     return (
       <button
         key={column.id}
-        draggable
+        draggable={!resizing}
         onDragStart={startColumnDrag(column.id)}
         onDragOver={event => event.preventDefault()}
         onDrop={dropColumnOn(column.id)}
         className={`${sort === column.sort ? 'sorted' : ''}${column.numeric ? ' num' : ''}`}
         style={column.numeric ? { textAlign: 'right' } : undefined}
         onClick={() => onSort(column.sort)}
-        title={`按${column.label}排序（拖动可调整列顺序）`}
+        title={`按${column.label}排序（拖动可调整列顺序，右缘可调列宽）`}
       >
         {label}{sort === column.sort ? (desc ? ' ↓' : ' ↑') : ''}
+        {resizeHandle(column)}
       </button>
     )
   }
@@ -292,13 +356,17 @@ export function ItemsPane({
       style={{ position: 'relative' }}
     >
       {/* Header and rows share one scroll container so the header follows
-          horizontal scrolling and can never spill into the right pane. */}
+          horizontal scrolling and can never spill into the right pane. The
+          .lib-table wrapper gives ALL rows and the header one identical width
+          (the widest content), so the grid tracks resolve the same everywhere
+          and the columns line up exactly. */}
       <div className="lib-items" ref={listRef}>
-        <div className="lib-table-head" style={{ gridTemplateColumns: `16px ${template} 24px` }}>
-          <span />
-          {visible.map(headerCell)}
-          <span />
-        </div>
+        <div className="lib-table">
+          <div className="lib-table-head" style={{ gridTemplateColumns: `16px ${template} 24px` }}>
+            <span />
+            {visible.map(headerCell)}
+            <span />
+          </div>
         {rows.map((item) => {
           const selected = selectedKeys.includes(item.key)
           const children = Array.isArray(item.children) ? item.children : []
@@ -376,6 +444,7 @@ export function ItemsPane({
             <Button variant="ghost" size="sm" onClick={onLoadMore}>加载更多（{rows.length} / {total}）</Button>
           </div>
         ) : null}
+        </div>
       </div>
 
       {/* Column picker: pinned at the pane's top-right corner so it stays
