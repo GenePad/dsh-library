@@ -1,12 +1,13 @@
 import * as React from 'react'
 import * as api from './api.js'
 import { CollectionsPane } from './collections-pane.jsx'
-import { ItemsPane } from './items-pane.jsx'
+import { ItemsPane, restoreColumns, columnFieldNames } from './items-pane.jsx'
 import { DetailsPane } from './details-pane.jsx'
 import { ChatDock } from './chat-dock.jsx'
 import { SETTINGS_SAVED_EVENT } from './settings-section.jsx'
 import { CollectionDialog } from './create-dialog.jsx'
 import { PdfViewer } from './pdf-viewer.jsx'
+import { ItemContextMenu, PromptDialog } from './item-menu.jsx'
 import {
   ChevronLeftIcon, ChevronRightIcon, GearIcon, LibraryIcon, PlusIcon, PdfIcon, SearchIcon, SyncIcon, WandIcon,
 } from './icons.jsx'
@@ -37,13 +38,15 @@ function restoreView() {
 }
 
 function restoreSort() {
+  const known = ['title', 'creator', 'date', 'dateAdded', 'dateModified', 'itemType', 'hasAttachment', 'numNotes']
   try {
     const saved = JSON.parse(localStorage.getItem(SORT_STORAGE) ?? 'null')
     if (saved && typeof saved === 'object') {
-      return {
-        sort: ['title', 'creator', 'date', 'dateAdded', 'dateModified'].includes(saved.sort) ? saved.sort : 'dateAdded',
-        desc: saved.desc !== false,
+      const sortKey = String(saved.sort ?? '')
+      if (known.includes(sortKey) || /^field:[A-Za-z][A-Za-z0-9]*$/.test(sortKey)) {
+        return { sort: sortKey, desc: saved.desc !== false }
       }
+      return { sort: 'dateAdded', desc: true }
     }
   } catch {
     // Ignore a malformed preference.
@@ -118,6 +121,18 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
   const [syncing, setSyncing] = React.useState(false)
   const [settingUp, setSettingUp] = React.useState('')
   const [detailsOpen, setDetailsOpen] = React.useState(restoreDetailsOpen)
+  // Visible list columns (Zotero's column picker): owned here so the items
+  // request can carry the matching field names to the host.
+  const [columns, setColumns] = React.useState(restoreColumns)
+  // Locate requests (newly imported / show-in-library): {key, nonce}; the
+  // nonce makes repeated locates of the same key re-trigger the scroll.
+  const [reveal, setReveal] = React.useState(null)
+  // Item context menu (right-click on a row): {x, y, keys}.
+  const [contextMenu, setContextMenu] = React.useState(null)
+  // Small input dialog used where Electron lacks window.prompt (网页链接).
+  const [prompt, setPrompt] = React.useState(null)
+  const attachFileRef = React.useRef(null)
+  const pendingAttachParentsRef = React.useRef([])
   // Bundled item-type schema (per type: field order + creator types), fetched
   // once; drives the item pane's type menu, field list and creator rows.
   const [schemaTypes, setSchemaTypes] = React.useState(undefined)
@@ -149,20 +164,25 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
   const collapsedByUsRef = React.useRef(false)
   const selectionContextTimer = React.useRef(0)
   const toastTimer = React.useRef(0)
+  const revealNonceRef = React.useRef(0)
   const revisionRef = React.useRef(-1)
   const snapshotRef = React.useRef(undefined)
   snapshotRef.current = snapshot
   const viewRef = React.useRef(view)
   const queryRef = React.useRef('')
   const itemsRef = React.useRef([])
+  const columnsRef = React.useRef(columns)
   const dockRef = React.useRef(null)
   const detailRef = React.useRef(undefined)
   const activeKeyRef = React.useRef('')
+  const contextMenuRef = React.useRef(null)
   viewRef.current = view
   queryRef.current = debouncedQuery
   itemsRef.current = items
+  columnsRef.current = columns
   detailRef.current = detail
   activeKeyRef.current = activeKey
+  contextMenuRef.current = contextMenu
 
   const notify = React.useCallback((message) => {
     setToast(message)
@@ -209,6 +229,9 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
       if (targetView.kind === 'unfiled') filter.unfiled = true
       if (targetView.kind === 'trash') filter.trash = true
       if (targetView.kind === 'tag') filter.tag = targetView.name
+      // Generic columns (页码/其他/…) fetch their itemData values by name.
+      const fieldNames = columnFieldNames(columnsRef.current)
+      if (fieldNames.length > 0) filter.columns = fieldNames
       const value = await api.call('items', filter)
       setItems(previous => (append ? [...previous, ...value.items] : value.items))
       setTotal(value.total)
@@ -302,10 +325,11 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
       localStorage.setItem(VIEW_STORAGE, JSON.stringify(view))
       localStorage.setItem(SORT_STORAGE, JSON.stringify({ sort, desc }))
       localStorage.setItem(DETAILS_STORAGE, detailsOpen ? '1' : '0')
+      localStorage.setItem('dsh-library:columns', JSON.stringify(columns))
     } catch {
       // Preferences are optional.
     }
-  }, [view, sort, desc, detailsOpen])
+  }, [view, sort, desc, detailsOpen, columns])
 
   // Reload whenever the view, search text or sort changes.
   React.useEffect(() => {
@@ -317,9 +341,14 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, debouncedQuery, sort, desc, booting, snapshot?.available])
 
+  // The right pane (文献信息) follows what the user is looking at: the
+  // selected row in the list, or the article behind the active reader tab.
+  const activeReaderTab = reader.active !== '' ? reader.tabs.find(tab => tab.key === reader.active) : undefined
+  const detailKey = activeReaderTab ? (activeReaderTab.parentKey || activeReaderTab.key) : activeKey
+
   React.useEffect(() => {
-    void loadDetail(activeKey)
-  }, [activeKey, loadDetail])
+    void loadDetail(detailKey)
+  }, [detailKey, loadDetail])
 
   // Poll the host so changes made by the agent or by Zotero show up, and so a
   // locked library (Zotero running) recovers the moment Zotero exits — the
@@ -435,8 +464,6 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
       return { tabs, active: previous.active === key ? '' : previous.active }
     })
   }
-
-  const activeReaderTab = reader.active !== '' ? reader.tabs.find(tab => tab.key === reader.active) : undefined
 
   // While an article is open in the viewer, keep the host-side chat context
   // fresh (the native composer bypasses chat-send): the Literature Assistant
@@ -570,10 +597,10 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
     await loadDetail(activeKeyRef.current)
   }
 
-  const moveToTrash = async (restore = false) => {
-    if (selectedKeys.length === 0) return
+  const moveToTrash = async (restore = false, keys = selectedKeys) => {
+    if (keys.length === 0) return
     try {
-      await api.call('trash', { keys: selectedKeys, restore })
+      await api.call('trash', { keys, restore })
       notify(restore ? '已还原' : '已移到回收站')
       setSelectedKeys([])
       setActiveKey('')
@@ -583,14 +610,209 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
     }
   }
 
-  const deleteForever = async () => {
-    if (selectedKeys.length === 0) return
-    if (!window.confirm(`永久删除 ${selectedKeys.length} 条记录？该操作不可撤销。`)) return
+  const deleteForever = async (keys = selectedKeys) => {
+    if (keys.length === 0) return
+    if (!window.confirm(`永久删除 ${keys.length} 条记录？该操作不可撤销。`)) return
     try {
-      await api.call('delete', { keys: selectedKeys })
+      await api.call('delete', { keys })
       notify('已永久删除')
       setSelectedKeys([])
       setActiveKey('')
+      await refreshAll()
+    } catch (error) {
+      notify(error?.message ?? String(error))
+    }
+  }
+
+  // Copy text to the OS clipboard with a user-visible verdict.
+  const copyText = async (text, label) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      notify(`已复制${label}`)
+    } catch {
+      notify('复制失败：剪贴板不可用')
+    }
+  }
+
+  /**
+   * Item context menu actions (Zotero's 条目右键菜单). `keys` is the selection
+   * the menu was opened with; most handlers refresh and re-reveal the target.
+   */
+  const runItemAction = async (action, arg) => {
+    setContextMenu(null)
+    const keys = contextMenuRef.current?.keys ?? []
+    if (keys.length === 0) return
+    const first = keys[0]
+    try {
+      switch (action) {
+        case 'open': {
+          const target = keys.find(key => itemsRef.current.some(row => row.key === key && (row.hasAttachment || row.itemType === 'attachment')))
+          await openItem(target ?? first)
+          break
+        }
+        case 'open-native': {
+          const target = keys.find(key => itemsRef.current.some(row => row.key === key && (row.hasAttachment || row.itemType === 'attachment')))
+          await api.call('open', { key: target ?? first })
+          break
+        }
+        case 'reveal': {
+          const target = keys.find(key => itemsRef.current.some(row => row.key === key && (row.hasAttachment || row.itemType === 'attachment')))
+          await revealItem(target ?? first)
+          break
+        }
+        case 'show-in-library': {
+          setQuery('')
+          setView({ kind: 'all' })
+          await loadItems({ viewOverride: { kind: 'all' }, queryOverride: '' })
+          await loadCollections()
+          setSelectedKeys([first])
+          setActiveKey(first)
+          setReveal({ key: first, nonce: (revealNonceRef.current += 1) })
+          break
+        }
+        case 'add-note': {
+          for (const key of keys) await api.call('note-create', { parentKey: key, text: '' })
+          notify(keys.length > 1 ? `已为 ${keys.length} 条文献添加笔记` : '已添加笔记')
+          await refreshAll()
+          break
+        }
+        case 'note-from-annotations': {
+          const created = await api.call('note-from-annotations', { key: first })
+          notify('已从批注创建笔记')
+          await refreshAll()
+          if (created?.key) await loadDetail(first)
+          break
+        }
+        case 'attach-file': {
+          pendingAttachParentsRef.current = keys
+          try {
+            attachFileRef.current?.click()
+          } catch {
+            notify('无法打开文件选择器')
+          }
+          break
+        }
+        case 'attach-url': {
+          setPrompt({
+            title: '添加网页链接',
+            placeholder: 'https://…',
+            confirmLabel: '添加',
+            onConfirm: async (url) => {
+              setPrompt(null)
+              try {
+                for (const key of keys) await api.call('attachment-url', { parentKey: key, url })
+                notify('已添加网页链接')
+                await refreshAll()
+              } catch (error) {
+                notify(error?.message ?? String(error))
+              }
+            },
+          })
+          break
+        }
+        case 'add-to-collection': {
+          for (const key of keys) {
+            await api.call('update', { key, patch: { addCollections: [Number(arg)] } })
+          }
+          notify('已添加到分类')
+          await refreshAll()
+          break
+        }
+        case 'remove-from-collection': {
+          if (!window.confirm(`确定要从分类「${viewRef.current.name}」中移除所选条目吗？`)) return
+          for (const key of keys) {
+            await api.call('update', { key, patch: { removeCollections: [viewRef.current.id] } })
+          }
+          notify('已从分类中移除')
+          await refreshAll()
+          break
+        }
+        case 'duplicate': {
+          const createdKeys = []
+          for (const key of keys) {
+            const created = await api.call('duplicate', { key })
+            if (created?.key) createdKeys.push(created.key)
+          }
+          notify('已创建条目副本')
+          await refreshAll()
+          if (createdKeys[0]) await revealImported(createdKeys[0])
+          break
+        }
+        case 'merge': {
+          if (!window.confirm(`确定将 ${keys.length} 个条目合并为一个吗？其余条目将移入回收站。`)) return
+          const result = await api.call('merge', { keys })
+          notify('已合并条目')
+          await refreshAll()
+          if (result?.key) await revealImported(result.key)
+          break
+        }
+        case 'create-parent': {
+          for (const key of keys) {
+            const created = await api.call('create-parent', { key })
+            if (created?.parentKey) await revealImported(created.parentKey)
+          }
+          notify('已创建上级条目，在右侧信息栏中编辑')
+          break
+        }
+        case 'recognize': {
+          for (const key of keys) {
+            const result = await api.call('import-finalize', { attachmentKey: key })
+            if (result.parentKey) await revealImported(result.parentKey)
+            else notify('没有识别到元数据，可让文献助手补全（右键该条目 → AI 或在助手提问）')
+          }
+          await refreshAll()
+          break
+        }
+        case 'detach': {
+          if (!window.confirm('确定将该附件转换为独立条目吗？')) return
+          await api.call('detach-attachment', { key: first })
+          notify('已转换为独立附件')
+          await refreshAll()
+          break
+        }
+        case 'copy-bibtex': {
+          const result = await api.call('cite-bibtex', { keys })
+          await copyText(result.text ?? '', 'BibTeX')
+          break
+        }
+        case 'copy-csl': {
+          const result = await api.call('cite-json', { keys })
+          await copyText(JSON.stringify(result.items ?? [], null, 2), 'CSL JSON')
+          break
+        }
+        case 'trash':
+          await moveToTrash(false, keys)
+          break
+        case 'restore':
+          await moveToTrash(true, keys)
+          break
+        case 'delete':
+          await deleteForever(keys)
+          break
+        default:
+          break
+      }
+    } catch (error) {
+      notify(error?.message ?? String(error))
+    }
+  }
+
+  // Attach-file menu action finishes here after the OS picker closes.
+  const onAttachFilesChosen = async (event) => {
+    const files = [...(event.target?.files ?? [])]
+    event.target.value = ''
+    const parents = pendingAttachParentsRef.current
+    pendingAttachParentsRef.current = []
+    if (files.length === 0 || parents.length === 0) return
+    try {
+      for (const parentKey of parents) {
+        for (const file of files) {
+          const localPath = filePathOf(file)
+          if (localPath) await api.call('import', { path: localPath, parentKey, lookup: false })
+          else await api.call('upload', { name: file.name, data: await fileBase64(file), parentKey, lookup: false })
+        }
+      }
+      notify('附件已添加')
       await refreshAll()
     } catch (error) {
       notify(error?.message ?? String(error))
@@ -610,39 +832,91 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
     void dockRef.current?.openAndSend(task, { mode: 'list' })
   }
 
+  /**
+   * Make a key visible in the current list and locate-select it. Falls back to
+   * the whole library when the current view filters the item out (e.g. trash
+   * or a tag view), so a freshly imported record is always findable.
+   */
+  const revealImported = async (key) => {
+    if (!key) return
+    try {
+      const value = await loadItems({ viewOverride: viewRef.current, queryOverride: queryRef.current })
+      let found = (value?.items ?? []).some(row => row.key === key)
+      if (!found && viewRef.current.kind !== 'all') {
+        const all = await loadItems({ viewOverride: { kind: 'all' }, queryOverride: '' })
+        found = (all?.items ?? []).some(row => row.key === key)
+        setView({ kind: 'all' })
+        setQuery('')
+      }
+      await loadCollections()
+      if (found) {
+        setSelectedKeys([key])
+        setActiveKey(key)
+        setReveal({ key, nonce: (revealNonceRef.current += 1) })
+      } else {
+        notify('已导入，但当前列表未能显示该条目，请刷新查看')
+      }
+    } catch (error) {
+      notify(error?.message ?? String(error))
+    }
+  }
+
+  /**
+   * Zotero-style two-phase drag import. Phase 1 registers each file as a
+   * standalone attachment item right away and locates it in the list, so the
+   * user immediately sees what landed. Phase 2 resolves metadata (and builds
+   * the parent item); the located selection moves to the finished record.
+   */
   const importFiles = async (files) => {
+    const collectionID = viewRef.current.kind === 'collection' ? viewRef.current.id : null
+    const staged = []
+    // Phase 1: show every dropped file at once.
     for (const file of files) {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
       setImporting(previous => [...previous, { id, name: file.name, status: 'importing' }])
+      try {
+        const localPath = filePathOf(file)
+        const result = localPath
+          ? await api.call('import', { path: localPath, collectionID, deferMetadata: true })
+          : await api.call('upload', { name: file.name, data: await fileBase64(file), collectionID, deferMetadata: true })
+        staged.push({ id, file, result })
+        await revealImported(result.attachmentKey)
+      } catch (error) {
+        setImporting(previous => previous.map(entry => (entry.id === id
+          ? { ...entry, status: 'error', error: error?.message ?? String(error) }
+          : entry)))
+        staged.push({ id, file, failed: true })
+      }
+    }
+    // Phase 2: metadata resolution (queued on the host), one record at a time.
+    for (const { id, file, result, failed } of staged) {
+      if (failed || !result?.attachmentKey) continue
       // Keep the "fix with AI" offer around longer than a plain success note.
       let sticky = 9000
       try {
-        const collectionID = viewRef.current.kind === 'collection' ? viewRef.current.id : null
-        const localPath = filePathOf(file)
-        const result = localPath
-          ? await api.call('import', { path: localPath, collectionID })
-          : await api.call('upload', { name: file.name, data: await fileBase64(file), collectionID })
-        const needsHelp = result.needsMetadataHelp === true
+        const final = await api.call('import-finalize', { attachmentKey: result.attachmentKey, collectionID })
+        const parentKey = final.parentKey ?? null
+        const needsHelp = final.needsMetadataHelp === true || !parentKey
         if (needsHelp) sticky = 120_000
         setImporting(previous => previous.map(entry => (entry.id === id
           ? {
               ...entry,
               status: 'done',
-              title: result.metadata?.title ?? result.fileName,
-              key: result.parentKey,
-              parentKey: result.parentKey,
-              attachmentKey: result.attachmentKey,
+              title: final.metadata?.title ?? final.fileName,
+              key: parentKey,
+              parentKey,
+              attachmentKey: final.attachmentKey ?? result.attachmentKey,
               needsHelp,
               onFix: needsHelp
-                ? () => fixMetadataWithAgent({ name: file.name, parentKey: result.parentKey, attachmentKey: result.attachmentKey })
+                ? () => fixMetadataWithAgent({
+                    name: file.name,
+                    parentKey,
+                    attachmentKey: final.attachmentKey ?? result.attachmentKey,
+                  })
                 : undefined,
             }
           : entry)))
-        await refreshAll()
-        if (result.parentKey) {
-          setSelectedKeys([result.parentKey])
-          setActiveKey(result.parentKey)
-        }
+        await revealImported(parentKey ?? final.attachmentKey)
         if (needsHelp) notify('已导入，但元数据不完整；可点击「用 AI 补全元数据」让文献助手处理')
       } catch (error) {
         setImporting(previous => previous.map(entry => (entry.id === id
@@ -955,6 +1229,10 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
                     onLoadMore={() => { void safeLoadItems({ append: true }) }}
                     onImportFiles={importFiles}
                     importing={importing}
+                    columns={columns}
+                    onSetColumns={setColumns}
+                    reveal={reveal}
+                    onContextMenu={setContextMenu}
                   />
                   {dock}
                 </>
@@ -1012,6 +1290,32 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
           await refreshAll()
           notify('已更新分类')
         }}
+      />
+      {contextMenu ? (
+        <ItemContextMenu
+          menu={contextMenu}
+          rows={items}
+          collections={collectionFlat}
+          view={view}
+          onAction={runItemAction}
+          onClose={() => setContextMenu(null)}
+        />
+      ) : null}
+      {prompt ? (
+        <PromptDialog
+          title={prompt.title}
+          placeholder={prompt.placeholder}
+          confirmLabel={prompt.confirmLabel}
+          onConfirm={prompt.onConfirm}
+          onClose={() => setPrompt(null)}
+        />
+      ) : null}
+      <input
+        ref={attachFileRef}
+        type="file"
+        multiple
+        style={{ display: 'none' }}
+        onChange={onAttachFilesChosen}
       />
       {toast ? <Toast message={toast} /> : null}
     </div>

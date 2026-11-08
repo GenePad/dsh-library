@@ -147,8 +147,9 @@ export function readTags(db) {
  * @param {string} [filter.tag] - tag name.
  * @param {string} [filter.query] - title/abstract/creator/tag/DOI text.
  * @param {boolean} [filter.trash] - deleted items instead of live ones.
- * @param {'title'|'date'|'dateAdded'|'dateModified'} [filter.sort]
+ * @param {string} [filter.sort] - 'title'/'creator'/'date'/'dateAdded'/'dateModified'/'itemType'/'hasAttachment'/'numNotes' or 'field:<fieldName>'.
  * @param {boolean} [filter.desc]
+ * @param {string[]} [filter.columns] - extra itemData field names to return on every row.
  * @param {number} [filter.limit]
  * @param {number} [filter.offset]
  */
@@ -190,6 +191,9 @@ export function readItems(db, filter = {}) {
       (SELECT nn.note FROM itemNotes nn WHERE nn.itemID = i.itemID) AS noteHTML,
       (SELECT nn.title FROM itemNotes nn WHERE nn.itemID = i.itemID) AS noteTitle,
       (SELECT a.path FROM itemAttachments a WHERE a.itemID = i.itemID) AS selfPath,
+      (SELECT COUNT(*) FROM itemNotes cn JOIN items ci ON ci.itemID = cn.itemID
+        LEFT JOIN deletedItems cd ON cd.itemID = ci.itemID
+        WHERE cn.parentItemID = i.itemID AND cd.itemID IS NULL) AS numNotes,
       EXISTS (SELECT 1 FROM itemAttachments a JOIN items ai ON ai.itemID = a.itemID
         LEFT JOIN deletedItems ad ON ad.itemID = a.itemID
         WHERE a.parentItemID = i.itemID AND ad.itemID IS NULL) AS hasAttachment
@@ -201,6 +205,7 @@ export function readItems(db, filter = {}) {
   if (query !== '') {
     const like = `%${query.replace(/[%_]/g, match => `\\${match}`)}%`
     outer.push(`(title LIKE ? ESCAPE '\\' OR doi LIKE ? ESCAPE '\\' OR noteTitle LIKE ? ESCAPE '\\'
+      OR selfPath LIKE ? ESCAPE '\\'
       OR EXISTS (SELECT 1 FROM itemCreators ic JOIN creators c ON c.creatorID = ic.creatorID
         WHERE ic.itemID = row0.itemID AND (c.lastName LIKE ? ESCAPE '\\' OR c.firstName LIKE ? ESCAPE '\\'))
       OR EXISTS (SELECT 1 FROM itemTags it JOIN tags t ON t.tagID = it.tagID
@@ -209,22 +214,68 @@ export function readItems(db, filter = {}) {
         JOIN itemDataValues v ON v.valueID = d.valueID
         WHERE d.itemID = row0.itemID AND f.fieldName IN ('abstractNote','publicationTitle','journalAbbreviation','publisher')
           AND v.value LIKE ? ESCAPE '\\'))`)
-    for (let i = 0; i < 7; i += 1) params.push(like)
+    for (let i = 0; i < 8; i += 1) params.push(like)
   }
   if (outer.length > 0) sql += ` WHERE ${outer.join(' AND ')}`
-  const total = Number(db.get(`SELECT COUNT(*) AS n FROM (${sql})`, ...params).n)
-  const sort = filter.sort === 'title' ? 'title COLLATE NOCASE'
-    : filter.sort === 'creator' ? 'firstCreator COLLATE NOCASE'
-      : filter.sort === 'date' ? 'date'
-        : filter.sort === 'dateModified' ? 'dateModified'
-          : 'dateAdded'
+  // Sorting by any itemData field (the client's field:* sort keys): join the
+  // field's value once and order with empty values always last.
+  const rawSort = String(filter.sort ?? '')
+  const fieldSort = rawSort.startsWith('field:') && /^[A-Za-z][A-Za-z0-9]*$/.test(rawSort.slice(6)) ? rawSort.slice(6) : null
+  if (fieldSort) {
+    sql = `SELECT row0.*, fs.value AS sortValue FROM (${sql}) AS row0
+      LEFT JOIN (SELECT d.itemID, v.value FROM itemData d
+        JOIN fieldsCombined f ON f.fieldID = d.fieldID
+        JOIN itemDataValues v ON v.valueID = d.valueID WHERE f.fieldName = ?) fs ON fs.itemID = row0.itemID`
+  }
+  const sortParams = fieldSort ? [fieldSort] : []
+  // Positional binding follows SQL text order: the base query's params come
+  // first, the sort-field join's ? is last (it sits after the derived table).
+  const total = Number(db.get(`SELECT COUNT(*) AS n FROM (${sql})`, ...params, ...sortParams).n)
+  const sort = fieldSort ? 'CASE WHEN sortValue IS NULL OR sortValue = \'\' THEN 1 ELSE 0 END, sortValue COLLATE NOCASE'
+    : rawSort === 'title' ? 'title COLLATE NOCASE'
+      : rawSort === 'creator' ? 'firstCreator COLLATE NOCASE'
+        : rawSort === 'itemType' ? 'itemType COLLATE NOCASE'
+          : rawSort === 'hasAttachment' ? 'hasAttachment'
+            : rawSort === 'numNotes' ? 'numNotes'
+              : rawSort === 'date' ? 'date'
+                : rawSort === 'dateModified' ? 'dateModified'
+                  : 'dateAdded'
   const desc = filter.desc !== false
   const limit = Number.isInteger(filter.limit) ? Math.min(Math.max(filter.limit, 1), 500) : 100
   const offset = Number.isInteger(filter.offset) ? Math.max(filter.offset, 0) : 0
-  const rows = db.all(`SELECT * FROM (${sql}) ORDER BY ${sort} ${desc ? 'DESC' : 'ASC'}, itemID DESC LIMIT ? OFFSET ?`, ...params, limit, offset)
+  const rows = db.all(
+    `SELECT * FROM (${sql}) ORDER BY ${sort} ${desc ? 'DESC' : 'ASC'}, itemID DESC LIMIT ? OFFSET ?`,
+    ...params, ...sortParams, limit, offset,
+  )
   const items = summarizeRows(db, rows)
+  attachRequestedFields(db, rows, items, filter.columns)
   attachChildren(db, rows, items)
   return { total, offset, limit, items }
+}
+
+/**
+ * Fetch extra itemData fields (the visible list columns) for one page of rows
+ * in a single batched query. The client sends whichever generic columns are
+ * visible; specialized rows (title/creators/tags/…) are always computed.
+ */
+function attachRequestedFields(db, rows, items, columns) {
+  const requested = [...new Set((Array.isArray(columns) ? columns : [])
+    .map(name => String(name ?? ''))
+    .filter(name => /^[A-Za-z][A-Za-z0-9]*$/.test(name) && name !== 'title'))]
+  if (requested.length === 0 || rows.length === 0) return
+  const indexByID = new Map(rows.map((row, index) => [row.itemID, index]))
+  const fieldRows = db.all(
+    `SELECT d.itemID, f.fieldName, v.value FROM itemData d
+     JOIN fieldsCombined f ON f.fieldID = d.fieldID
+     JOIN itemDataValues v ON v.valueID = d.valueID
+     WHERE d.itemID IN (${rows.map(() => '?').join(',')})
+       AND f.fieldName IN (${requested.map(() => '?').join(',')})`,
+    ...rows.map(row => row.itemID), ...requested,
+  )
+  for (const field of fieldRows) {
+    const index = indexByID.get(field.itemID)
+    if (index !== undefined) items[index].fields[field.fieldName] = String(field.value ?? '')
+  }
 }
 
 /**
@@ -319,8 +370,11 @@ function summarizeRows(db, rows) {
         fieldMode: creator.fieldMode,
       })),
       hasAttachment: row.hasAttachment === 1,
+      numNotes: Number(row.numNotes ?? 0),
       dateAdded: row.dateAdded,
       dateModified: row.dateModified,
+      // Extra fields requested through filter.columns are filled in below.
+      fields: {},
     }
   })
 }

@@ -5,10 +5,10 @@ import { ZoteroDb } from './db.js'
 import { locateZotero } from './locate.js'
 import { dataDir, loadSettings, loadState, publicSettings, saveSettings, saveState } from './settings.js'
 import { attachmentTarget, readAnnotations, readCollections, readItem, readItems, readStats, readTags } from './read.js'
-import { createItem, updateItem, trashItems, deleteForever, createCollection, renameCollection, trashCollection, createAnnotationRecord, updateAnnotationRecord, removeAnnotationRecord, changeItemType, createNoteItem, updateNoteItem, createUrlAttachment } from './write.js'
+import { createItem, updateItem, trashItems, deleteForever, createCollection, renameCollection, trashCollection, createAnnotationRecord, updateAnnotationRecord, removeAnnotationRecord, changeItemType, createNoteItem, updateNoteItem, createUrlAttachment, duplicateItem, createParentAttachment, detachAttachment, mergeItems, noteFromAnnotations } from './write.js'
 import { typeList, typeSchema, planTypeChange } from './schema.js'
 import { resolveEachIdentifier } from './metadata.js'
-import { importFile } from './ingest.js'
+import { importFile, importStagedFile, finalizeImportFile } from './ingest.js'
 import { createStorageWatcher } from './watcher.js'
 import { WebDavClient, syncStorage } from './webdav.js'
 import { openExternal, revealInFolder } from './open.js'
@@ -242,6 +242,34 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
       const result = await importFile(db(), paths(), {
         filePath: input.filePath,
         parentKey: input.parentKey,
+        collectionID: input.collectionID,
+        lookup: input.lookup,
+        metadata: input.metadata,
+        logger,
+      })
+      bump()
+      return result
+    }
+    importChain = importChain.then(run, run)
+    return importChain
+  }
+
+  // Two-phase drag import: the staged step runs right away (one attachment
+  // row) so the browser can reveal it; finalize joins the queue behind any
+  // other pending imports since it extracts text and looks metadata up online.
+  function importStaged(input) {
+    ensureBackup()
+    return importStagedFile(db(), paths(), { ...input, logger }).then((result) => {
+      bump()
+      return result
+    })
+  }
+
+  function finalizeOne(input) {
+    const run = async () => {
+      ensureBackup()
+      const result = await finalizeImportFile(db(), paths(), {
+        attachmentKey: input.attachmentKey,
         collectionID: input.collectionID,
         lookup: input.lookup,
         metadata: input.metadata,
@@ -491,6 +519,38 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
       return { changed }
     },
     importFile: importOne,
+    importStaged,
+    finalizeImport: finalizeOne,
+    duplicate: key => {
+      ensureBackup()
+      const created = withDb(instance => duplicateItem(instance, key, paths()))
+      bump()
+      return created
+    },
+    createParent: key => {
+      ensureBackup()
+      const created = withDb(instance => createParentAttachment(instance, key, paths()))
+      bump()
+      return created
+    },
+    detachAttachment: key => {
+      ensureBackup()
+      const result = withDb(instance => detachAttachment(instance, key))
+      bump()
+      return result
+    },
+    merge: keys => {
+      ensureBackup()
+      const result = withDb(instance => mergeItems(instance, keys))
+      bump()
+      return result
+    },
+    noteFromAnnotations: key => {
+      ensureBackup()
+      const created = withDb(instance => noteFromAnnotations(instance, key))
+      bump()
+      return created
+    },
     saveUpload,
     openRecord,
     openUrl,

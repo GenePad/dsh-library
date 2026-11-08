@@ -614,3 +614,313 @@ export function markAttachmentChanged(db, itemID, { mtime }) {
   )
   touchItem(db, itemID)
 }
+
+/** Item type name of one item row id. */
+function typeNameOf(db, itemID) {
+  const row = db.get(
+    'SELECT ty.typeName AS name FROM items i JOIN itemTypes ty ON ty.itemTypeID = i.itemTypeID WHERE i.itemID = ?',
+    itemID,
+  )
+  return row?.name
+}
+
+function escapeHtml(text) {
+  return String(text ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+/**
+ * Duplicate an item the way Zotero's 创建条目副本 does: fields, creators,
+ * tags, collections and child items are copied; stored attachment files and
+ * their annotations come along.
+ */
+export function duplicateItem(db, key, paths) {
+  const meta = db.schema()
+  const row = db.get('SELECT itemID FROM items WHERE libraryID = ? AND key = ?', meta.libraryID, String(key ?? ''))
+  if (!row) throw Object.assign(new Error(`No item with key ${key}`), { code: 'library/not-found' })
+  const typeName = typeNameOf(db, row.itemID)
+  if (typeName === 'note' || typeName === 'attachment' || typeName === 'annotation') {
+    throw Object.assign(new Error('只能复制常规条目'), { code: 'library/invalid' })
+  }
+  return db.transaction(() => {
+    const fields = Object.fromEntries(db.all(
+      `SELECT f.fieldName, v.value FROM itemData d
+       JOIN fieldsCombined f ON f.fieldID = d.fieldID
+       JOIN itemDataValues v ON v.valueID = d.valueID WHERE d.itemID = ?`, row.itemID,
+    ).map(entry => [entry.fieldName, entry.value]))
+    const creators = db.all(
+      `SELECT c.firstName, c.lastName, c.fieldMode, ct.creatorType FROM itemCreators ic
+       JOIN creators c ON c.creatorID = ic.creatorID
+       JOIN creatorTypes ct ON ct.creatorTypeID = ic.creatorTypeID
+       WHERE ic.itemID = ? ORDER BY ic.orderIndex`, row.itemID,
+    ).map(creator => ({
+      firstName: creator.firstName ?? '',
+      lastName: creator.lastName ?? '',
+      fieldMode: creator.fieldMode,
+      creatorType: creator.creatorType,
+    }))
+    const tags = db.all('SELECT t.name FROM itemTags it JOIN tags t ON t.tagID = it.tagID WHERE it.itemID = ?', row.itemID)
+      .map(entry => entry.name)
+    const collectionIDs = db.all('SELECT collectionID FROM collectionItems WHERE itemID = ?', row.itemID)
+      .map(entry => entry.collectionID)
+    // Inline the copy (createItem would open a nested transaction inside ours).
+    const { itemID: duplicateItemID, key: duplicateKey } = insertItem(db, typeName)
+    setFieldMap(db, duplicateItemID, fields)
+    const normalizedCreators = normalizeCreators(creators)
+    if (normalizedCreators) setCreators(db, duplicateItemID, normalizedCreators)
+    setTags(db, duplicateItemID, tags)
+    setCollections(db, duplicateItemID, collectionIDs)
+
+    // Child attachments: same linkMode/path; stored files are copied into the
+    // new key's folder. Child notes and annotations follow.
+    const attachments = db.all(
+      'SELECT itemID, linkMode, contentType, path FROM itemAttachments WHERE parentItemID = ?', row.itemID,
+    )
+    for (const source of attachments) {
+      const child = insertItem(db, 'attachment')
+      const name = path.basename(String(source.path ?? '').replace(/^storage:/, ''))
+      if (source.linkMode === 0 && paths && String(source.path ?? '').startsWith('storage:')) {
+        const sourceDir = path.join(paths.storageDir, db.get('SELECT key FROM items WHERE itemID = ?', source.itemID).key)
+        const folder = path.join(paths.storageDir, child.key)
+        const target = path.join(folder, name)
+        try {
+          fs.mkdirSync(folder, { recursive: true })
+          fs.copyFileSync(path.join(sourceDir, name), target)
+        } catch {
+          // A missing source file still leaves a valid (empty) attachment row.
+        }
+        insertRow(db, 'itemAttachments', {
+          itemID: child.itemID,
+          parentItemID: duplicateItemID,
+          linkMode: 0,
+          contentType: source.contentType,
+          path: `storage:${name}`,
+          syncState: 0,
+          storageModTime: Math.round(fs.existsSync(target) ? fs.statSync(target).mtimeMs : Date.now()),
+          storageHash: '',
+        })
+      } else {
+        insertRow(db, 'itemAttachments', {
+          itemID: child.itemID,
+          parentItemID: duplicateItemID,
+          linkMode: source.linkMode,
+          contentType: source.contentType,
+          path: source.path,
+          syncState: 0,
+        })
+      }
+      db.run(
+        `INSERT INTO itemAnnotations (itemID, parentItemID, type, text, comment, color, pageLabel, sortIndex, position, isExternal)
+         SELECT ?, ?, type, text, comment, color, pageLabel, sortIndex, position, isExternal FROM itemAnnotations WHERE parentItemID = ?`,
+        child.itemID, child.itemID, source.itemID,
+      )
+    }
+    const notes = db.all('SELECT itemID, note FROM itemNotes WHERE parentItemID = ?', row.itemID)
+    for (const source of notes) {
+      const child = insertItem(db, 'note')
+      insertRow(db, 'itemNotes', { itemID: child.itemID, parentItemID: duplicateItemID, note: source.note })
+    }
+    return { key: duplicateKey }
+  })
+}
+
+/**
+ * Create an empty parent item for a standalone attachment (Zotero's 创建上级条目);
+ * the title is prefilled from the file name so the record is identifiable
+ * before the user edits it.
+ */
+export function createParentAttachment(db, attachmentKey, paths) {
+  const meta = db.schema()
+  const row = db.get(
+    `SELECT i.itemID, a.parentItemID, a.path FROM items i
+     JOIN itemAttachments a ON a.itemID = i.itemID
+     WHERE i.libraryID = ? AND i.key = ?`,
+    meta.libraryID,
+    String(attachmentKey ?? ''),
+  )
+  if (!row) throw Object.assign(new Error(`No attachment with key ${attachmentKey}`), { code: 'library/not-found' })
+  if (row.parentItemID) throw Object.assign(new Error('该附件已有上级条目'), { code: 'library/invalid' })
+  return db.transaction(() => {
+    const baseName = path.basename(String(row.path ?? '').replace(/^storage:/, ''))
+    const title = baseName.replace(/\.[^.]+$/, '')
+    // Inline creation (createItem would nest a transaction inside ours).
+    const { itemID: parentItemID, key: parentKey } = insertItem(db, 'document')
+    setFieldMap(db, parentItemID, { title })
+    db.run('UPDATE itemAttachments SET parentItemID = ? WHERE itemID = ?', parentItemID, row.itemID)
+    touchItem(db, parentItemID)
+    touchItem(db, row.itemID)
+    return { parentKey }
+  })
+}
+
+/**
+ * Turn a child attachment into a standalone one (Zotero's 转换为独立附件);
+ * it inherits the parent's collection memberships.
+ */
+export function detachAttachment(db, key) {
+  const meta = db.schema()
+  const row = db.get(
+    `SELECT i.itemID, a.parentItemID FROM items i
+     JOIN itemAttachments a ON a.itemID = i.itemID
+     WHERE i.libraryID = ? AND i.key = ?`,
+    meta.libraryID,
+    String(key ?? ''),
+  )
+  if (!row) throw Object.assign(new Error(`No attachment with key ${key}`), { code: 'library/not-found' })
+  if (!row.parentItemID) throw Object.assign(new Error('该附件不是子附件'), { code: 'library/invalid' })
+  return db.transaction(() => {
+    const collectionIDs = db.all('SELECT collectionID FROM collectionItems WHERE itemID = ?', row.parentItemID)
+      .map(entry => entry.collectionID)
+    db.run('UPDATE itemAttachments SET parentItemID = NULL WHERE itemID = ?', row.itemID)
+    for (const id of collectionIDs) {
+      const max = Number(db.get('SELECT COALESCE(MAX(orderIndex), -1) AS n FROM collectionItems WHERE collectionID = ?', id).n)
+      db.run('INSERT OR REPLACE INTO collectionItems (collectionID, itemID, orderIndex) VALUES (?, ?, ?)', id, row.itemID, max + 1)
+    }
+    touchItem(db, row.itemID)
+    touchItem(db, row.parentItemID)
+    return { key: String(key), detached: true }
+  })
+}
+
+/**
+ * Merge several regular items into the first one (Zotero's 合并条目): the
+ * master keeps its values, missing fields/creators/tags/collections are
+ * filled from the others, children (attachments, notes, annotations) move
+ * over, and the sources end up in the trash.
+ */
+export function mergeItems(db, keys) {
+  const meta = db.schema()
+  const list = (Array.isArray(keys) ? keys : []).map(key => String(key))
+  if (list.length < 2) throw Object.assign(new Error('至少选择两个条目才能合并'), { code: 'library/invalid' })
+  const rows = list.map((key) => {
+    const row = db.get(
+      'SELECT i.itemID, ty.typeName AS name FROM items i JOIN itemTypes ty ON ty.itemTypeID = i.itemTypeID WHERE i.libraryID = ? AND i.key = ?',
+      meta.libraryID, key,
+    )
+    if (!row) throw Object.assign(new Error(`No item with key ${key}`), { code: 'library/not-found' })
+    if (row.name === 'note' || row.name === 'attachment' || row.name === 'annotation') {
+      throw Object.assign(new Error('只能合并常规条目'), { code: 'library/invalid' })
+    }
+    return row
+  })
+  const [master, ...sources] = rows
+  return db.transaction(() => {
+    const masterFields = new Map(db.all(
+      `SELECT f.fieldName, v.value FROM itemData d
+       JOIN fieldsCombined f ON f.fieldID = d.fieldID
+       JOIN itemDataValues v ON v.valueID = d.valueID WHERE d.itemID = ?`, master.itemID,
+    ).map(entry => [entry.fieldName, entry.value]))
+    const masterCreators = db.all('SELECT 1 AS yes FROM itemCreators WHERE itemID = ?', master.itemID).length
+    const tagNames = new Set(db.all(
+      'SELECT t.name FROM itemTags it JOIN tags t ON t.tagID = it.tagID WHERE it.itemID = ?', master.itemID,
+    ).map(entry => entry.name))
+    const collectionIDs = new Set(db.all('SELECT collectionID FROM collectionItems WHERE itemID = ?', master.itemID)
+      .map(entry => entry.collectionID))
+
+    for (const source of sources) {
+      for (const entry of db.all(
+        `SELECT f.fieldName, v.value FROM itemData d
+         JOIN fieldsCombined f ON f.fieldID = d.fieldID
+         JOIN itemDataValues v ON v.valueID = d.valueID WHERE d.itemID = ?`, source.itemID,
+      )) {
+        const current = masterFields.get(entry.fieldName)
+        if (current === undefined || String(current).trim() === '') masterFields.set(entry.fieldName, String(entry.value ?? ''))
+      }
+      for (const tag of db.all('SELECT t.name FROM itemTags it JOIN tags t ON t.tagID = it.tagID WHERE it.itemID = ?', source.itemID)) {
+        tagNames.add(tag.name)
+      }
+      for (const entry of db.all('SELECT collectionID FROM collectionItems WHERE itemID = ?', source.itemID)) {
+        collectionIDs.add(entry.collectionID)
+      }
+      // Children move to the master; their annotations ride along.
+      db.run('UPDATE itemAttachments SET parentItemID = ? WHERE parentItemID = ?', master.itemID, source.itemID)
+      db.run('UPDATE itemNotes SET parentItemID = ? WHERE parentItemID = ?', master.itemID, source.itemID)
+    }
+
+    setFieldMap(db, master.itemID, Object.fromEntries([...masterFields].filter(([, value]) => String(value).trim() !== '')))
+    if (masterCreators === 0) {
+      const creatorList = []
+      for (const source of sources) {
+        for (const creator of db.all(
+          `SELECT c.firstName, c.lastName, c.fieldMode, ct.creatorType FROM itemCreators ic
+           JOIN creators c ON c.creatorID = ic.creatorID
+           JOIN creatorTypes ct ON ct.creatorTypeID = ic.creatorTypeID
+           WHERE ic.itemID = ? ORDER BY ic.orderIndex`, source.itemID,
+        )) {
+          creatorList.push({
+            firstName: creator.firstName ?? '',
+            lastName: creator.lastName ?? '',
+            fieldMode: creator.fieldMode,
+            creatorType: creator.creatorType,
+          })
+        }
+      }
+      if (creatorList.length > 0) setCreators(db, master.itemID, creatorList)
+    }
+    setTags(db, master.itemID, [...tagNames])
+    setCollections(db, master.itemID, [...collectionIDs])
+    for (const source of sources) {
+      db.run('INSERT OR IGNORE INTO deletedItems (itemID) VALUES (?)', source.itemID)
+    }
+    touchItem(db, master.itemID)
+    return { key: list[0], merged: sources.length }
+  })
+}
+
+/**
+ * Create a child note from an item's annotations (Zotero's 通过批注添加笔记):
+ * quoted highlights with their colors, comments and page labels, in reading
+ * order. Works on a parent item (uses all its attachments) or an attachment.
+ */
+export function noteFromAnnotations(db, key) {
+  const meta = db.schema()
+  const row = db.get(
+    `SELECT i.itemID, ty.typeName AS name FROM items i JOIN itemTypes ty ON ty.itemTypeID = i.itemTypeID
+     WHERE i.libraryID = ? AND i.key = ?`,
+    meta.libraryID,
+    String(key ?? ''),
+  )
+  if (!row) throw Object.assign(new Error(`No item with key ${key}`), { code: 'library/not-found' })
+  if (row.name === 'note' || row.name === 'annotation') {
+    throw Object.assign(new Error('该条目没有可提取的批注'), { code: 'library/invalid' })
+  }
+  // A standalone attachment owns its annotations directly; a regular item
+  // collects the annotations of all its attachments.
+  const annotations = row.name === 'attachment'
+    ? db.all(
+      `SELECT ia.text, ia.comment, ia.color, ia.type, ia.pageLabel, ia.sortIndex
+       FROM itemAnnotations ia
+       WHERE ia.parentItemID = ? AND ia.type IN (1, 5, 6)
+       ORDER BY ia.sortIndex`,
+      row.itemID,
+    )
+    : db.all(
+      `SELECT ia.text, ia.comment, ia.color, ia.type, ia.pageLabel, ia.sortIndex
+       FROM itemAnnotations ia
+       JOIN itemAttachments a ON a.itemID = ia.parentItemID
+       WHERE a.parentItemID = ? AND ia.type IN (1, 5, 6)
+       ORDER BY ia.sortIndex`,
+      row.itemID,
+    )
+  if (annotations.length === 0) {
+    throw Object.assign(new Error('没有可提取的批注'), { code: 'library/invalid' })
+  }
+  return db.transaction(() => {
+    const parts = annotations.map((annotation) => {
+      const color = /^#[0-9a-fA-F]{6}$/.test(String(annotation.color ?? '')) ? annotation.color : '#ffd400'
+      const quote = escapeHtml(annotation.text ?? '')
+      const label = annotation.pageLabel ? `（第 ${annotation.pageLabel} 页）` : ''
+      const quoteHtml = `<p><span style="background-color: ${color};">“${quote}”</span><span style="color: #8a8a90;"> ${escapeHtml(label)}</span></p>`
+      const comment = String(annotation.comment ?? '').trim()
+      return comment === '' ? quoteHtml : `${quoteHtml}<p>${escapeHtml(comment)}</p>`
+    })
+    const { itemID, key: noteKey } = insertItem(db, 'note')
+    insertRow(db, 'itemNotes', { itemID, parentItemID: row.itemID, note: parts.join('') })
+    touchItem(db, itemID)
+    touchItem(db, row.itemID)
+    return { key: noteKey, added: annotations.length }
+  })
+}

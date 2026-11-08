@@ -386,6 +386,100 @@ if (hasRealLibrary) {
       && parentRow.children.some(child => child.kind === 'attachment' && child.key === parentDetail.value.attachments[0].key),
     'list rows carry expandable attachment children')
 
+    // Two-phase drag import (Zotero-style): the staged attachment exists at
+    // once, then finalize attaches it under a parent built from metadata.
+    const staged = await call('import', { path: samplePdf, deferMetadata: true })
+    assert.equal(staged.ok, true, JSON.stringify(staged))
+    assert.equal(staged.value.staged, true, 'staged import reports the two-phase shape')
+    assert.ok(staged.value.attachmentKey && staged.value.parentKey === null, 'staged import creates a standalone attachment')
+    const stagedList = await call('items', { query: staged.value.fileName, limit: 500 })
+    assert.ok(stagedList.value.items.some(item => item.key === staged.value.attachmentKey), 'the staged attachment row appears in the list at once (filename searchable)')
+    const finished = await call('import-finalize', {
+      attachmentKey: staged.value.attachmentKey,
+      metadata: {
+        itemType: 'journalArticle',
+        fields: { title: 'dsh-library staged parent', date: '2024' },
+        creators: [{ lastName: 'Stage', firstName: 'Two', creatorType: 'author' }],
+      },
+    })
+    assert.equal(finished.ok, true, JSON.stringify(finished))
+    assert.ok(finished.value.parentKey === withMeta.value.parentKey ? false : Boolean(finished.value.parentKey), 'finalize reports the new parent key')
+    const stagedParent = await call('item', { key: finished.value.parentKey })
+    assert.equal(stagedParent.value.title, 'dsh-library staged parent')
+    assert.ok(stagedParent.value.attachments.some(entry => entry.key === staged.value.attachmentKey), 'finalize reparents the staged attachment')
+
+    // Staged import without metadata stays standalone and asks for help.
+    const stagedPlain = await call('import', { path: samplePdf, deferMetadata: true })
+    const finishedPlain = await call('import-finalize', { attachmentKey: stagedPlain.value.attachmentKey, lookup: false })
+    assert.equal(finishedPlain.ok, true, JSON.stringify(finishedPlain))
+    assert.equal(finishedPlain.value.parentKey, null, 'no metadata keeps the attachment standalone')
+    assert.equal(finishedPlain.value.needsMetadataHelp, true, 'the browser gets the AI-fix hint')
+
+    // Generic list columns: any visible field can be fetched per row, and
+    // notes count rides along for the 笔记 column.
+    const columnList = await call('items', { columns: ['extra', 'pages', 'numNotes'] })
+    assert.equal(columnList.ok, true, JSON.stringify(columnList))
+    const stagedRow = columnList.value.items.find(item => item.key === finished.value.parentKey)
+    assert.ok(stagedRow && typeof stagedRow.numNotes === 'number', 'rows carry the note count')
+    assert.ok(typeof stagedRow.fields === 'object', 'rows carry the requested-field map')
+
+    // Sorting by any visible field (the client's field:* sort keys).
+    await call('update', { key: finished.value.parentKey, patch: { fields: { extra: 'aaa' } } })
+    await call('update', { key: withMeta.value.parentKey, patch: { fields: { extra: 'bbb' } } })
+    const sortedUp = await call('items', { sort: 'field:extra', desc: false, limit: 500 })
+    const sortedKeys = sortedUp.value.items.map(item => item.key)
+    assert.ok(sortedKeys.indexOf(finished.value.parentKey) < sortedKeys.indexOf(withMeta.value.parentKey), 'field:extra sorts ascending')
+    const sortedDown = await call('items', { sort: 'field:extra', desc: true, limit: 500 })
+    const downKeys = sortedDown.value.items.map(item => item.key)
+    assert.ok(downKeys.indexOf(withMeta.value.parentKey) < downKeys.indexOf(finished.value.parentKey), 'field:extra sorts descending')
+
+    // Context-menu write ops: duplicate / merge / create parent / detach.
+    const duplicate = await call('duplicate', { key: withMeta.value.parentKey })
+    assert.equal(duplicate.ok, true, JSON.stringify(duplicate))
+    const duplicateDetail = await call('item', { key: duplicate.value.key })
+    assert.equal(duplicateDetail.value.title, 'dsh-library imported parent', 'duplicate copies the fields')
+    assert.equal(duplicateDetail.value.attachments.length, 1, 'duplicate copies child attachments')
+    // Child rows carry no target (trap 10) — resolve through the child's own detail.
+    const duplicateChild = await call('item', { key: duplicateDetail.value.attachments[0].key })
+    assert.ok(fs.existsSync(duplicateChild.value.attachment.target.path), 'duplicate copied the stored file')
+
+    const mergeMaster = await call('create', { itemType: 'journalArticle', fields: { title: 'merge master' } })
+    const mergeTarget = await call('create', {
+      itemType: 'journalArticle',
+      fields: { title: 'merge source', extra: 'merged-extra' },
+      creators: [{ lastName: 'Merge', firstName: 'Source', creatorType: 'author' }],
+    })
+    const merged = await call('merge', { keys: [mergeMaster.value.key, mergeTarget.value.key] })
+    assert.equal(merged.ok, true, JSON.stringify(merged))
+    const mergedDetail = await call('item', { key: mergeMaster.value.key })
+    assert.ok(mergedDetail.value.fields.some(field => field.field === 'extra' && field.value === 'merged-extra'), 'merge fills missing fields from the source')
+    assert.ok(mergedDetail.value.creators.some(creator => creator.lastName === 'Merge'), 'merge takes creators when the master has none')
+    const mergeTrash = await call('items', { trash: true, limit: 500 })
+    assert.ok(mergeTrash.value.items.some(item => item.key === mergeTarget.value.key), 'the merged-away item ends up in the trash')
+
+    const createdParent = await call('create-parent', { key: finishedPlain.value.attachmentKey })
+    assert.equal(createdParent.ok, true, JSON.stringify(createdParent))
+    assert.ok(createdParent.value.parentKey, 'create-parent attaches a standalone attachment')
+    const detach = await call('detach-attachment', { key: finishedPlain.value.attachmentKey })
+    assert.equal(detach.ok, true, JSON.stringify(detach))
+    const detachedDetail = await call('item', { key: finishedPlain.value.attachmentKey })
+    assert.ok(detachedDetail.value.attachments === undefined || detachedDetail.value.attachments.length === 0, 'detached attachment has no parent list')
+    assert.ok(detachedDetail.value.attachment, 'the attachment is standalone again')
+
+    // 从批注创建笔记: create an annotation, then a note from it.
+    const annoCreated = await call('annotation-create', {
+      attachmentKey: finishedPlain.value.attachmentKey,
+      annotation: { type: 1, text: 'annotated sentence', comment: 'my thought', color: '#ffd400', pageIndex: 0, rects: [[10, 10, 100, 30]] },
+    })
+    assert.equal(annoCreated.ok, true, JSON.stringify(annoCreated))
+    const annoNote = await call('note-from-annotations', { key: finishedPlain.value.attachmentKey })
+    assert.equal(annoNote.ok, true, JSON.stringify(annoNote))
+    const annoNoteDetail = await call('item', { key: finishedPlain.value.attachmentKey })
+    assert.equal(annoNoteDetail.value.notes.length, 1, 'the annotation note hangs under the attachment')
+    assert.ok(annoNoteDetail.value.notes[0].html.includes('annotated sentence'), 'the note quotes the annotation text')
+    const annoNoteEmpty = await call('note-from-annotations', { key: duplicate.value.key })
+    assert.equal(annoNoteEmpty.ok, false, 'items without annotations refuse the note')
+
     // Regression for double-click open: a parent item's PDF child must resolve
     // to a real path (delete the file so the open fails gracefully instead of
     // spawning a reader during the test).

@@ -1,7 +1,8 @@
 // Import pipeline: metadata resolution, stored attachment, fulltext cache, PDF annotations.
 import fs from 'node:fs'
 import path from 'node:path'
-import { createItem, createStoredAttachment } from './write.js'
+import { createItem, createStoredAttachment, touchItem } from './write.js'
+import { attachmentTarget } from './read.js'
 import { detectIdentifiers, resolveMetadata } from './metadata.js'
 import { annotationSignature, extractPdfAnnotations, extractPdfText } from './pdf.js'
 import { sqlNow } from './util.js'
@@ -106,6 +107,141 @@ export function writeFulltextCache(attachmentDir, text) {
 }
 
 /**
+ * Shared middle stage of an import: extract PDF text/annotations, then resolve
+ * metadata (explicit draft, or online lookup from identifiers in the file).
+ */
+async function extractAndResolve(filePath, fileName, isPdf, input, logger) {
+  let text = ''
+  let annotations = []
+  if (isPdf) {
+    try {
+      text = await extractPdfText(filePath)
+    } catch (error) {
+      logger.warn?.(`library: text extraction failed for ${fileName}: ${error?.message ?? error}`)
+    }
+    try {
+      annotations = await extractPdfAnnotations(filePath)
+    } catch (error) {
+      logger.warn?.(`library: annotation extraction failed for ${fileName}: ${error?.message ?? error}`)
+    }
+  }
+  let metadata = input.metadata
+  let lookupSource = 'explicit'
+  if (!metadata && input.lookup !== false) {
+    try {
+      const identifiers = detectIdentifiers(`${fileName}\n${text.slice(0, 8000)}`)
+      metadata = await resolveMetadata({ fileName, text, identifier: identifiers.doi ?? identifiers.arxiv ?? identifiers.isbn })
+      lookupSource = metadata?.source ?? 'none'
+    } catch (error) {
+      logger.warn?.(`library: metadata lookup failed for ${fileName}: ${error?.message ?? error}`)
+      lookupSource = 'error'
+    }
+  }
+  return { text, annotations, metadata, lookupSource }
+}
+
+function importResult(input, parentKey, attachment, metadata, lookupSource, text, annotationResult) {
+  const resolved = Boolean(metadata?.fields?.title)
+  const confidence = metadata?.confidence ?? (resolved ? 1 : 0)
+  return {
+    parentKey,
+    attachmentKey: attachment.key,
+    fileName: attachment.fileName,
+    size: attachment.size,
+    metadata: metadata
+      ? { source: lookupSource, confidence, title: metadata.fields?.title, needsReview: !resolved || confidence < 0.6 }
+      : { source: lookupSource, confidence: 0, needsReview: true },
+    // The browser offers "let the agent fix the metadata" when this is true.
+    needsMetadataHelp: !resolved || confidence < 0.6,
+    textChars: text.length,
+    annotations: annotationResult,
+  }
+}
+
+/**
+ * Stage an import the way Zotero handles a dragged file: the file becomes a
+ * standalone attachment item immediately, so the list can show and locate it
+ * right away. Metadata (full text, annotations, parent item) is resolved later
+ * by {@link finalizeImportFile}, which may turn the attachment into a proper
+ * parented record.
+ */
+export async function importStagedFile(db, paths, input) {
+  const logger = input.logger ?? console
+  const filePath = path.resolve(String(input.filePath ?? ''))
+  const stat = fs.statSync(filePath)
+  if (!stat.isFile()) throw Object.assign(new Error(`Not a file: ${filePath}`), { code: 'library/invalid' })
+  const attachment = createStoredAttachment(db, { filePath, parentItemID: null }, paths)
+  logger.info?.(`library: staged import ${attachment.fileName} as ${attachment.key}`)
+  return {
+    staged: true,
+    parentKey: null,
+    attachmentKey: attachment.key,
+    fileName: attachment.fileName,
+    size: attachment.size,
+  }
+}
+
+/**
+ * Finish a staged import on a standalone attachment: extract full text and
+ * annotations, resolve metadata and — when found — create the parent item and
+ * move the attachment under it. Without metadata the attachment stays
+ * standalone (needsMetadataHelp = true, the browser offers the AI fix).
+ * @param {import('./db.js').ZoteroDb} db
+ * @param {{storageDir:string}} paths
+ * @param {object} input
+ * @param {string} input.attachmentKey - the staged attachment's item key.
+ * @param {number} [input.collectionID] - collection for the created parent item.
+ * @param {object} [input.metadata] - explicit metadata draft; skips lookup.
+ * @param {boolean} [input.lookup] - allow online metadata lookup (default true).
+ * @param {object} [input.logger]
+ */
+export async function finalizeImportFile(db, paths, input) {
+  const logger = input.logger ?? console
+  const meta = db.schema()
+  const key = String(input.attachmentKey ?? '')
+  const row = db.get(
+    `SELECT i.itemID, a.parentItemID, a.path, a.linkMode FROM items i
+     JOIN itemAttachments a ON a.itemID = i.itemID
+     WHERE i.libraryID = ? AND i.key = ?`,
+    meta.libraryID,
+    key,
+  )
+  if (!row) throw Object.assign(new Error(`No attachment with key ${key}`), { code: 'library/not-found' })
+  if (row.parentItemID) {
+    const parent = db.get('SELECT key FROM items WHERE itemID = ?', row.parentItemID)
+    return { parentKey: parent?.key ?? null, attachmentKey: key, alreadyParented: true }
+  }
+  const target = attachmentTarget(paths.storageDir, key, row.path, row.linkMode)
+  if (target.kind !== 'file' || !fs.existsSync(target.path)) {
+    throw Object.assign(new Error('该附件没有可识别的本地文件'), { code: 'library/invalid' })
+  }
+  const fileName = path.basename(target.path)
+  const isPdf = fileName.toLowerCase().endsWith('.pdf')
+  const { text, annotations, metadata, lookupSource } = await extractAndResolve(target.path, fileName, isPdf, input, logger)
+
+  let parentKey = null
+  if (metadata && metadata.fields?.title) {
+    const created = createItem(db, {
+      itemType: metadata.itemType ?? 'document',
+      fields: metadata.fields,
+      creators: metadata.creators ?? [],
+      tags: metadata.tags ?? [],
+      collectionIDs: Number.isInteger(input.collectionID) ? [input.collectionID] : [],
+    })
+    db.run('UPDATE itemAttachments SET parentItemID = ? WHERE itemID = ?', created.itemID, row.itemID)
+    touchItem(db, row.itemID)
+    parentKey = created.key
+  }
+
+  if (text !== '') writeFulltextCache(path.dirname(target.path), text)
+  let annotationResult = { extracted: 0, added: 0 }
+  if (annotations.length > 0) {
+    annotationResult = await syncPdfAnnotations(db, row.itemID, target.path, logger)
+  }
+  return importResult(input, parentKey, { key, fileName }, metadata, lookupSource, text, annotationResult)
+}
+
+/**
  * Import one file into the library.
  * @param {import('./db.js').ZoteroDb} db
  * @param {{storageDir:string}} paths
@@ -124,34 +260,7 @@ export async function importFile(db, paths, input) {
   if (!stat.isFile()) throw Object.assign(new Error(`Not a file: ${filePath}`), { code: 'library/invalid' })
   const fileName = path.basename(filePath)
   const isPdf = fileName.toLowerCase().endsWith('.pdf')
-
-  let text = ''
-  let annotations = []
-  if (isPdf) {
-    try {
-      text = await extractPdfText(filePath)
-    } catch (error) {
-      logger.warn?.(`library: text extraction failed for ${fileName}: ${error?.message ?? error}`)
-    }
-    try {
-      annotations = await extractPdfAnnotations(filePath)
-    } catch (error) {
-      logger.warn?.(`library: annotation extraction failed for ${fileName}: ${error?.message ?? error}`)
-    }
-  }
-
-  let metadata = input.metadata
-  let lookupSource = 'explicit'
-  if (!metadata && input.lookup !== false) {
-    try {
-      const identifiers = detectIdentifiers(`${fileName}\n${text.slice(0, 8000)}`)
-      metadata = await resolveMetadata({ fileName, text, identifier: identifiers.doi ?? identifiers.arxiv ?? identifiers.isbn })
-      lookupSource = metadata?.source ?? 'none'
-    } catch (error) {
-      logger.warn?.(`library: metadata lookup failed for ${fileName}: ${error?.message ?? error}`)
-      lookupSource = 'error'
-    }
-  }
+  const { text, annotations, metadata, lookupSource } = await extractAndResolve(filePath, fileName, isPdf, input, logger)
 
   const result = (() => {
     let parentItemID = null
@@ -185,20 +294,5 @@ export async function importFile(db, paths, input) {
   if (annotations.length > 0) {
     annotationResult = await syncPdfAnnotations(db, attachment.itemID, attachment.filePath, logger)
   }
-
-  const resolved = Boolean(metadata?.fields?.title)
-  const confidence = metadata?.confidence ?? (resolved ? 1 : 0)
-  return {
-    parentKey: result.parentKey,
-    attachmentKey: attachment.key,
-    fileName: attachment.fileName,
-    size: attachment.size,
-    metadata: metadata
-      ? { source: lookupSource, confidence, title: metadata.fields?.title, needsReview: !resolved || confidence < 0.6 }
-      : { source: lookupSource, confidence: 0, needsReview: true },
-    // The browser offers "let the agent fix the metadata" when this is true.
-    needsMetadataHelp: !resolved || confidence < 0.6,
-    textChars: text.length,
-    annotations: annotationResult,
-  }
+  return importResult(input, result.parentKey, attachment, metadata, lookupSource, text, annotationResult)
 }

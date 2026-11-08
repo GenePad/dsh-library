@@ -11,7 +11,7 @@ import { createTools } from './src/host/tools.js'
 import { chatGuidance } from './src/host/chat.js'
 
 export const name = 'library'
-export const version = '0.1.6'
+export const version = '0.1.7'
 
 // The plugin cannot do anything useful without the authenticated connection
 // (the API route) or a session controller (the chat dock).

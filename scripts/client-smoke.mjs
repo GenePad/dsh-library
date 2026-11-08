@@ -42,6 +42,10 @@ const blobUrls = []
 window.URL.createObjectURL = () => `blob:mock-${blobUrlCount += 1}`
 window.URL.revokeObjectURL = (url) => { const i = blobUrls.indexOf(url); if (i !== -1) blobUrls.splice(i, 1) }
 globalThis.URL = window.URL
+// The reveal effect scrolls a located row into view; count the calls instead
+// of relying on jsdom layout.
+let scrollIntoViewCalls = []
+window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() { scrollIntoViewCalls.push(this.getAttribute('data-key')) }
 
 const collection = { id: 1, key: 'COLLAAAA', name: 'Cas-Screen', parentID: null, count: 0, totalCount: 2, children: [] }
 const items = [
@@ -50,7 +54,8 @@ const items = [
     date: '2024', year: 2024, doi: '10.1/test', creators: 'Zhang et al.',
     creatorList: [{ firstName: 'San', lastName: 'Zhang', fieldMode: 0 }],
     publicationTitle: 'Nature Reviews', publisher: '', tags: ['AAV'], firstCreator: 'Zhang',
-    hasAttachment: true, dateAdded: '2026-01-01 00:00:00', dateModified: '2026-01-01 00:00:00',
+    hasAttachment: true, numNotes: 0, fields: { publicationTitle: 'Nature Reviews', pages: '100-120', extra: 'note text' },
+    dateAdded: '2026-01-01 00:00:00', dateModified: '2026-01-01 00:00:00',
     children: [
       { key: 'CCCCCCCC', kind: 'attachment', itemType: 'attachment', title: 'paper.pdf', contentType: 'application/pdf' },
     ],
@@ -59,7 +64,8 @@ const items = [
     key: 'BBBBBBBB', itemType: 'book', title: 'Another item',
     date: '2020', year: 2020, doi: '', creators: 'Li', creatorList: [],
     publicationTitle: '', publisher: 'Springer', tags: [], firstCreator: 'Li',
-    hasAttachment: false, dateAdded: '2026-01-01 00:00:00', dateModified: '2026-01-01 00:00:00',
+    hasAttachment: false, numNotes: 0, fields: {},
+    dateAdded: '2026-01-01 00:00:00', dateModified: '2026-01-01 00:00:00',
     children: [],
   },
 ]
@@ -124,7 +130,7 @@ globalThis.fetch = async (url, options) => {
     const bytes = Buffer.from(fs.readFileSync(path.join(PLUGIN, 'scripts', 'fixtures-smoke.pdf')))
     return {
       ok: true,
-      headers: { get: name => ({ 'content-type': 'application/pdf', 'x-library-attachment-key': 'CCCCCCCC', 'x-library-parent-key': 'AAAAAAAA', 'x-library-title': 'sample.pdf' }[name] ?? null) },
+      headers: { get: name => ({ 'content-type': 'application/pdf', 'x-library-attachment-key': 'CCCCCCCC', 'x-library-parent-key': 'BBBBBBBB', 'x-library-title': 'sample.pdf' }[name] ?? null) },
       arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
     }
   }
@@ -172,7 +178,9 @@ globalThis.fetch = async (url, options) => {
       value = schemaTypes
       break
     case 'item':
-      value = detail
+      // The right pane follows the reader tab too: a PDF tab whose parent is
+      // the book item loads that parent's detail.
+      value = body.payload?.key === 'BBBBBBBB' ? { ...detail, key: 'BBBBBBBB', title: 'Another item' } : detail
       break
     case 'change-type':
       // Plan first (confirm:false), then apply. A field not valid for the
@@ -251,11 +259,44 @@ globalThis.fetch = async (url, options) => {
       value = { sessionId: 'session-1' }
       break
     case 'upload':
+      // Zotero-style staged import: the attachment item exists immediately.
+      if (body.payload?.deferMetadata === true) {
+        items.push({
+          key: 'GGGGGGGG', itemType: 'attachment', title: 'mystery-paper.pdf',
+          date: '', year: null, doi: '', creators: '', creatorList: [], publicationTitle: '', publisher: '',
+          tags: [], firstCreator: '', hasAttachment: false, numNotes: 0, fields: {},
+          dateAdded: '2026-01-01 00:00:00', dateModified: '2026-01-01 00:00:00', children: [],
+        })
+        value = { staged: true, parentKey: null, attachmentKey: 'GGGGGGGG', fileName: 'mystery-paper.pdf', size: 4 }
+        break
+      }
       value = {
         parentKey: 'EEEEEEEE', attachmentKey: 'FFFFFFFF', fileName: 'mystery-paper.pdf',
         metadata: { source: 'none', confidence: 0, needsReview: true },
         needsMetadataHelp: true, textChars: 0, annotations: { extracted: 0, added: 0 },
       }
+      break
+    case 'import-finalize':
+      value = {
+        parentKey: null, attachmentKey: 'GGGGGGGG', fileName: 'mystery-paper.pdf',
+        metadata: { source: 'none', confidence: 0, needsReview: true },
+        needsMetadataHelp: true, textChars: 0, annotations: { extracted: 0, added: 0 },
+      }
+      break
+    case 'duplicate':
+      value = { key: 'DUPLICATE' }
+      break
+    case 'merge':
+      value = { key: 'AAAAAAAA', merged: 1 }
+      break
+    case 'create-parent':
+      value = { parentKey: 'NEWPARENT' }
+      break
+    case 'detach-attachment':
+      value = { key: body.payload?.key, detached: true }
+      break
+    case 'note-from-annotations':
+      value = { key: 'ANNONOTE', added: 1 }
       break
     default:
       value = {}
@@ -509,21 +550,54 @@ await act(async () => {
 })
 assert.ok(calls.filter(endpoint => endpoint === 'item').length >= 2, 'child click loads its own detail')
 
-// The column picker adds and removes list columns like Zotero's.
+// The column picker adds and removes list columns like Zotero's — the full
+// Zotero set (extra/页码/…) is offered, and the header scrolls with the body.
 const colBtn = container.querySelector('.lib-colbtn')
 assert.ok(colBtn, 'column picker button rendered')
 await act(async () => {
   colBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
   await tick()
 })
-const journalItem = [...container.querySelectorAll('.lib-colitem')].find(node => node.textContent.includes('期刊/出版物'))
-assert.ok(journalItem, 'journal column offered')
+const menuItems = [...container.querySelectorAll('.lib-colitem')].map(node => node.textContent.trim())
+assert.ok(menuItems.some(text => text.includes('出版物')), 'publication column offered')
+assert.ok(menuItems.some(text => text.includes('其他')), 'Zotero 其他 (extra) column offered')
+assert.ok(menuItems.some(text => text.includes('页码')), 'pages column offered')
+assert.ok(menuItems.some(text => text.includes('索书号')), 'callNumber column offered')
+assert.ok(container.querySelector('.lib-colmenu-restore'), 'restore-default-columns action offered')
+const extraItem = [...container.querySelectorAll('.lib-colitem')].find(node => node.textContent.includes('其他'))
 await act(async () => {
-  journalItem.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  extraItem.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
   await tick()
 })
-assert.ok([...container.querySelectorAll('.lib-table-head span, .lib-table-head button')].some(node => node.textContent.includes('期刊/出版物')), 'journal column shown')
-assert.ok(container.querySelectorAll('.lib-itemrow')[0].textContent.includes('Nature Reviews'), 'journal value rendered in rows')
+assert.ok([...container.querySelectorAll('.lib-table-head span, .lib-table-head button')].some(node => node.textContent.includes('其他')), 'extra column shown')
+// Generic column values arrive through the host's requested-field payload.
+assert.ok(container.querySelectorAll('.lib-itemrow')[0].textContent.includes('note text'), 'extra field value rendered in rows')
+assert.ok(container.querySelector('.lib-items .lib-table-head'), 'header lives inside the scroll container (sticky + horizontal sync)')
+// Column order is user-adjustable: dragging a header cell onto another moves it.
+await act(async () => {
+  colBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) // close
+  await tick()
+  colBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true })) // reopen
+  await tick()
+})
+const pagesItem = [...container.querySelectorAll('.lib-colitem')].find(node => node.textContent.includes('页码'))
+await act(async () => {
+  pagesItem.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  await tick()
+})
+const headerCells = () => [...container.querySelectorAll('.lib-table-head > button, .lib-table-head > span')]
+  .filter(node => node.tagName === 'BUTTON' || node.getAttribute('draggable') === 'true')
+const headerLabels = () => headerCells().map(node => node.textContent)
+await act(async () => {
+  const from = headerCells().find(node => node.textContent.includes('其他'))
+  const to = headerCells().find(node => node.textContent.includes('年份'))
+  from.dispatchEvent(Object.defineProperty(new window.MouseEvent('dragstart', { bubbles: true }), 'dataTransfer', { value: { setData() {}, effectAllowed: 'move' } }))
+  to.dispatchEvent(Object.defineProperty(new window.MouseEvent('drop', { bubbles: true, cancelable: true }), 'dataTransfer', { value: { getData: () => 'extra' } }))
+  await tick()
+})
+assert.ok(headerLabels().findIndex(text => text.includes('其他')) < headerLabels().findIndex(text => text.includes('年份')), 'dragging a header cell reorders the columns')
+const columnsSaved = JSON.parse(localStorage.getItem('dsh-library:columns'))
+assert.ok(columnsSaved.includes('extra') && columnsSaved.includes('pages'), 'visible columns persisted across sessions')
 
 // 新建条目 = Zotero's type menu: pick a type, an empty item is created and
 // selected for editing in the item pane.
@@ -621,11 +695,19 @@ await act(async () => {
   const drop = new window.MouseEvent('drop', { bubbles: true, cancelable: true })
   Object.defineProperty(drop, 'dataTransfer', { value: { files: [file] } })
   dropZone.dispatchEvent(drop)
-  await tick()
-  await tick()
-  await tick()
+  for (let i = 0; i < 16; i += 1) await tick()
 })
 assert.ok(calls.includes('upload'), 'dropped file uploaded for import')
+// Two-phase import: the staged attachment item shows up (and is located) at
+// once; metadata resolution runs afterwards through import-finalize.
+const uploadBody = bodies.filter(body => body.endpoint === 'upload').at(-1)
+assert.ok(uploadBody?.payload?.deferMetadata === true, 'drag import stages the attachment item first')
+const finalizeBody = bodies.find(body => body.endpoint === 'import-finalize')
+assert.ok(finalizeBody?.payload?.attachmentKey === 'GGGGGGGG', 'metadata resolution runs as the second import phase')
+const stagedRow = container.querySelector('[data-key="GGGGGGGG"]')
+assert.ok(stagedRow, 'the staged attachment row renders right after the drop')
+assert.ok(stagedRow.classList.contains('selected'), 'the staged row is auto-selected (located)')
+assert.ok(scrollIntoViewCalls.includes('GGGGGGGG'), 'the located row is scrolled into view')
 const fixButton = [...container.querySelectorAll('.lib-import-fix button')].find(node => node.textContent.includes('AI 补全'))
 assert.ok(fixButton, 'agent metadata-fix button offered for the incomplete import')
 await act(async () => {
@@ -639,11 +721,71 @@ assert.equal(sentBody.payload.context.mode, 'list', 'dock context travels with t
 assert.ok(sentBody.payload.text.includes('mystery-paper.pdf'), 'the task names the imported file')
 assert.equal(nativeOpens.length, 0, 'sending keeps the conversation docked, no native jump')
 
+console.log('MARK0 ctxmenu')
+
+// Zotero's item context menu: right-click opens it on the row's selection and
+// every entry funnels into a channel call.
+const firstRow = container.querySelector('[data-key="AAAAAAAA"]')
+assert.ok(firstRow, 'first item row carries its key')
+await act(async () => {
+  firstRow.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }))
+  await tick()
+})
+const ctxMenu = container.querySelector('.lib-ctxmenu')
+assert.ok(ctxMenu, 'right-click opens the item context menu')
+const ctxLabels = [...ctxMenu.querySelectorAll('.lib-ctx-item > .lib-ctx-label')].map(node => node.textContent)
+for (const label of ['打开附件', '新建条目笔记', '添加到分类', '创建条目副本', '复制 BibTeX 引用', '复制为 CSL JSON', '删除条目…']) {
+  assert.ok(ctxLabels.some(text => text.includes(label)), `context menu offers ${label}`)
+}
+assert.ok(ctxMenu.textContent.includes('合并条目'), 'merge offered for regular items')
+// Click the 添加到分类 entry to open its submenu, then add to Cas-Screen.
+// (Assertions run outside act like everywhere else in this suite: React 18's
+// async act flushes when the scope closes, not at inner awaits.)
+await act(async () => {
+  const entry = [...ctxMenu.querySelectorAll('.lib-ctx-item')].find(node => node.textContent.includes('添加到分类'))
+  entry.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  await tick()
+})
+const sub = container.querySelector('.lib-ctx-sub')
+assert.ok(sub, 'collection submenu opens on click')
+assert.ok(sub.textContent.includes('Cas-Screen'), 'submenu lists the collection')
+await act(async () => {
+  ;[...sub.querySelectorAll('.lib-ctx-item')].find(node => node.textContent.includes('Cas-Screen'))
+    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  await tick()
+})
+const addCollBody = bodies.filter(body => body.endpoint === 'update').find(body => body.payload?.patch?.addCollections)
+assert.ok(addCollBody?.payload?.patch?.addCollections[0] === 1, 'add-to-collection writes the membership')
+// Trash through the menu (context menu closed by the previous action).
+await act(async () => {
+  firstRow.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }))
+  await tick()
+})
+const trashEntry = [...container.querySelectorAll('.lib-ctxmenu .lib-ctx-item')].find(node => node.textContent.includes('删除条目'))
+assert.ok(trashEntry, 'the context menu reopens for the selected row')
+await act(async () => {
+  trashEntry.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  await tick()
+})
+const trashBody = bodies.filter(body => body.endpoint === 'trash').at(-1)
+assert.ok(trashBody?.payload?.keys?.includes('AAAAAAAA') && trashBody.payload.restore === false, 'menu 删除条目 moves the row to the trash')
+
+console.log('MARK1 reselect')
+
+// Re-select the paper row: the menu-driven trash cleared the selection, and
+// the viewer test needs its attachment visible in the details pane again.
+await act(async () => {
+  container.querySelector('[data-key="AAAAAAAA"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  for (let i = 0; i < 4; i += 1) await tick()
+})
+
 // The in-app viewer ("dsh 内建查看器"): "打开 PDF" opens a pdf.js viewer tab.
 // jsdom cannot paint canvases, but pdf.js (main-thread mode via the bundled
 // WorkerMessageHandler) parses the real fixture, so the page placeholder gets
 // its true size and the toolbar reports the page count. Real painting is
 // covered by scripts/reader-e2e.mjs in a real browser.
+console.log('MARK2 openpdf')
+
 const openPdf = [...container.querySelectorAll('button')].find(node => node.textContent.includes('打开 PDF'))
 assert.ok(openPdf, 'open PDF button rendered')
 await act(async () => {
@@ -656,9 +798,16 @@ assert.ok(container.querySelector('.lib-reader'), 'viewer column rendered')
 assert.ok(container.querySelector('.lib-pdf-root'), 'pdf.js viewer body rendered')
 assert.ok(container.querySelector('.lib-pdf-page[data-page="1"]'), 'page placeholder laid out')
 assert.ok(container.querySelector('.lib-pdf-annos g[data-anno-key="DDDDDDDD"]'), 'highlight overlay rendered from the mocked Zotero row (uniform SVG fills)')
+// The right pane (文献信息) follows the reader tab: it now shows the article
+// behind the open tab (its parent item), not the last list selection.
+const itemCallsAfterOpen = bodies.filter(body => body.endpoint === 'item')
+assert.ok(itemCallsAfterOpen.at(-1)?.payload?.key === 'BBBBBBBB', 'opening a reader tab loads the tab item into the right pane')
+assert.ok(container.querySelector('.lib-right-wrap')?.textContent.includes('Another item'), 'the details pane shows the reader tab article')
 
 // Multi-line hover: the outline covers EVERY line of the annotation (the old
 // per-rect CSS :hover could only reach the single sibling under the mouse).
+console.log('MARK3 annhover')
+
 const twoLineStrip = container.querySelector('.lib-pdf-anno-hit[data-anno-key="FFFF0000"]')
 assert.ok(twoLineStrip, 'two-line underline hit strip rendered')
 await act(async () => {

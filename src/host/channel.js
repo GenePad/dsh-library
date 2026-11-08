@@ -51,18 +51,25 @@ export function createChannel(runtime) {
           return ok(runtime.state())
         case 'collections':
           return ok({ ...runtime.collections(), tags: runtime.tags() })
-        case 'items':
+        case 'items': {
+          // Any visible column can drive the sort: 'field:<name>' orders by
+          // that itemData field (validated shape-wise in readItems).
+          const sortKey = typeof body.sort === 'string' ? body.sort : ''
+          const sortOk = ['title', 'creator', 'date', 'dateAdded', 'dateModified', 'itemType', 'hasAttachment', 'numNotes'].includes(sortKey)
+            || /^field:[A-Za-z][A-Za-z0-9]*$/.test(sortKey)
           return ok(runtime.items({
             collectionID: Number.isInteger(body.collectionID) ? body.collectionID : undefined,
             unfiled: body.unfiled === true,
             tag: typeof body.tag === 'string' ? body.tag : undefined,
             query: typeof body.query === 'string' ? body.query : '',
             trash: body.trash === true,
-            sort: ['title', 'creator', 'date', 'dateAdded', 'dateModified'].includes(body.sort) ? body.sort : undefined,
+            sort: sortOk ? sortKey : undefined,
             desc: body.desc !== false,
+            columns: Array.isArray(body.columns) ? body.columns.map(String) : [],
             limit: Number.isInteger(body.limit) ? body.limit : 100,
             offset: Number.isInteger(body.offset) ? body.offset : 0,
           }))
+        }
         case 'item':
           return ok(runtime.item(String(body.key ?? '')))
         case 'create':
@@ -103,6 +110,12 @@ export function createChannel(runtime) {
         case 'collection-trash':
           return ok(runtime.trashCollection(Number(body.id), body.restore !== true))
         case 'import': {
+          // Zotero-style staged import: register the attachment item first so
+          // the list can show and locate it, then resolve metadata separately
+          // through import-finalize.
+          if (body.deferMetadata === true && body.parentKey === undefined) {
+            return ok(await runtime.importStaged({ filePath: String(body.path ?? '') }))
+          }
           const result = await runtime.importFile({
             filePath: String(body.path ?? ''),
             parentKey: typeof body.parentKey === 'string' ? body.parentKey : undefined,
@@ -112,8 +125,18 @@ export function createChannel(runtime) {
           })
           return ok(result)
         }
+        case 'import-finalize':
+          return ok(await runtime.finalizeImport({
+            attachmentKey: String(body.attachmentKey ?? ''),
+            collectionID: Number.isInteger(body.collectionID) ? body.collectionID : undefined,
+            lookup: body.lookup !== false,
+            metadata: body.metadata && typeof body.metadata === 'object' ? body.metadata : undefined,
+          }))
         case 'upload': {
           const saved = runtime.saveUpload(String(body.name ?? 'upload'), String(body.data ?? ''))
+          if (body.deferMetadata === true) {
+            return ok(await runtime.importStaged({ filePath: saved }))
+          }
           const result = await runtime.importFile({
             filePath: saved,
             parentKey: typeof body.parentKey === 'string' ? body.parentKey : undefined,
@@ -123,6 +146,16 @@ export function createChannel(runtime) {
           })
           return ok(result)
         }
+        case 'duplicate':
+          return ok(runtime.duplicate(String(body.key ?? '')))
+        case 'create-parent':
+          return ok(runtime.createParent(String(body.key ?? '')))
+        case 'detach-attachment':
+          return ok(runtime.detachAttachment(String(body.key ?? '')))
+        case 'merge':
+          return ok(runtime.merge(Array.isArray(body.keys) ? body.keys.map(String) : []))
+        case 'note-from-annotations':
+          return ok(runtime.noteFromAnnotations(String(body.key ?? '')))
         case 'lookup': {
           const identifier = String(body.identifier ?? '')
           // Multi-value input (one id per line) resolves each like Zotero's

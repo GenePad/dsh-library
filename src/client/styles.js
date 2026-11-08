@@ -106,7 +106,7 @@ const CSS = `
 }
 .lib-back-to-chat:hover { background: var(--lib-bg-hover); color: var(--lib-text); border-color: var(--lib-accent); }
 .lib-midcol { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.lib-middle { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.lib-middle { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 /* Right pane (文献信息): a Zotero-style scrolling column of collapsible
    sections. The wrap owns the grid cell; .lib-right scrolls inside it.
    Collapsed, the cell shrinks to a 26px rail that expands it again. */
@@ -159,26 +159,31 @@ const CSS = `
 .lib-tagchip .lib-count { color: var(--lib-text-3); font-variant-numeric: tabular-nums; }
 
 .lib-items { flex: 1; overflow: auto; min-height: 0; position: relative; }
+/* The header is the first child of the scroll container: sticky keeps it on
+   top while scrolling vertically, and horizontal scrolling moves it in sync
+   with the rows (it can never spill into the right pane anymore). */
 .lib-table-head {
   display: grid; gap: 8px; align-items: center;
   height: 26px; padding: 0 10px; border-bottom: 1px solid var(--lib-border); background: var(--lib-bg);
   font-size: 11px; color: var(--lib-text-3); position: sticky; top: 0; z-index: 2;
+  width: max-content; min-width: 100%;
 }
 .lib-table-head button { color: inherit; font-size: inherit; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lib-table-head button.sorted { color: var(--lib-text); font-weight: 600; }
 .lib-table-head .num { text-align: right; }
-.lib-table-head .lib-colbtn-slot { display: flex; justify-content: flex-end; }
-.lib-colbtn { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 18px; border-radius: 4px; color: var(--lib-text-3); }
+.lib-colbtn { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 18px; border-radius: 4px; color: var(--lib-text-3); background: var(--lib-bg); }
 .lib-colbtn:hover, .lib-colbtn.open { background: var(--lib-bg-hover); color: var(--lib-text); }
 .lib-itemrow {
   display: grid; gap: 8px; align-items: center;
   min-height: 28px; padding: 3px 10px; border-bottom: 1px solid var(--lib-border-soft);
   cursor: default; user-select: none;
+  width: max-content; min-width: 100%;
 }
 .lib-itemrow:hover { background: var(--lib-bg-hover); }
 .lib-itemrow.selected { background: var(--lib-accent-soft); }
 .lib-itemrow .lib-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--lib-text-2); font-size: 12px; }
 .lib-itemrow .lib-cell.num { text-align: right; font-variant-numeric: tabular-nums; }
+.lib-itemrow .lib-cell.att { display: inline-flex; align-items: center; color: var(--lib-text-3); }
 .lib-itemrow .lib-cell.strong { color: var(--lib-text); }
 .lib-itemrow .lib-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .lib-itemrow .lib-title-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -187,8 +192,10 @@ const CSS = `
 .lib-empty { padding: 40px 16px; text-align: center; color: var(--lib-text-3); }
 .lib-loadmore { padding: 10px; text-align: center; }
 
-/* Column picker dropdown, Zotero-style. */
-.lib-colmenu-wrap { position: relative; display: flex; justify-content: flex-end; }
+/* Column picker dropdown, Zotero-style. The button is pinned to the pane's
+   top-right corner (outside the scrolling list), so it stays reachable no
+   matter how far the header is scrolled. */
+.lib-colmenu-wrap { position: absolute; top: 4px; right: 8px; z-index: 6; display: flex; }
 .lib-colmenu {
   position: absolute; top: 24px; right: 0; z-index: 30; min-width: 168px; max-height: 320px; overflow: auto;
   background: var(--lib-bg-overlay); border: 1px solid var(--lib-border); border-radius: 8px;
@@ -201,6 +208,39 @@ const CSS = `
 .lib-colmenu .lib-colitem:hover { background: var(--lib-bg-hover); color: var(--lib-text); }
 .lib-colmenu .lib-colitem.fixed { opacity: 0.55; cursor: default; }
 .lib-colmenu .lib-colitem input { width: 13px; height: 13px; margin: 0; }
+.lib-colmenu-restore {
+  margin-top: 4px; padding: 4px 7px; width: 100%; text-align: left; font: inherit; font-size: 12px;
+  color: var(--lib-text-2); background: none; border: none; border-top: 1px solid var(--lib-border-soft);
+  border-radius: 0 0 5px 5px; cursor: pointer;
+}
+.lib-colmenu-restore:hover { background: var(--lib-bg-hover); color: var(--lib-text); }
+
+/* Item context menu (right-click on a row), Zotero-style: flat list with
+   separators, hover-expanded submenus, fixed positioning + viewport clamp. */
+.lib-ctxmenu {
+  position: fixed; z-index: 60; min-width: 208px; padding: 4px;
+  background: var(--lib-bg-overlay); border: 1px solid var(--lib-border); border-radius: 8px;
+  box-shadow: var(--lib-shadow); font-size: 12.5px;
+}
+.lib-ctx-item {
+  position: relative; display: flex; align-items: center; gap: 8px;
+  min-height: 26px; padding: 3px 9px; border-radius: 5px;
+  color: var(--lib-text-2); cursor: default; user-select: none; white-space: nowrap;
+}
+.lib-ctx-item:hover { background: var(--lib-bg-hover); color: var(--lib-text); }
+.lib-ctx-item.disabled { opacity: 0.45; }
+.lib-ctx-item.disabled:hover { background: none; color: var(--lib-text-2); }
+.lib-ctx-item.danger { color: var(--lib-danger); }
+.lib-ctx-item.open { background: var(--lib-bg-hover); color: var(--lib-text); }
+.lib-ctx-label { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.lib-ctx-arrow { color: var(--lib-text-3); margin-left: 12px; }
+.lib-ctx-sub {
+  position: absolute; left: calc(100% - 4px); top: -4px; z-index: 2; min-width: 190px; max-height: 320px; overflow: auto;
+  background: var(--lib-bg-overlay); border: 1px solid var(--lib-border); border-radius: 8px;
+  box-shadow: var(--lib-shadow); padding: 4px;
+}
+.lib-ctx-sep { height: 1px; margin: 4px 6px; background: var(--lib-border-soft); }
+.lib-prompt-input { width: 100%; height: 30px; padding: 0 8px; font-size: 13px; }
 
 .lib-detail-head { padding-bottom: 10px; border-bottom: 1px solid var(--lib-border); padding-right: 26px; }
 .lib-detail-title { font-size: 15px; font-weight: 600; line-height: 1.35; word-break: break-word; }
