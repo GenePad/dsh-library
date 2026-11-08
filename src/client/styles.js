@@ -141,14 +141,16 @@ const CSS = `
 .lib-section { margin: 10px 4px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.03em; color: var(--lib-text-3); text-transform: none; display: flex; align-items: center; gap: 6px; }
 .lib-row { display: flex; align-items: center; gap: 6px; height: 25px; padding: 0 6px; border-radius: 5px; cursor: default; user-select: none; color: var(--lib-text-2); }
 .lib-row:hover { background: var(--lib-bg-hover); color: var(--lib-text); }
-/* Selected collection/smart view: SOLID accent (Zotero-style tree selection).
-   The old 13% color-mix tint washed out in host themes — indistinguishable
-   from hover — and dies entirely when the host's token defeats color-mix. */
-.lib-row.selected { background: var(--lib-accent); color: #fff; }
-.lib-row.selected:hover { background: var(--lib-accent); filter: brightness(1.06); color: #fff; }
-.lib-row.selected .lib-count { color: rgba(255, 255, 255, 0.82); }
-.lib-row.selected .lib-caret { color: rgba(255, 255, 255, 0.82); }
-.lib-row.selected svg { color: #fff; }
+/* Selected collection/smart view: the hover family (host interactive tokens,
+   which render correctly in every host theme) but persistent and one step
+   stronger. NEVER fill selections with --lib-accent: the host's brand token
+   can be near-white (measured), which turns fills into white bars. */
+.lib-row.selected {
+  background: var(--lib-bg-active);
+  color: var(--lib-text);
+  font-weight: 600;
+}
+.lib-row.selected:hover { background: var(--lib-bg-active); color: var(--lib-text); }
 .lib-row .lib-count { margin-left: auto; font-size: 11px; color: var(--lib-text-3); font-variant-numeric: tabular-nums; }
 .lib-row .lib-caret { width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; color: var(--lib-text-3); flex: none; }
 .lib-row .lib-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -162,8 +164,7 @@ const CSS = `
 .lib-tagchip { display: inline-flex; align-items: center; gap: 4px; height: 21px; padding: 0 7px; border-radius: 999px; border: 1px solid var(--lib-border); color: var(--lib-text-2); font-size: 11px; background: var(--lib-bg); max-width: 100%; }
 .lib-tagchip .lib-tag-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px; }
 .lib-tagchip:hover { border-color: var(--lib-accent); color: var(--lib-text); }
-.lib-tagchip.active { background: var(--lib-accent); border-color: transparent; color: #fff; }
-.lib-tagchip.active .lib-count { color: rgba(255, 255, 255, 0.82); }
+.lib-tagchip.active { background: var(--lib-bg-active); border-color: var(--lib-border); color: var(--lib-text); }
 .lib-tagchip .lib-count { color: var(--lib-text-3); font-variant-numeric: tabular-nums; }
 
 .lib-items { flex: 1; overflow: auto; min-height: 0; position: relative; }
@@ -198,7 +199,8 @@ body.lib-col-resizing .lib-colresize { background: color-mix(in srgb, var(--lib-
   cursor: default; user-select: none;
 }
 .lib-itemrow:hover { background: var(--lib-bg-hover); }
-.lib-itemrow.selected { background: var(--lib-accent-soft); }
+.lib-itemrow.selected { background: var(--lib-bg-active); }
+.lib-itemrow.active { outline: 1px solid var(--lib-border); }
 .lib-itemrow .lib-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--lib-text-2); font-size: 12px; }
 .lib-itemrow .lib-cell.num { text-align: right; font-variant-numeric: tabular-nums; }
 .lib-itemrow .lib-cell.att { display: inline-flex; align-items: center; color: var(--lib-text-3); }
@@ -241,7 +243,7 @@ body.lib-col-resizing .lib-colresize { background: color-mix(in srgb, var(--lib-
 }
 .lib-colmenu .lib-colitem:active .lib-colitem-drag { cursor: grabbing; }
 .lib-colmenu .lib-colitem-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lib-colmenu .lib-colitem.drag-over { background: var(--lib-accent-soft); }
+.lib-colmenu .lib-colitem.drag-over { background: var(--lib-bg-active); }
 
 /* Item context menu (right-click on a row), Zotero-style: flat list with
    separators, hover-expanded submenus, fixed positioning + viewport clamp. */
