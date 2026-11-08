@@ -21,6 +21,37 @@ Public Sub DshLibRibbonInvalidate()
     On Error GoTo 0
 End Sub
 
+' Re-query the getEnabled of the two AI buttons. Called by the selection
+' change sink in ThisDocument (via DshLibCore) whenever the has-selection
+' state flips, so the buttons are only clickable with text selected.
+Public Sub DshLibRibbonInvalidateAi()
+    On Error Resume Next
+    If Not gRibbon Is Nothing Then
+        gRibbon.InvalidateControl "DshAiCitation"
+        gRibbon.InvalidateControl "DshAiEdit"
+    End If
+    On Error GoTo 0
+End Sub
+
+' Enabled only while a non-empty selection exists. Until the selection-change
+' event sink proves alive, DshLibAiGetEnabled reports True (a permanently
+' greyed-out button would be worse than a click guard); the click handler
+' itself re-checks and explains.
+Sub DshLibRibbonGetAiEnabled(control As IRibbonControl, ByRef enabled)
+    On Error Resume Next
+    enabled = DshLibCore.DshLibAiGetEnabled()
+    If Err.Number <> 0 Then enabled = True
+    On Error GoTo 0
+End Sub
+
+Sub DshLibRibbonAiCitation(button As IRibbonControl)
+    Call DshLibCore.DshLibAiCitation
+End Sub
+
+Sub DshLibRibbonAiEdit(button As IRibbonControl)
+    Call DshLibCore.DshLibAiEdit
+End Sub
+
 Sub DshLibRibbonAddEditCitation(button As IRibbonControl)
     Call DshLibAddEditCitation
 End Sub

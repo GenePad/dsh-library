@@ -52,7 +52,7 @@ export async function ensureSession(ctx, home, state, options = {}) {
     const resolved = await ctx.sessionController.resolveAgent(state.chatSessionId).catch(() => undefined)
     if (resolved && !('error' in resolved)) return state.chatSessionId
   }
-  return createSession(ctx, home, state, { logger: options.logger ?? console })
+  return createSession(ctx, home, state, { title: options.title, logger: options.logger ?? console })
 }
 
 /** Create a fresh session in the Library workspace and set it as current. */
@@ -120,7 +120,7 @@ export async function openSession(ctx, home, state, options = {}) {
     const sessionId = await ensureSession(ctx, home, state, { logger })
     return { sessionId, created: false, bound: false }
   }
-  const sessionId = await ensureSession(ctx, home, state, { fresh: true, logger })
+  const sessionId = await ensureSession(ctx, home, state, { fresh: true, title: options.title, logger })
   return { sessionId, created: true, bound: false }
 }
 
@@ -136,7 +136,7 @@ export async function openSession(ctx, home, state, options = {}) {
  */
 export function chatGuidance(context) {
   if (!context || typeof context !== 'object') context = {}
-  const mode = ['list', 'item', 'reader'].includes(context.mode) ? context.mode : 'list'
+  const mode = ['list', 'item', 'reader', 'word'].includes(context.mode) ? context.mode : 'list'
   const title = String(context.itemTitle ?? '').slice(0, 200).replace(/\s+/g, ' ').trim()
   const key = /^[23456789ABCDEFGHIJKLMNPQRSTUVWXYZ]{8}$/.test(String(context.itemKey ?? '')) ? String(context.itemKey) : ''
   const lines = [
@@ -146,6 +146,11 @@ export function chatGuidance(context) {
     '- 用户要求「入库/收录/添加文献」时：有文件用 library_import；只有 DOI/ISBN/arXiv/PMID 或题名时先用 library_lookup 检索元数据，再把检索结果（含作者/年份/期刊）报给用户确认后用 library_add 建条目，并用 library_update 的 addCollections 归入分类。',
     '- 整理分类时先 library_collections 看现有分类树，再建分类（library_collection 的 create）或把条目移入/移出（library_update）。',
   ]
+  if (mode === 'word') {
+    lines.push('- 当前对话是一个来自 Microsoft Word 的 AI 写作任务（自动检索引文 / AI 修改选中文本）。严格按任务消息里的步骤执行；所有写回 Word 的操作一律通过 library_word_apply 工具完成，绝不要让用户手动复制粘贴回 Word。')
+    lines.push('- library_word_apply 会等待 Word 端领取并应用写回；工具返回 ok 才算完成，报错时按错误信息修正参数重试。')
+    return `${lines.join('\n')}\n`
+  }
   if (mode === 'reader' && (title || key)) {
     lines.push(`- 当前已在内置阅读器中打开文献《${title}》${key ? `（key: ${key}）` : ''}，用户的问题大概率与这篇文献的内容相关。`)
     lines.push('- 但如果问题明显是在找别的文献（例如「找一篇 xx 的文章」），请改用 library_search 检索文库，不要硬套当前文献。')

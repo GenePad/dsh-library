@@ -28,6 +28,11 @@
             <button id="DshCitationExplorer" label="查看引注" image="dshExplorer" onAction="DshLibRibbon.DshLibRibbonCitationExplorer" keytip="V" screentip="查看引注" supertip="列出本文档中已插入的全部引注及其对应条目，可按关键词筛选，选中后直接打开引注编辑器。"/>
             <button id="DshHelpExplorer" label="?" showLabel="false" image="dshHelp" screentip="？ 查看引注是做什么的" supertip="列出本文档中已插入的全部引注及其对应条目，可按关键词筛选，选中后直接打开引注编辑器。" tag="查看引注：列出本文档中已插入的全部引注及其对应条目，可按关键词筛选，选中后直接打开引注编辑器。" onAction="DshLibRibbon.DshLibRibbonHelp"/>
           </box>
+          <separator id="DshSeparator3"/>
+          <button id="DshAiCitation" label="自动检索引文" size="large" image="dshAiCitation" getEnabled="DshLibRibbon.DshLibRibbonGetAiEnabled" onAction="DshLibRibbon.DshLibRibbonAiCitation" keytip="A" screentip="自动检索引文" supertip="先在文档中选中一段正文，再点此按钮（未选中文字时按钮不可用）：dsh 会来到前台，文献助手检索本地文库寻找可支撑这段论述的文献（找不到时先询问你是否联网检索），确认后把引注写回这段文字中的合适位置，引注与参考文献表自动刷新。全程在 dsh 对话中进行，可随时追问。"/>
+          <button id="DshHelpAiCitation" label="?" showLabel="false" image="dshHelp" screentip="？ 自动检索引文是做什么的" supertip="先在文档中选中一段正文，再点此按钮（未选中文字时按钮不可用）：dsh 会来到前台，文献助手检索本地文库寻找可支撑这段论述的文献（找不到时先询问你是否联网检索），确认后把引注写回这段文字中的合适位置，引注与参考文献表自动刷新。全程在 dsh 对话中进行，可随时追问。" tag="自动检索引文：先在文档中选中一段正文，再点此按钮（未选中文字时按钮不可用）：dsh 会来到前台，文献助手检索本地文库寻找可支撑这段论述的文献（找不到时先询问你是否联网检索），确认后把引注写回这段文字中的合适位置，引注与参考文献表自动刷新。全程在 dsh 对话中进行，可随时追问。" onAction="DshLibRibbon.DshLibRibbonHelp"/>
+          <button id="DshAiEdit" label="AI修改（仅文本修改）" size="large" image="dshAiEdit" getEnabled="DshLibRibbon.DshLibRibbonGetAiEnabled" onAction="DshLibRibbon.DshLibRibbonAiEdit" keytip="M" screentip="AI修改（仅文本修改）" supertip="先在文档中选中一段正文，再点此按钮（未选中文字时按钮不可用）：dsh 会来到前台并显示这段原文，你直接在对话输入框末尾写下修改要求（如：更学术化、压缩、改英文……），助手改写这段文字（可插入引文）后整段替换回 Word，引注自动刷新。仅修改选中的这段文本，不会动文档其他部分。"/>
+          <button id="DshHelpAiEdit" label="?" showLabel="false" image="dshHelp" screentip="？ AI修改（仅文本修改）是做什么的" supertip="先在文档中选中一段正文，再点此按钮（未选中文字时按钮不可用）：dsh 会来到前台并显示这段原文，你直接在对话输入框末尾写下修改要求（如：更学术化、压缩、改英文……），助手改写这段文字（可插入引文）后整段替换回 Word，引注自动刷新。仅修改选中的这段文本，不会动文档其他部分。" tag="AI修改（仅文本修改）：先在文档中选中一段正文，再点此按钮（未选中文字时按钮不可用）：dsh 会来到前台并显示这段原文，你直接在对话输入框末尾写下修改要求（如：更学术化、压缩、改英文……），助手改写这段文字（可插入引文）后整段替换回 Word，引注自动刷新。仅修改选中的这段文本，不会动文档其他部分。" onAction="DshLibRibbon.DshLibRibbonHelp"/>
         </group>
       </tab>
     </tabs>

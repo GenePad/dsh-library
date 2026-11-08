@@ -1,23 +1,23 @@
 {
-  "version": "0.3.8",
+  "version": "0.3.10",
   "base": "../",
-  "publishedAt": 1794153419312,
+  "publishedAt": 1794162610234,
   "notes": "",
   "files": [
     {
       "path": "package.json",
-      "size": 1701,
-      "sha256": "73ad8111768262b84bf50cd196663dc2a7b55e0cc0a56f5389f6f74842e0a6c1"
+      "size": 1702,
+      "sha256": "a479fbe31897919c9ebd8a7d6858e1d997abdd8a84150f2236052a684d145679"
     },
     {
       "path": "index.js",
-      "size": 6731,
-      "sha256": "9e3220d054a916c099a4d3de46f6ab6a93d2804ff1d8493e3b67a281a75e66f6"
+      "size": 6941,
+      "sha256": "0de53ff2d44f1a1121b4df941920bdeadd407c35ab6353f9a879dd0865ca4e8d"
     },
     {
       "path": "client.js",
-      "size": 1865884,
-      "sha256": "610208963432197db1672d9d1ae1b10116462a09b1c2eb3d2cdf7a9f3b95e5c5"
+      "size": 1866473,
+      "sha256": "4401604ba5481fcc7867af2082b0fb101bfff4c8fdf87778e1d7a186c5231178"
     },
     {
       "path": "cordis.patch.yml",
@@ -36,8 +36,8 @@
     },
     {
       "path": "src/client/chat-dock.jsx",
-      "size": 12110,
-      "sha256": "178267fb9ddb1a7cc0ea056d8012b21b84b9a5d1444a4f62ec2285b0a2182727"
+      "size": 13050,
+      "sha256": "716e06816b8390868aa0b1f72e0cafa15065b4e2dd795d4bd392df2fd7c8764a"
     },
     {
       "path": "src/client/collections-pane.jsx",
@@ -56,8 +56,8 @@
     },
     {
       "path": "src/client/footer.jsx",
-      "size": 1073,
-      "sha256": "ae748a5b7709cf389477e0717c067d39cbb8807eb88d4f17dd87489b0413b037"
+      "size": 1951,
+      "sha256": "a483756754345b1d596e3e9f4b68b2c24c11358b5d33b82133fe009a07ace764"
     },
     {
       "path": "src/client/icons.jsx",
@@ -126,13 +126,13 @@
     },
     {
       "path": "src/host/channel.js",
-      "size": 13557,
-      "sha256": "a0ada80aed407a40d6ce9271eb7dd96c4c8b421542642928ff03884d0b391b3c"
+      "size": 13855,
+      "sha256": "07b8630c305e227c02acdddc5fb2c8dbd5decece38591e69f80a857264d880d5"
     },
     {
       "path": "src/host/chat.js",
-      "size": 14324,
-      "sha256": "1722e2d17fc5ffb7fc42f1f300c9d9f39bb452eda872bd4fbe91641cf30fdbe7"
+      "size": 14895,
+      "sha256": "09f32eb3bee24f22c5fae04d59591dd46a1ea9dd19c8990169c2cc7641ef7f7d"
     },
     {
       "path": "src/host/cite.js",
@@ -160,19 +160,24 @@
       "sha256": "3f3f03ec8978c6d71ea04c1f06cf2867e2ab51be3e554129a0d39f98fa185b7c"
     },
     {
+      "path": "src/host/office/ai-tasks.js",
+      "size": 15908,
+      "sha256": "4b5784d3ac51e9ccea867fc599019c3d9f0f9d0bfdcbbd7f5ba10cad8f0f3161"
+    },
+    {
       "path": "src/host/office/citation.js",
       "size": 8170,
       "sha256": "6ce92c182306cdce536901f34a90b8bd69dd2997a01a6b2b4101902c4fa34338"
     },
     {
       "path": "src/host/office/commands.js",
-      "size": 14542,
-      "sha256": "5943b941644ffb1df6b19fe9850bc9377529aeeecef45369a88f07df2f1e2a13"
+      "size": 20702,
+      "sha256": "137707f14f055a72b65e79d31f0987528f8f51bc8f064fa07d147464ffd01970"
     },
     {
       "path": "src/host/office/constants.js",
-      "size": 3463,
-      "sha256": "0edd62f6ac311654c5babae3718f23ffc74815efe4d0a39b607988fee89de35c"
+      "size": 3480,
+      "sha256": "9859303adf09c113a408ecc8dadc5814240ba4cf5be0f0d46a7814a840f38771"
     },
     {
       "path": "src/host/office/csl-citeproc.js",
@@ -201,18 +206,18 @@
     },
     {
       "path": "src/host/office/http-client.js",
-      "size": 7401,
-      "sha256": "b746c54f7f5dcb51a1d20edd49bf8cebc21ee8192045781b74434cfeb49e9df2"
+      "size": 9079,
+      "sha256": "41ffa0ec80014ddc546df8ff7cd7c07ba81c5a5d249d934fd326284ccdd000d2"
     },
     {
       "path": "src/host/office/index.js",
-      "size": 2216,
-      "sha256": "723cab578599cb4d6c5d2875c9b61cf18f2c0f970d631e6ad87077fce7618487"
+      "size": 2683,
+      "sha256": "9e991a6592396e76ca00f1911288e2fef9399a984cb65d0598b3b7711703ca48"
     },
     {
       "path": "src/host/office/installer.js",
-      "size": 25690,
-      "sha256": "11ebdfbba0495474621302e0917a4aa870eb8aba342ab0cc3895df515a4d1990"
+      "size": 25705,
+      "sha256": "197cd0077397fda3faa214d10ab99e6b1c4e730fc4577706341fad2deccd14dd"
     },
     {
       "path": "src/host/office/items.js",
@@ -226,18 +231,18 @@
     },
     {
       "path": "src/host/office/server.js",
-      "size": 11565,
-      "sha256": "12cd923f3373ef6b7b71dd1be4e42d4b7c942a539024e6395e99ac3c73b3df4b"
+      "size": 13064,
+      "sha256": "7340891ad4cd0ae23985e328c7926f55261504deabdc408e2dc91eb36676be54"
     },
     {
       "path": "src/host/office/session.js",
-      "size": 30437,
-      "sha256": "0f86723f4bdad90ce0ae966ae665601d18c055010804e1b96332015175774b81"
+      "size": 30971,
+      "sha256": "8b79d78c3d412f08896d6f30e2315a822fd913126738378b255ad73e060abf71"
     },
     {
       "path": "src/host/office/window.js",
-      "size": 12166,
-      "sha256": "f6e1367dc1c2868505a308afda4173357bd2e9e9380da5027e294d664ba7b758"
+      "size": 17983,
+      "sha256": "40409d2cc503a8b362e45dfbb575f69bf91b58b70c08d91d4940d16a4b5b3e4d"
     },
     {
       "path": "src/host/open.js",
@@ -286,8 +291,8 @@
     },
     {
       "path": "src/host/tools.js",
-      "size": 29570,
-      "sha256": "04f2f43c034a6285c61da3d1a4eddbcf579992e851119cc2bfd212304287b5b7"
+      "size": 32588,
+      "sha256": "1888e01be2cbe21b74fe7a4268ad7f870ceba1b80347b785fc497b6552d01ced"
     },
     {
       "path": "src/host/translate.js",
@@ -441,13 +446,28 @@
     },
     {
       "path": "assets/word/customUI.xml",
-      "size": 6138,
-      "sha256": "453e805c11fe8a612624b01e57e1f28d2c61ddaa736c3c72cffcdec4b9e6c7b4"
+      "size": 11660,
+      "sha256": "0bd5670666a6bec2e87c91a94919bfceb3d4029128aec57ae0d30aaaaf5b25e2"
     },
     {
       "path": "assets/word/DshLibrary.dotm",
-      "size": 99444,
-      "sha256": "d2546495d3974655296e461f4526a4d8064c188a6e695234b67889ce71612476"
+      "size": 126192,
+      "sha256": "251bbc4379226711658ba89dd7669051d48878da3d1d164b87d6b475eed26084"
+    },
+    {
+      "path": "assets/word/icons/dshAiCitation.png",
+      "size": 558,
+      "sha256": "3001e6c97eed376b86ff5198619e0ce1a312085dd810d44e7f9e3c36fbb30f66"
+    },
+    {
+      "path": "assets/word/icons/dshAiEdit.png",
+      "size": 388,
+      "sha256": "76349cdd79a0917f5f56e268af4003d1456e2c381a08acc7e6f0a0458f5d0001"
+    },
+    {
+      "path": "assets/word/icons/dshBibEdit.png",
+      "size": 342,
+      "sha256": "7dddfce7a54da05cb319af561f52d81a53cfa6b575d6392ecf738e5386f50e58"
     },
     {
       "path": "assets/word/icons/dshBibliography.png",
@@ -476,8 +496,8 @@
     },
     {
       "path": "assets/word/icons/dshRefresh.png",
-      "size": 312,
-      "sha256": "5cb06b80683ca69dd40c640ae51732d2b32f1035aa2c59e580718704657aecd6"
+      "size": 304,
+      "sha256": "8eb58b3b5832ce2994e1a54756782a94d2bc5c0e904c741dff8445fc4263c6bf"
     },
     {
       "path": "assets/word/icons/dshUnlink.png",
@@ -486,13 +506,13 @@
     },
     {
       "path": "assets/word/vba/DshLibCore.bas",
-      "size": 16522,
-      "sha256": "a78c648dcbb5b8438e6afc573e064c2610611419cb6914be676917d9ff6479ef"
+      "size": 29109,
+      "sha256": "53706b9f3b6ca3a6f9c78d0f40f3453a659ea4e842b2c3971edf4cda4a076dbb"
     },
     {
       "path": "assets/word/vba/DshLibFields.bas",
-      "size": 59797,
-      "sha256": "c737a38d38433bf956acf6729ccc578f0a03138873e4ed7e908b29e9ff1e399a"
+      "size": 69571,
+      "sha256": "21e2ab0769315ef54cd45851661d6a26dbd74b44ff08b6754991f85c8834c102"
     },
     {
       "path": "assets/word/vba/DshLibJson.bas",
@@ -501,18 +521,18 @@
     },
     {
       "path": "assets/word/vba/DshLibRibbon.bas",
-      "size": 2074,
-      "sha256": "951ac8cdd388dc1de418610b6d6e27efcb5bd5c6122f47360d0190b2b76ab71e"
+      "size": 4488,
+      "sha256": "6741b513363430d3b2d5f777f13a11c353b821d58f97d42fdb33415c0f23ae14"
     },
     {
       "path": "assets/word/vba/ThisDocument.cls",
-      "size": 305,
-      "sha256": "ea9af5107b3a15158aa6d65f83f3762778360347e74b41dba566b8022c02f1dd"
+      "size": 1889,
+      "sha256": "b9dba672184d010993fe4b4c9c3650c21939d01bf3e6337488b24ab385832f20"
     },
     {
       "path": "README.md",
-      "size": 10003,
-      "sha256": "c9e1782ac5c9099b0feef8a54b85dfd30b0d161c4b2deb8454fb5adc8a7d9614"
+      "size": 10868,
+      "sha256": "861cb812344e2f69ce66252661efaa0a75cb3d981edf62f4b84deec557e43b1a"
     },
     {
       "path": "LICENSE",
@@ -521,8 +541,8 @@
     },
     {
       "path": "AGENTS.md",
-      "size": 69283,
-      "sha256": "8bee4146979bee60630ba0591d543f8255da39354c3148fd6558eabaedfbeaf9"
+      "size": 81128,
+      "sha256": "7a1e21c3d176c5fad6b0a0ca0e0a37b09205e50cfd0adefdeef73ba13e8036e7"
     }
   ]
 }

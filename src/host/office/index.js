@@ -12,14 +12,26 @@ import { createDialogManager } from './dialogs.js'
 import { createIntegration } from './commands.js'
 import { createOfficeServer } from './server.js'
 import { createWordInstaller } from './installer.js'
+import { createAiTasks } from './ai-tasks.js'
+import { focusMainWindow } from './window.js'
 
 export function createOfficeService({ runtime, logger = console, packageDir, version = '0.2.1' }) {
   const home = dataDir()
   const styles = createStyleStore({ logger, packageDir, home })
   const items = createItemProvider({ withDb: fn => runtime.withDb(fn) })
   const dialogs = createDialogManager({ styles, items, logger, home })
-  const integration = createIntegration({ styles, items, dialogs, logger, version })
-  const server = createOfficeServer({ integration, dialogs, styles, logger, version })
+  // Word AI tasks dispatch into the 文献助手 chat (runtime.chat) and focus the
+  // dsh window so the user watches the assistant work.
+  const ai = createAiTasks({
+    chat: {
+      open: options => runtime.chat.open(options),
+      send: (text, context) => runtime.chat.send(text, context),
+    },
+    focus: () => focusMainWindow(logger),
+    logger,
+  })
+  const integration = createIntegration({ styles, items, dialogs, ai, logger, version })
+  const server = createOfficeServer({ integration, dialogs, styles, ai, logger, version })
   dialogs.setBaseUrl(() => server.baseUrl())
   const installer = createWordInstaller({
     logger, version, packageDir, home,
@@ -54,6 +66,6 @@ export function createOfficeService({ runtime, logger = console, packageDir, ver
 
   return {
     start, restart, stop: () => server.stop(), status, dispose,
-    styles, items, dialogs, integration, server, installer,
+    styles, items, dialogs, integration, server, installer, ai,
   }
 }

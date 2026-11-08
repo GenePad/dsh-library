@@ -53,8 +53,20 @@ updateItem(db, keys[1], { addCollections: [subfolder.collectionID] })
 const styles = createStyleStore({ logger, packageDir, home })
 const items = createItemProvider({ withDb: fn => fn(db) })
 const dialogs = createDialogManager({ styles, items, logger })
-const integration = createIntegration({ styles, items, dialogs, logger, version: '0.2.1' })
-const server = createOfficeServer({ integration, dialogs, styles, logger, version: '0.2.1' })
+// Word AI tasks with a chat double: the dispatcher records what a task would
+// send into a fresh 文献助手 conversation (no dsh ctx exists in the smoke).
+const aiChatLog = []
+let aiFocusCount = 0
+const ai = (await import('../src/host/office/ai-tasks.js')).createAiTasks({
+  chat: {
+    open: async options => { aiChatLog.push({ kind: 'open', options }); return { sessionId: 'sess-word-task' } },
+    send: async (text, context) => { aiChatLog.push({ kind: 'send', text, context }); return { sessionId: 'sess-word-task' } },
+  },
+  focus: () => { aiFocusCount += 1 },
+  logger: quiet,
+})
+const integration = createIntegration({ styles, items, dialogs, ai, logger, version: '0.2.1' })
+const server = createOfficeServer({ integration, dialogs, styles, ai, logger, version: '0.2.1' })
 dialogs.setBaseUrl(() => server.baseUrl())
 const started = await server.start(0)
 assert.equal(started.running, true, 'integration server starts')
@@ -91,6 +103,19 @@ class FakeWord {
     this.alerts = []
     this.nextId = 1
     this.textWrites = []
+    // AI write-back model: the body is one plain string, the captured
+    // selection is {start, end, text} (what DshLibFields' live Range would
+    // report), and citation fields appear as ‹F#› markers in the body.
+    this.body = ''
+    this.aiSel = null
+    this.aiWorking = -1
+  }
+
+  aiSelect(text) {
+    const start = this.body.indexOf(text)
+    assert.ok(start >= 0, `aiSelect: selection not found in body: ${text.slice(0, 40)}`)
+    this.aiSel = { start, end: start + text.length, text }
+    return this.aiSel
   }
 
   fieldJSON(field) {
@@ -173,13 +198,58 @@ class FakeWord {
         if (index >= 0) this.fields.splice(index, 1) // unlink: the field becomes plain text
         return null
       }
+      // ---- AI write-back commands (mirror of DshLibFields' CmdAi*) ----
+      case 'Document.aiBegin': {
+        const mode = String(a[1] ?? 'replace')
+        const expected = String(a[2] ?? '')
+        if (!this.aiSel) return { ok: false, error: 'aiBegin: no captured selection' }
+        const norm = value => String(value).replace(/\s+/g, '')
+        if (expected !== '' && norm(this.aiSel.text) !== norm(expected)) {
+          return { ok: false, error: '选区内容已变化，写回已取消' }
+        }
+        const info = { ok: true, original: this.aiSel.text }
+        if (mode === 'insert') {
+          this.aiWorking = -1
+        } else {
+          this.body = this.body.slice(0, this.aiSel.start) + this.body.slice(this.aiSel.end)
+          this.aiWorking = this.aiSel.start
+        }
+        return info
+      }
+      case 'Document.aiText': {
+        const text = String(a[1] ?? '')
+        this.body = this.body.slice(0, this.aiWorking) + text + this.body.slice(this.aiWorking)
+        this.aiWorking += text.length
+        return null
+      }
+      case 'Document.aiField': {
+        const marker = this.insertMarkerAt(this.aiWorking)
+        return this.fieldJSON(this.fields.find(field => marker.includes(field.id)))
+      }
+      case 'Document.aiFieldAt': {
+        const pos = this.aiSel.start + (Number(a[1]) || 0)
+        const marker = this.insertMarkerAt(pos)
+        return this.fieldJSON(this.fields.find(field => marker.includes(field.id)))
+      }
+      case 'Document.aiEnd': {
+        this.aiWorking = -1
+        return null
+      }
       default:
         throw new Error(`FakeWord: unhandled command ${command}`)
     }
   }
 
-  async transact(command, docId = 'C:/docs/test.docx') {
-    const first = await post('/connector/document/execCommand', { command, docId })
+  insertMarkerAt(pos) {
+    const field = { id: `F${this.nextId++}`, code: 'TEMP', text: '{Citation}', noteIndex: 0 }
+    this.fields.push(field)
+    const marker = `‹${field.id}›`
+    this.body = this.body.slice(0, pos) + marker + this.body.slice(pos)
+    return marker
+  }
+
+  async transact(command, docId = 'C:/docs/test.docx', extra = {}) {
+    const first = await post('/connector/document/execCommand', { command, docId, ...extra })
     assert.equal(first.status, 200, `execCommand ${command} -> ${first.status}`)
     let reply = await first.json()
     let steps = 0
@@ -584,8 +654,8 @@ assert.equal(ping.ok, true, 'connector ping')
   const tags = [...shippedUI.matchAll(/<button\b[^>]*\/>/g)].map(match => match[0])
   const commands = tags.filter(tag => /id="Dsh(?!Help)/.test(tag))
   const helps = tags.filter(tag => /id="DshHelp/.test(tag))
-  assert.equal(commands.length, 7, 'Ribbon exposes seven citation-related command buttons')
-  assert.equal(helps.length, 7, 'every command has a neighbouring "?" help button')
+  assert.equal(commands.length, 9, 'Ribbon exposes nine command buttons (7 citation + 2 AI)')
+  assert.equal(helps.length, 9, 'every command has a neighbouring "?" help button')
   assert.ok(!/id="Dsh(AddNote|AddAnnotation|HelpNote|HelpAnnotation)"/.test(shippedUI),
     'the misleading 插入笔记 / 插入注释 buttons are gone')
   assert.ok(!/笔记|注释/.test(shippedUI), 'Ribbon no longer advertises notes or annotations')
@@ -612,6 +682,17 @@ assert.equal(ping.ok, true, 'connector ping')
     'the explorer button reads 查看引注')
   assert.ok(!shippedUI.includes('文档引注'),
     'the old 文档引注 wording is gone from the Ribbon')
+  // The two AI buttons: enabled only while text is selected, and the edit one
+  // carries the explicit （仅文本修改） qualifier.
+  const aiCite = tags.find(tag => tag.includes('id="DshAiCitation"'))
+  const aiEdit = tags.find(tag => tag.includes('id="DshAiEdit"'))
+  assert.ok(aiCite?.includes('label="自动检索引文"'), 'the auto-citation button is labelled 自动检索引文')
+  assert.ok(aiEdit?.includes('label="AI修改（仅文本修改）"'), 'the AI edit button carries 仅文本修改 in its label')
+  for (const tag of [aiCite, aiEdit]) {
+    assert.ok(tag.includes('getEnabled="DshLibRibbon.DshLibRibbonGetAiEnabled"'),
+      'AI buttons gate on a live selection through getEnabled')
+    assert.ok(/onAction="DshLibRibbon\.DshLibRibbon/.test(tag), 'AI buttons route to the DshLib callbacks')
+  }
   assert.ok(!/Zotero/.test(shippedUI), 'help texts never mention Zotero')
   // Each small command and its "?" travel inside one horizontal box so Word
   // cannot wrap the pair onto different rows.
@@ -625,7 +706,7 @@ assert.equal(ping.ok, true, 'connector ping')
 
   const { ribbonImageIds } = await import('../src/host/office/installer.js')
   const iconIds = ribbonImageIds(shippedUI)
-  assert.equal(iconIds.length, 8, 'eight distinct Ribbon icons are referenced')
+  assert.equal(iconIds.length, 10, 'ten distinct Ribbon icons are referenced')
   const iconsDir = path.join(packageDir, 'assets', 'word', 'icons')
   for (const id of iconIds) {
     assert.ok(fs.existsSync(path.join(iconsDir, `${id}.png`)), `icon ${id}.png ships with the plugin`)
@@ -633,9 +714,9 @@ assert.equal(ping.ok, true, 'connector ping')
   const packed = unzipSync(new Uint8Array(fs.readFileSync(shipped)))
   assert.equal(dec.decode(packed['customUI/customUI.xml']).trim(), shippedUI.trim(),
     'prebuilt .dotm carries the current Chinese Ribbon XML')
-  assert.equal(Object.keys(packed).filter(name => name.startsWith('customUI/images/')).length, 8,
+  assert.equal(Object.keys(packed).filter(name => name.startsWith('customUI/images/')).length, 10,
     'all icon parts are packed into the template')
-  assert.equal(shippedReport.images.length, 8, 'template self-check resolves every icon')
+  assert.equal(shippedReport.images.length, 10, 'template self-check resolves every icon')
   assert.ok(dec.decode(packed['customUI/_rels/customUI.xml.rels']).includes('relationships/image'),
     'customUI image relationships are present')
   assert.ok(/Extension="png"/.test(dec.decode(packed['[Content_Types].xml'])),
@@ -891,6 +972,179 @@ assert.equal(ping.ok, true, 'connector ping')
   dom.window.close()
   await post('/office/api/dialog-result', { id: dialog.id, cancel: true })
   await pending
+}
+
+// 14. Word AI tasks: Word button → fresh assistant conversation → agent plan
+//     → applyAiEdit write-back. Covers the multi-Word isolation (pid+docId),
+//     the [[N]] marker model, insert-at-snippet mode, the auto refresh, and
+//     every refusal path.
+{
+  const poll = (taskId, pid, docId) =>
+    post('/office/api/ai-poll', { taskId, pid, docId }).then(response => response.json())
+  const docA = 'C:/docs/paper-a.docx'
+  const pidA = 4242
+  const selectionA = 'CRISPR-Cas9 has revolutionized genome editing across biology.'
+  const startA = await post('/office/api/ai-start', {
+    kind: 'cite', docId: docA, pid: pidA, hwnd: 111, docName: 'paper-a.docx', text: selectionA,
+  })
+  assert.equal(startA.status, 200, `ai-start -> ${startA.status}`)
+  const startBody = await startA.json()
+  assert.equal(startBody.ok, true, `ai-start ok: ${startBody.error}`)
+  const taskA = startBody.taskId
+  assert.ok(/^AI[23456789ABCDEFGHIJKLMNPQRSTUVWXYZ]{10}$/.test(taskA), 'taskId shape')
+  assert.equal(startBody.sessionId, 'sess-word-task', 'the task reports its conversation')
+  assert.equal(aiFocusCount, 1, 'starting a task focuses the dsh window')
+  const opened = aiChatLog.find(entry => entry.kind === 'open')
+  assert.equal(opened.options.fresh, true, 'every task opens a FRESH conversation')
+  assert.equal(opened.options.title, 'Word 自动引文')
+  const sent = aiChatLog.find(entry => entry.kind === 'send')
+  assert.ok(sent.text.includes(taskA), 'the brief carries the taskId')
+  assert.ok(sent.text.includes(selectionA), 'the brief carries the selected text')
+  assert.ok(sent.text.includes('library_word_apply'), 'the brief teaches the write-back tool')
+  assert.equal(sent.context?.mode, 'word', 'the conversation is flagged as a Word task context')
+
+  // 14b. Poll states and plan validation. A rejected plan never consumes the
+  // task, so a model that misformats once can simply retry.
+  assert.equal((await poll(taskA, pidA, docA)).status, 'pending')
+  assert.equal((await poll(taskA, 9999, docA)).status, 'mismatch', 'another pid cannot even poll the task')
+  await assert.rejects(
+    async () => ai.submit(taskA, { mode: 'replace', text: 'no markers here', citations: [{ id: 1, keys: [keys[0]] }] }),
+    /占位标记/, 'replace without markers is refused')
+  await assert.rejects(
+    async () => ai.submit(taskA, { mode: 'replace', text: 'x [[1]]', citations: [{ id: 1, keys: ['NOTAKEY1'] }] }),
+    /8 位/, 'invalid keys are refused')
+  await assert.rejects(
+    async () => ai.submit(taskA, { mode: 'insert', citations: [{ keys: [keys[0]], after: 'zzz-not-in-selection' }] }),
+    /after 片段/, 'an unknown anchor snippet is refused')
+  assert.equal((await poll(taskA, pidA, docA)).status, 'pending', 'rejected plans leave the task pending')
+
+  // 14c. Full replace round trip on a SECOND document instance.
+  const word2 = new FakeWord()
+  word2.body = `Before. ${selectionA} After.`
+  word2.aiSelect(selectionA)
+  const prefs0 = word2.transact('setDocPrefs', docA)
+  const prefsDialog = await waitForDialog('docPrefs')
+  await post('/office/api/dialog-result', {
+    id: prefsDialog.id,
+    value: {
+      style: 'http://www.zotero.org/styles/apa', locale: 'zh-CN', fieldType: 'Field',
+      useEndnotes: 0, automaticJournalAbbreviations: false, delayCitationUpdates: false,
+      dontAskDelayCitationUpdates: false,
+    },
+  })
+  await prefs0
+  word2.alerts.length = 0
+  const fieldsBefore = word2.fields.length
+
+  const applyA = ai.submit(taskA, {
+    mode: 'replace',
+    text: 'CRISPR-Cas9 has transformed genome editing[[1]], and base editing extends its reach[[2]].',
+    citations: [
+      { id: 1, keys: [keys[0]] },
+      { id: 2, keys: [keys[1], keys[2]], locator: '5' },
+    ],
+  })
+  assert.equal((await poll(taskA, pidA, docA)).status, 'ready')
+  await word2.transact('applyAiEdit', docA, { taskId: taskA, pid: pidA })
+  const appliedA = await applyA
+  assert.equal(appliedA.ok, true, `applyA ok: ${appliedA.error}`)
+  assert.equal(appliedA.inserted, 2)
+  assert.ok(word2.body.startsWith('Before. CRISPR-Cas9 has transformed genome editing'),
+    'the selection was replaced with the new text')
+  assert.ok(word2.body.endsWith(' After.'), 'text outside the selection is untouched')
+  assert.ok(!/\[\[\d\]\]/.test(word2.body), 'all [[N]] markers were consumed')
+  const aiFields = word2.fields.slice(fieldsBefore).filter(field => field.code.startsWith('ITEM CSL_CITATION'))
+  assert.equal(aiFields.length, 2, 'two citation fields were written')
+  const cluster = JSON.parse(aiFields[1].code.slice('ITEM CSL_CITATION '.length))
+  assert.deepEqual(cluster.citationItems.map(item => item.id), [keys[1], keys[2]], 'multi-item cluster order')
+  assert.equal(cluster.citationItems[0].locator, '5', 'locator stored in the field code')
+  assert.ok(aiFields.every(field => field.text !== '{Citation}' && /\d{4}/.test(field.text)),
+    'the inline refresh re-rendered the AI citations')
+  assert.equal((await poll(taskA, pidA, docA)).status, 'applied')
+  await assert.rejects(
+    async () => ai.submit(taskA, { mode: 'insert', citations: [{ keys: [keys[0]], after: 'genome editing' }] }),
+    /写回一次|状态是/, 'a task can only be applied once')
+
+  // 14d. AI 修改 (edit kind): the brief waits for the user, insert mode keeps
+  // the original text and drops the citation right after the snippet.
+  const selectionB = 'Base editing enables precise single-base changes in living cells.'
+  const startB = await post('/office/api/ai-start', {
+    kind: 'edit', docId: docA, pid: pidA, hwnd: 111, docName: 'paper-a.docx', text: selectionB,
+  })
+  const taskB = (await startB.json()).taskId
+  const sentB = [...aiChatLog].reverse().find(entry => entry.kind === 'send')
+  assert.ok(sentB.text.includes('仅文本修改'), 'the edit brief is marked text-only')
+  assert.ok(sentB.text.includes('第一步'), 'the edit brief makes the agent wait for the user requirement')
+  word2.body = `Intro. ${selectionB} Outro.`
+  word2.aiSelect(selectionB)
+  const bodyBefore = word2.body
+  const applyB = ai.submit(taskB, {
+    mode: 'insert',
+    citations: [{ keys: [keys[0]], after: 'precise single-base changes' }],
+  })
+  await word2.transact('applyAiEdit', docA, { taskId: taskB, pid: pidA })
+  const appliedB = await applyB
+  assert.equal(appliedB.ok, true, `applyB ok: ${appliedB.error}`)
+  assert.equal(appliedB.inserted, 1)
+  assert.ok(word2.body.replace(/‹F\d+›/g, '') === bodyBefore,
+    'insert mode keeps the original text verbatim (formatting-safe)')
+  const anchor = word2.body.indexOf('precise single-base changes') + 'precise single-base changes'.length
+  assert.ok(/^‹F\d+›/.test(word2.body.slice(anchor)), 'the citation landed right after the anchor snippet')
+
+  // 14e. Multi-Word isolation: another Word PROCESS cannot claim the task.
+  const selectionC = 'Prime editing further expands the editing scope.'
+  const startC = await post('/office/api/ai-start', {
+    kind: 'cite', docId: docA, pid: pidA, hwnd: 111, docName: 'paper-a.docx', text: selectionC,
+  })
+  const taskC = (await startC.json()).taskId
+  word2.body = `Prefix ${selectionC} suffix`
+  word2.aiSelect(selectionC)
+  const applyC = ai.submit(taskC, {
+    mode: 'replace',
+    text: 'Prime editing expands scope[[1]].',
+    citations: [{ id: 1, keys: [keys[0]] }],
+  })
+  await word2.transact('applyAiEdit', docA, { taskId: taskC, pid: 7777 })
+  const failedC = await applyC
+  assert.equal(failedC.ok, false, 'a foreign pid cannot apply the task')
+  assert.ok(word2.alerts.some(text => text.includes('不匹配')), 'the refusal is surfaced in Word')
+
+  // 14f. The document was edited after the task started: aiBegin refuses
+  // without mutating anything.
+  const selectionD = 'This passage will be edited while the agent works.'
+  const startD = await post('/office/api/ai-start', {
+    kind: 'cite', docId: docA, pid: pidA, hwnd: 111, docName: 'paper-a.docx', text: selectionD,
+  })
+  const taskD = (await startD.json()).taskId
+  word2.body = `xx ${selectionD} yy`
+  word2.aiSelect(selectionD)
+  word2.aiSel.text = `${selectionD} (typed over)`   // the live Range now differs
+  const applyD = ai.submit(taskD, {
+    mode: 'replace',
+    text: 'Rewritten passage[[1]].',
+    citations: [{ id: 1, keys: [keys[0]] }],
+  })
+  await word2.transact('applyAiEdit', docA, { taskId: taskD, pid: pidA })
+  const failedD = await applyD
+  assert.equal(failedD.ok, false, 'a stale selection aborts the write-back')
+  assert.ok(word2.alerts.some(text => text.includes('选区内容已变化')), 'the stale selection is explained in Word')
+  assert.ok(word2.body.includes(selectionD), 'nothing was written to the document')
+
+  // 14g. The Word side cancels (document closed): the waiting tool wakes up.
+  const selectionE = 'A task whose document closes before the apply.'
+  const startE = await post('/office/api/ai-start', {
+    kind: 'cite', docId: docA, pid: pidA, hwnd: 111, docName: 'paper-a.docx', text: selectionE,
+  })
+  const taskE = (await startE.json()).taskId
+  const applyE = ai.submit(taskE, {
+    mode: 'replace',
+    text: 'Whatever[[1]].',
+    citations: [{ id: 1, keys: [keys[0]] }],
+  })
+  await post('/office/api/ai-cancel', { taskId: taskE, pid: pidA })
+  const cancelled = await applyE
+  assert.equal(cancelled.ok, false, 'cancel resolves the waiting tool')
+  assert.equal((await poll(taskE, pidA, docA)).status, 'cancelled')
 }
 
 server.stop()

@@ -250,6 +250,10 @@ export function createChannel(runtime) {
           return ok(await runtime.office.styles.install({ styleID: String(body.styleID ?? '') }))
         case 'office-dialogs':
           return ok(runtime.office.dialogs.pendingDialogs())
+        case 'office-ai-announce':
+          // The sidebar entry polls this so a Word AI task can surface the
+          // library panel + dock even when the user is elsewhere in dsh.
+          return ok(runtime.office?.ai ? { task: runtime.office.ai.currentAnnouncement() } : { task: null })
         case 'office-dialog-open':
           return ok({
             opened: body.id

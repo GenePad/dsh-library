@@ -52,7 +52,7 @@ function withTimeout(promise, ms, label) {
   ]).finally(() => clearTimeout(timer))
 }
 
-export function createOfficeServer({ integration, dialogs, styles, logger = console, version = '0.2.1' }) {
+export function createOfficeServer({ integration, dialogs, styles, ai = null, logger = console, version = '0.2.1' }) {
   let server = null
   let port = 0
   let error = ''
@@ -100,11 +100,13 @@ export function createOfficeServer({ integration, dialogs, styles, logger = cons
       }
       const command = String(body?.command ?? '')
       const docId = String(body?.docId ?? body?.documentID ?? '')
+      const taskId = String(body?.taskId ?? '')
+      const pid = Number(body?.pid) || 0
       const transport = createTransport()
       const txn = { transport, docId, command, startedAt: Date.now(), timer: null, engine: null }
       active = txn
       touch(txn)
-      txn.engine = integration.execCommand({ agent: 'Word', command, docId, transport })
+      txn.engine = integration.execCommand({ agent: 'Word', command, docId, transport, taskId, pid })
         .catch((failure) => {
           logger.warn?.(`library: integration engine crashed: ${failure?.message ?? failure}`)
           transport.abort(failure)
@@ -190,6 +192,36 @@ export function createOfficeServer({ integration, dialogs, styles, logger = cons
         return json(response, 200, dialogs.progressState())
       case 'cancel-dialog':
         return json(response, 200, { ok: dialogs.answer(String(body?.id ?? id), { cancel: true }) })
+      // --------------------------------------------------- Word AI tasks ---
+      // The Word template POSTs ai-start with its OWN process id and the
+      // selected text; every later step re-verifies (pid, docId) so several
+      // Word processes can never be mixed up.
+      case 'ai-start': {
+        if (!ai) return json(response, 503, { ok: false, error: 'AI 任务服务不可用' })
+        const result = await ai.start({
+          kind: body?.kind,
+          docId: body?.docId,
+          pid: body?.pid,
+          hwnd: body?.hwnd,
+          docName: body?.docName,
+          text: body?.text,
+        })
+        return json(response, result?.ok ? 200 : 400, result)
+      }
+      case 'ai-poll': {
+        if (!ai) return json(response, 503, { error: 'AI 任务服务不可用' })
+        // POST carries docId in a JSON body (document paths need no URL
+        // encoding then); GET with query params stays for tests.
+        return json(response, 200, ai.poll({
+          taskId: body?.taskId ?? url.searchParams.get('taskId') ?? '',
+          pid: body?.pid ?? url.searchParams.get('pid') ?? 0,
+          docId: body?.docId ?? url.searchParams.get('docId') ?? '',
+        }))
+      }
+      case 'ai-cancel': {
+        if (!ai) return json(response, 503, { ok: false })
+        return json(response, 200, ai.cancel({ taskId: body?.taskId, pid: body?.pid }))
+      }
       default:
         return json(response, 404, { error: `Unknown office API endpoint: ${name}` })
     }

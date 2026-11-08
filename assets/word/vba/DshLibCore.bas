@@ -17,9 +17,20 @@ Private Const PORT_FIRST As Long = 23119
 Private Const PORT_LAST As Long = 23128
 Private Const API_VERSION As String = "3"
 
+#If VBA7 Then
+Private Declare PtrSafe Function DshLibGetCurrentProcessId Lib "kernel32" Alias "GetCurrentProcessId" () As Long
+#Else
+Private Declare Function DshLibGetCurrentProcessId Lib "kernel32" Alias "GetCurrentProcessId" () As Long
+#End If
+
 Private gUndoStarted As Boolean
 Private gScreenSaved As Boolean
 Private gScreenUpdating As Boolean
+
+' AI task polling state (Application.OnTime loop; see DshLibAiPoll).
+Private gAiPollCount As Long
+Private gAiHttpFailures As Long
+Private gAiEventsReady As Boolean
 
 ' ---------------------------------------------------------------- helpers
 
@@ -68,6 +79,14 @@ Public Function DshLibMsgCommandFail() As String
     DshLibMsgCommandFail = DshLibCN("0057 006F 0072 0064 0020 7AEF 547D 4EE4 6267 884C 5931 8D25")
 End Function
 
+Private Function DshLibMsgNeedSelection() As String
+    DshLibMsgNeedSelection = DshLibCN("8BF7 5148 5728 6587 6863 4E2D 9009 4E2D 4E00 6BB5 6587 672C FF0C 518D 4F7F 7528 6B64 529F 80FD")
+End Function
+
+Private Function DshLibMsgSelectionTooLong() As String
+    DshLibMsgSelectionTooLong = DshLibCN("9009 4E2D 7684 6587 672C 8FC7 957F FF0C 8BF7 7F29 5C0F 9009 533A 540E 91CD 8BD5")
+End Function
+
 ' ---------------------------------------------------------------- entries
 
 Public Sub DshLibAddEditCitation()
@@ -108,6 +127,238 @@ End Sub
 
 Public Sub DshLibCitationExplorer()
     Call DshLibCommand("citationExplorer", True)
+End Sub
+
+' ---------------------------------------------------------------- AI tasks
+
+' Runs when the global template loads at Word startup: installs the
+' Application event sink (ThisDocument) that keeps the two AI buttons'
+' enabled state in sync with the selection.
+Public Sub AutoExec()
+    On Error Resume Next
+    ThisDocument.DshLibInstallEvents
+    On Error GoTo 0
+End Sub
+
+' Called by the event sink on its first event: from now on the ribbon's
+' getEnabled may trust the live selection state (see DshLibAiGetEnabled).
+Public Sub DshLibAiEventsReady()
+    gAiEventsReady = True
+End Sub
+
+Public Function DshLibAiHasSelection() As Boolean
+    On Error Resume Next
+    DshLibAiHasSelection = (Selection.Start <> Selection.End)
+    If Err.Number <> 0 Then DshLibAiHasSelection = False
+    On Error GoTo 0
+End Function
+
+' Ribbon getEnabled for both AI buttons: enabled while text is selected.
+' Word only re-queries getEnabled on an explicit Invalidate, so we rely on
+' the WindowSelectionChange sink to invalidate on state flips. Until that
+' sink has proven alive (first event seen) we report True: a frozen
+' "disabled" from the startup query would make the buttons permanently
+' unusable, while an extra click guard below handles the no-selection case.
+Public Function DshLibAiGetEnabled() As Boolean
+    On Error Resume Next
+    If gAiEventsReady Then
+        DshLibAiGetEnabled = DshLibAiHasSelection()
+    Else
+        DshLibAiGetEnabled = True
+    End If
+    If Err.Number <> 0 Then DshLibAiGetEnabled = True
+    On Error GoTo 0
+End Function
+
+Public Sub DshLibAiCitation()
+    Call DshLibAiStart("cite")
+End Sub
+
+Public Sub DshLibAiEdit()
+    Call DshLibAiStart("edit")
+End Sub
+
+' Capture the selection and hand the task to the dsh host, which opens a
+' fresh assistant conversation and (later) hands the write-back plan back.
+' The Word UI stays responsive: progress is tracked by OnTime polling.
+Public Sub DshLibAiStart(kindCmd As String)
+    Dim port As Long
+    Dim base As String
+    Dim docId As String
+    Dim docName As String
+    Dim selText As String
+    Dim hwnd As Long
+    Dim req As Object
+    Dim body As String
+    Dim status As Long
+    Dim responseText As String
+    Dim parsed As Variant
+    Dim taskId As String
+    Dim okFlag As Boolean
+
+    On Error GoTo Fatal
+    If Not DshLibAiHasSelection() Then
+        MsgBox DshLibMsgNeedSelection(), vbExclamation, DshLibMsgTitle()
+        Exit Sub
+    End If
+    port = DshLibFindPort()
+    If port = 0 Then
+        MsgBox DshLibMsgNotFound(), vbExclamation, DshLibMsgTitle()
+        Exit Sub
+    End If
+    base = "http://127.0.0.1:" & CStr(port)
+
+    selText = Selection.Text
+    If Len(selText) > 30000 Then
+        MsgBox DshLibMsgSelectionTooLong(), vbExclamation, DshLibMsgTitle()
+        Exit Sub
+    End If
+    docId = ActiveDocument.FullName
+    If Len(docId) = 0 Then docId = ActiveDocument.Name
+    docName = ActiveDocument.Name
+    hwnd = 0
+    On Error Resume Next
+    hwnd = Application.hWnd
+    Err.Clear
+    On Error GoTo Fatal
+
+    If Not DshLibFields.DshLibAiCapture(docName) Then Exit Sub
+
+    Set req = CreateObject("Scripting.Dictionary")
+    req.Add "kind", kindCmd
+    req.Add "docId", docId
+    req.Add "pid", DshLibGetCurrentProcessId()
+    req.Add "hwnd", hwnd
+    req.Add "docName", docName
+    req.Add "text", selText
+    body = JsonStringify(req)
+    responseText = DshLibHttpPostJson(base & "/office/api/ai-start", body, status)
+    JsonParseInto responseText, parsed
+    okFlag = False
+    If status >= 200 And status < 300 And IsObject(parsed) Then
+        If JsonHas(parsed, "ok") Then
+            On Error Resume Next
+            okFlag = CBool(JsonGet(parsed, "ok"))
+            If Err.Number <> 0 Then
+                Err.Clear
+                okFlag = False
+            End If
+            On Error GoTo Fatal
+        End If
+    End If
+    If Not okFlag Then
+        DshLibFields.DshLibAiClear
+        If IsObject(parsed) Then
+            If JsonHas(parsed, "error") Then
+                MsgBox CStr(JsonGet(parsed, "error")), vbExclamation, DshLibMsgTitle()
+                Exit Sub
+            End If
+        End If
+        Err.Raise vbObjectError + 110, , "ai-start HTTP " & CStr(status)
+    End If
+    taskId = CStr(JsonGet(parsed, "taskId"))
+    If Len(taskId) = 0 Then
+        DshLibFields.DshLibAiClear
+        Err.Raise vbObjectError + 111, , "ai-start missing taskId"
+    End If
+    DshLibFields.DshLibAiSetTask taskId, docId
+    gAiPollCount = 0
+    gAiHttpFailures = 0
+    Call DshLibAiSchedulePoll
+    ' No Word-side success dialog on purpose: the host focuses the dsh window
+    ' so the user watches the assistant work there.
+    Exit Sub
+Fatal:
+    DshLibFields.DshLibAiClear
+    On Error Resume Next
+    MsgBox DshLibMsgNetworkError() & " (" & CStr(Err.Number) & ")", vbCritical, DshLibMsgTitle()
+    On Error GoTo 0
+End Sub
+
+Private Sub DshLibAiSchedulePoll()
+    On Error Resume Next
+    Application.OnTime Now + TimeSerial(0, 0, 2), "DshLibAiPoll"
+    On Error GoTo 0
+End Sub
+
+' One OnTime tick: poll the host for the task state. "ready" triggers the
+' single apply transaction; every terminal state stops the loop. The loop
+' also caps itself (~30 min) and gives up when the host is gone for long.
+Public Sub DshLibAiPoll()
+    Dim port As Long
+    Dim base As String
+    Dim taskId As String
+    Dim docId As String
+    Dim req As Object
+    Dim body As String
+    Dim status As Long
+    Dim responseText As String
+    Dim parsed As Variant
+    Dim state As String
+
+    On Error GoTo GiveUp
+    If Not DshLibFields.DshLibAiActive() Then Exit Sub
+    gAiPollCount = gAiPollCount + 1
+    If gAiPollCount > 900 Then
+        DshLibFields.DshLibAiClear
+        Exit Sub
+    End If
+    If Not DshLibFields.DshLibAiDocOpen() Then
+        ' The document was closed before the write-back: tell the host so the
+        ' waiting assistant tool does not run out its own timeout.
+        port = DshLibFindPort()
+        If port <> 0 Then
+            Set req = CreateObject("Scripting.Dictionary")
+            req.Add "taskId", DshLibFields.DshLibAiTaskId()
+            req.Add "pid", DshLibGetCurrentProcessId()
+            On Error Resume Next
+            Call DshLibHttpPostJson("http://127.0.0.1:" & CStr(port) & "/office/api/ai-cancel", JsonStringify(req), status)
+            On Error GoTo GiveUp
+        End If
+        DshLibFields.DshLibAiClear
+        Exit Sub
+    End If
+    port = DshLibFindPort()
+    If port = 0 Then GoTo Retry
+    base = "http://127.0.0.1:" & CStr(port)
+    taskId = DshLibFields.DshLibAiTaskId()
+    docId = DshLibFields.DshLibAiDocId()
+    Set req = CreateObject("Scripting.Dictionary")
+    req.Add "taskId", taskId
+    req.Add "pid", DshLibGetCurrentProcessId()
+    req.Add "docId", docId
+    responseText = DshLibHttpPostJson(base & "/office/api/ai-poll", JsonStringify(req), status)
+    If status < 200 Or status >= 300 Then GoTo Retry
+    gAiHttpFailures = 0
+    JsonParseInto responseText, parsed
+    If Not IsObject(parsed) Then GoTo Retry
+    state = CStr(JsonGet(parsed, "status"))
+    Select Case state
+        Case "ready"
+            ' Claim it with ONE apply attempt; the loop stops afterwards
+            ' whatever the outcome (a retry could double-apply the text).
+            Call DshLibAiRunApply
+            Exit Sub
+        Case "applied", "failed", "cancelled", "expired", "missing", "mismatch"
+            DshLibFields.DshLibAiClear
+            Exit Sub
+        Case Else
+            ' pending / applying / unknown: keep waiting (not a failure).
+            Call DshLibAiSchedulePoll
+            Exit Sub
+    End Select
+Retry:
+    gAiHttpFailures = gAiHttpFailures + 1
+    If gAiHttpFailures > 60 Then
+        DshLibFields.DshLibAiClear
+        Exit Sub
+    End If
+    Call DshLibAiSchedulePoll
+    Exit Sub
+GiveUp:
+    On Error Resume Next
+    Call DshLibAiSchedulePoll
+    On Error GoTo 0
 End Sub
 
 ' ---------------------------------------------------------------- undo record
@@ -351,6 +602,69 @@ End Sub
 
 ' ---------------------------------------------------------------- transaction
 
+' The execCommand -> respond -> ... -> Document.complete instruction loop,
+' shared by the ribbon commands and the AI write-back. Any dispatch failure
+' is reported to the host as an Alert so the transaction never hangs Word.
+Private Sub DshLibRespondLoop(ByVal base As String, ByVal responseText As String, ByVal docId As String, ByVal tag As String)
+    Dim instruction As Variant
+    Dim commandName As String
+    Dim arguments As Variant
+    Dim result As Variant
+    Dim respondBody As String
+    Dim status As Long
+    Dim loopCount As Long
+    Dim dummy As Variant
+
+    On Error GoTo DispatchFail
+    Do While Len(Trim$(responseText)) > 0
+        loopCount = loopCount + 1
+        If loopCount > 2000 Then Err.Raise vbObjectError + 101, , "too many commands"
+
+        JsonParseInto responseText, instruction
+        If IsNull(instruction) Or IsEmpty(instruction) Then
+            DshLibPostAlertRespond base, DshLibMsgCommandFail() & ": invalid instruction JSON", tag & "/JsonParse"
+            Exit Sub
+        End If
+        If Not IsObject(instruction) Then
+            DshLibPostAlertRespond base, DshLibMsgCommandFail() & ": instruction is not an object", tag & "/JsonParse"
+            Exit Sub
+        End If
+        commandName = CStr(JsonGet(instruction, "command"))
+        If Len(commandName) = 0 Then
+            DshLibPostAlertRespond base, DshLibMsgCommandFail() & ": missing command name", tag & "/JsonParse"
+            Exit Sub
+        End If
+        JsonGetInto instruction, "arguments", arguments
+        If IsNull(arguments) Or IsEmpty(arguments) Then Set arguments = New Collection
+
+        If commandName = "Document.complete" Then
+            ' Let Dispatch close the undo record, then stop without a respond:
+            ' the server has already ended its side of the transaction.
+            DshLibFields.DispatchInto commandName, arguments, docId, dummy
+            Exit Sub
+        End If
+
+        DshLibFields.DispatchInto commandName, arguments, docId, result
+
+        If IsObject(result) Then
+            If JsonHas(result, "__dshError") Then
+                respondBody = CStr(JsonGet(result, "message"))
+                DshLibPostAlertRespond base, respondBody, CStr(JsonGet(result, "stack"))
+                Exit Sub
+            End If
+        End If
+        respondBody = JsonStringify(result)
+        responseText = DshLibHttpPostJson(base & "/connector/document/respond", respondBody, status)
+        If status < 200 Or status >= 300 Then
+            Err.Raise vbObjectError + 102, , "respond HTTP " & CStr(status)
+        End If
+    Loop
+    Exit Sub
+
+DispatchFail:
+    DshLibPostAlertRespond base, DshLibMsgCommandFail() & ": " & Err.Description, tag & "/" & commandName & " Err " & CStr(Err.Number)
+End Sub
+
 Public Sub DshLibCommand(cmd As String, bringToFront As Boolean)
     Dim base As String
     Dim port As Long
@@ -358,16 +672,7 @@ Public Sub DshLibCommand(cmd As String, bringToFront As Boolean)
     Dim body As String
     Dim status As Long
     Dim responseText As String
-    Dim instruction As Variant
-    Dim commandName As String
-    Dim arguments As Variant
-    Dim result As Variant
-    Dim respondBody As String
-    Dim loopCount As Long
-    Dim errNum As Long
-    Dim errDesc As String
     Dim req As Object
-    Dim dummy As Variant
     ' bringToFront is kept for API parity; with an HTTP host there is no
     ' DshLibCore window to foreground, so it is intentionally unused.
 
@@ -404,58 +709,7 @@ Public Sub DshLibCommand(cmd As String, bringToFront As Boolean)
         Err.Raise vbObjectError + 100, , "execCommand HTTP " & CStr(status)
     End If
 
-    Do While Len(Trim$(responseText)) > 0
-        loopCount = loopCount + 1
-        If loopCount > 2000 Then Err.Raise vbObjectError + 101, , "too many commands"
-
-        JsonParseInto responseText, instruction
-        If IsNull(instruction) Or IsEmpty(instruction) Then
-            DshLibPostAlertRespond base, DshLibMsgCommandFail() & ": invalid instruction JSON", "DshLibCommand/JsonParse"
-            Exit Do
-        End If
-        If Not IsObject(instruction) Then
-            DshLibPostAlertRespond base, DshLibMsgCommandFail() & ": instruction is not an object", "DshLibCommand/JsonParse"
-            Exit Do
-        End If
-        commandName = CStr(JsonGet(instruction, "command"))
-        If Len(commandName) = 0 Then
-            DshLibPostAlertRespond base, DshLibMsgCommandFail() & ": missing command name", "DshLibCommand/JsonParse"
-            Exit Do
-        End If
-        JsonGetInto instruction, "arguments", arguments
-        If IsNull(arguments) Or IsEmpty(arguments) Then Set arguments = New Collection
-
-        If commandName = "Document.complete" Then
-            ' Let Dispatch close the undo record, then stop without a respond:
-            ' the server has already ended its side of the transaction.
-            DshLibFields.DispatchInto commandName, arguments, docId, dummy
-            Exit Do
-        End If
-
-        On Error GoTo DispatchFail
-        DshLibFields.DispatchInto commandName, arguments, docId, result
-        On Error GoTo Fatal
-
-        If IsObject(result) Then
-            If JsonHas(result, "__dshError") Then
-                respondBody = CStr(JsonGet(result, "message"))
-                errDesc = CStr(JsonGet(result, "stack"))
-                DshLibPostAlertRespond base, respondBody, errDesc
-                Exit Do
-            End If
-        End If
-        respondBody = JsonStringify(result)
-        responseText = DshLibHttpPostJson(base & "/connector/document/respond", respondBody, status)
-        If status < 200 Or status >= 300 Then
-            Err.Raise vbObjectError + 102, , "respond HTTP " & CStr(status)
-        End If
-    Loop
-    GoTo Cleanup
-
-DispatchFail:
-    errNum = Err.Number
-    errDesc = Err.Description
-    DshLibPostAlertRespond base, DshLibMsgCommandFail() & ": " & errDesc, "DshLibCommand/" & commandName & " Err " & CStr(errNum)
+    Call DshLibRespondLoop(base, responseText, docId, "DshLibCommand")
     GoTo Cleanup
 
 Fatal:
@@ -472,5 +726,92 @@ Cleanup:
     ' The bibliography count may have changed (insert / unlink / refresh);
     ' re-evaluate the greyed-out state of the insert-bibliography button.
     DshLibRibbon.DshLibRibbonInvalidate
+    On Error GoTo 0
+End Sub
+
+' The AI write-back transaction: applyAiEdit against the document/process that
+' started the task. Runs ONCE per task (DshLibAiPoll stops the loop after it).
+Public Sub DshLibAiRunApply()
+    Dim base As String
+    Dim port As Long
+    Dim docId As String
+    Dim taskId As String
+    Dim body As String
+    Dim status As Long
+    Dim responseText As String
+    Dim req As Object
+
+    On Error GoTo Fatal
+    taskId = DshLibFields.DshLibAiTaskId()
+    docId = DshLibFields.DshLibAiDocId()
+    If Len(taskId) = 0 Then Exit Sub
+    port = DshLibFindPort()
+    If port = 0 Then GoTo Cleanup
+    base = "http://127.0.0.1:" & CStr(port)
+
+    ' The captured Range belongs to its document: make THAT document active so
+    ' every Document.* command below hits the right one (another document of
+    ' this same Word process may currently hold the focus).
+    If Not DshLibFields.DshLibAiActivateDoc() Then
+        Set req = CreateObject("Scripting.Dictionary")
+        req.Add "taskId", taskId
+        req.Add "pid", DshLibGetCurrentProcessId()
+        On Error Resume Next
+        Call DshLibHttpPostJson(base & "/office/api/ai-cancel", JsonStringify(req), status)
+        On Error GoTo Fatal
+        GoTo Cleanup
+    End If
+    docId = DshLibFields.DshLibAiDocId()
+
+    gScreenUpdating = Application.ScreenUpdating
+    gScreenSaved = True
+    Application.ScreenUpdating = False
+    gUndoStarted = False
+    If Val(Application.Version) >= 14 Then
+        On Error Resume Next
+        Application.UndoRecord.StartCustomRecord DshLibCN("6587 5E93 5F15 7528 547D 4EE4")
+        If Err.Number = 0 Then gUndoStarted = True
+        Err.Clear
+        On Error GoTo Fatal
+    End If
+
+    Set req = CreateObject("Scripting.Dictionary")
+    req.Add "command", "applyAiEdit"
+    req.Add "docId", docId
+    req.Add "pid", DshLibGetCurrentProcessId()
+    req.Add "taskId", taskId
+    body = JsonStringify(req)
+    responseText = DshLibHttpPostJson(base & "/connector/document/execCommand", body, status)
+    If status < 200 Or status >= 300 Then
+        ' Another transaction holds the host (503): retry on the next poll
+        ' tick instead of failing the task outright.
+        If status = 503 Then
+            DshLibRestoreScreenUpdating
+            DshLibEndUndoRecord
+            gAiHttpFailures = 0
+            Call DshLibAiSchedulePoll
+            Exit Sub
+        End If
+        Err.Raise vbObjectError + 112, , "applyAiEdit HTTP " & CStr(status)
+    End If
+
+    Call DshLibRespondLoop(base, responseText, docId, "DshLibAiRunApply")
+    GoTo Cleanup
+
+Fatal:
+    On Error Resume Next
+    MsgBox DshLibMsgNetworkError() & " (" & CStr(Err.Number) & ")", vbCritical, DshLibMsgTitle()
+    On Error GoTo 0
+    ' fall through to Cleanup
+
+Cleanup:
+    On Error Resume Next
+    DshLibFields.TransactionCleanup docId
+    DshLibRestoreScreenUpdating
+    DshLibEndUndoRecord
+    DshLibRibbon.DshLibRibbonInvalidate
+    ' One apply attempt per task: clear the state so the poll loop ends. The
+    ' host records the outcome (applied/failed) from the transaction itself.
+    DshLibFields.DshLibAiClear
     On Error GoTo 0
 End Sub

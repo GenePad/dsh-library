@@ -60,6 +60,10 @@ export function ChatDock({ onLibraryChanged, openNativeSession, retainSession, S
   contextRef.current = getContext
   const changedRef = React.useRef(onLibraryChanged)
   changedRef.current = onLibraryChanged
+  // Word AI tasks (自动检索引文 / AI修改) the dock has already adopted, so the
+  // 1.5s poll below never re-adopts the same announcement.
+  const seenWordTaskRef = React.useRef('')
+  const [wordTask, setWordTask] = React.useState(null)
 
   const show = (value) => {
     if (value?.sessionId) setSessionId(value.sessionId)
@@ -216,13 +220,26 @@ export function ChatDock({ onLibraryChanged, openNativeSession, retainSession, S
   }))
 
   // Light status poll for the running dot only; display is dsh's conversation.
+  // The same tick watches for Word AI tasks: a fresh announcement switches the
+  // dock to the task's conversation (the footer entry has meanwhile switched
+  // the main panel to the library, so the user watches dsh work).
   React.useEffect(() => {
-    const timer = setInterval(() => {
-      if (!document.hidden) {
-        api.call('chat-page', { maxMessages: 1 }).then(show).catch(() => {})
-      }
-    }, 1500)
-    api.call('chat-page', { maxMessages: 1 }).then(show).catch(() => {})
+    const poll = () => {
+      if (document.hidden) return
+      api.call('chat-page', { maxMessages: 1 }).then(show).catch(() => {})
+      api.call('office-ai-announce').then(({ task } = {}) => {
+        if (!task?.id || task.id === seenWordTaskRef.current) return
+        seenWordTaskRef.current = task.id
+        if (task.sessionId) {
+          sessionModeRef.current = 'list'
+          setSessionId(task.sessionId)
+          setOpen(true)
+        }
+        setWordTask(task)
+      }).catch(() => {})
+    }
+    const timer = setInterval(poll, 1500)
+    poll()
     return () => clearInterval(timer)
   }, [])
 
@@ -236,7 +253,9 @@ export function ChatDock({ onLibraryChanged, openNativeSession, retainSession, S
             <ChatIcon size={14} />
             <span className="lib-chat-title">文献助手</span>
             <span className={`lib-dot${running ? ' running' : ''}`} />
-            <span className="lib-chat-hint">{running ? '正在处理…' : 'Library 工作区 · 可读写当前文库'}</span>
+            <span className="lib-chat-hint" title={wordTask ? `来自 Word：${wordTask.docName}` : undefined}>
+              {wordTask ? `Word 任务 · ${wordTask.docName}` : running ? '正在处理…' : 'Library 工作区 · 可读写当前文库'}
+            </span>
             <span className="lib-chatdock-actions">
               <button className="lib-newchat" title="开始一个新对话（阅读器打开文章时：解绑旧对话并绑定新对话）" onClick={() => void newChat()} disabled={running || busy}>
                 <PlusIcon size={12} />

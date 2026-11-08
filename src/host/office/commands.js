@@ -5,12 +5,12 @@ import {
   FORCE_CITATIONS_FALSE, FORCE_CITATIONS_REGENERATE, FORCE_CITATIONS_RESET_TEXT,
   DIALOG_ICON_STOP, DIALOG_ICON_WARNING, DIALOG_BUTTONS_OK, DIALOG_BUTTONS_OK_CANCEL,
   DIALOG_BUTTONS_YES_NO, INTEGRATION_TYPE_ITEM, INTEGRATION_TYPE_BIBLIOGRAPHY,
-  EXPORTED_DOCUMENT_MARKER, DATA_VERSION, commandList,
-  AlertError, UserCancelled, isUserCancelled,
+  EXPORTED_DOCUMENT_MARKER, DATA_VERSION, commandList, randomString,
+  AlertError, UserCancelled, isUserCancelled, REMOVE_CODE,
 } from './constants.js'
 import { DocumentData } from './document-data.js'
-import { Field, BibliographyField } from './fields.js'
-import { Bibliography } from './citation.js'
+import { Field, CitationField, BibliographyField } from './fields.js'
+import { Bibliography, Citation } from './citation.js'
 import { Session } from './session.js'
 import { HttpApplication } from './http-client.js'
 
@@ -201,10 +201,107 @@ export class IntegrationInterface {
     if (choice) return
     await this._session.exportDocument()
   }
+
+  // ------------------------------------------------------------ AI write ---
+
+  /**
+   * Build one citation cluster from validated agent input and write its field
+   * code. `fieldJson` is the field the responder just created at the insertion
+   * point; the cluster's items are resolved through the session registry.
+   */
+  async _aiCitation(fieldJson, spec) {
+    const citationField = new CitationField(fieldJson, '', this._session.fieldOptions)
+    const citation = new Citation(citationField, {}, 0)
+    citation.citationID = randomString(8)
+    citation.citationItems = spec.keys.map((key, index) => ({
+      id: key,
+      uris: this._session.items.uriFor(key),
+      // Cluster-level prefix/suffix: prefix on the first item, suffix on the
+      // last, mirroring how Zotero's quick-edit bar stores them.
+      ...(index === 0 && spec.prefix ? { prefix: spec.prefix } : {}),
+      ...(index === spec.keys.length - 1 && spec.suffix ? { suffix: spec.suffix } : {}),
+      ...(spec.locator ? { locator: spec.locator } : {}),
+    }))
+    const action = await citation.loadItemData(this._session.registry, { promptToReselect: false })
+    if (action === REMOVE_CODE || citation.citationItems.some(item => item.missing)) {
+      throw new AlertError(`条目 ${spec.keys.join('、')} 无法从文库解析，已中止写回。`)
+    }
+    await citationField.setCode(citation.serialize(this._session.registry))
+    return citation
+  }
+
+  /**
+   * Apply an AI task's write-back plan to the captured selection: plain text
+   * plus citation fields, then the same inline full regeneration the 刷新
+   * command runs (requirement: citation changes must refresh automatically).
+   * @param {object} task - {id, plan: {mode, text?, citations}, ...}
+   */
+  async applyAiEdit(task) {
+    const plan = task.plan
+    await this._session.init(false, true)
+    if (!this._session.data?.prefs?.fieldType) {
+      throw new AlertError('该文档还没有设置引文样式。请先在 Word 功能区「文库引用 → 文档设置」中选择样式，再重新发起 AI 任务。')
+    }
+    // Validate every key BEFORE touching the document.
+    for (const spec of plan.citations) {
+      for (const key of spec.keys) {
+        if (!this._session.items.cslItem(key)) {
+          throw new AlertError(`条目 ${key} 不在文库中，无法插入引文。请让助手修正后重试。`)
+        }
+      }
+    }
+    // aiBegin verifies the live selection still matches the captured text and
+    // aborts WITHOUT mutating when it does not.
+    await this._doc.aiBegin(plan.mode, task.selection)
+    const inserted = []
+    try {
+      if (plan.mode === 'replace') {
+        const pieces = String(plan.text).split(/(\[\[\d{1,2}\]\])/g)
+        for (const piece of pieces) {
+          if (piece === '') continue
+          const marker = /^\[\[(\d{1,2})\]\]$/.exec(piece)
+          if (marker) {
+            const spec = plan.citations.find(entry => entry.id === Number(marker[1]))
+            const field = await this._doc.aiField(this._session.data.prefs.fieldType)
+            if (!field) throw new AlertError('Word 拒绝在当前位置插入引注域。')
+            inserted.push(await this._aiCitation(field, spec))
+          } else {
+            await this._doc.aiText(piece)
+          }
+        }
+      } else {
+        // Insert mode: keep the original text, drop citation fields at the
+        // computed offsets (descending so earlier insertions never shift the
+        // remaining ones).
+        const insertions = plan.citations.map(spec => ({
+          offset: task.selection.indexOf(spec.after) + spec.after.length,
+          spec,
+        })).sort((a, b) => b.offset - a.offset)
+        for (const { offset, spec } of insertions) {
+          if (offset < 1) throw new AlertError('引文插入位置无效，已中止写回。')
+          const field = await this._doc.aiFieldAt(offset, this._session.data.prefs.fieldType, 0)
+          if (!field) throw new AlertError('Word 拒绝在当前位置插入引注域。')
+          inserted.push(await this._aiCitation(field, spec))
+        }
+      }
+      await this._doc.aiEnd()
+    } catch (error) {
+      try { await this._doc.aiEnd() } catch { /* already ended */ }
+      throw error
+    }
+    // The document changed: re-read all fields and regenerate inline (the
+    // exact tail of Session.cite — citations, numbering and the bibliography
+    // update immediately, no manual refresh needed).
+    this._session._fields = null
+    this._session._transactionUpToDate = false
+    await this._session.updateFromDocument(FORCE_CITATIONS_REGENERATE)
+    await this._session.updateDocument(FORCE_CITATIONS_REGENERATE, true, false)
+    return { inserted: inserted.length }
+  }
 }
 
 /** Create the integration engine singleton (session cache + command runner). */
-export function createIntegration({ styles, items, dialogs, logger = console, version }) {
+export function createIntegration({ styles, items, dialogs, ai = null, logger = console, version }) {
   const sessions = new Map()
   let currentCommandPromise = Promise.resolve()
   let currentDoc = null
@@ -278,12 +375,27 @@ export function createIntegration({ styles, items, dialogs, logger = console, ve
    * @returns {Promise<void>} resolves when the engine is done; the transport
    *   emits "Document.complete" as its last command.
    */
-  async function execCommand({ agent = 'Word', command, docId, transport }) {
+  async function execCommand({ agent = 'Word', command, docId, transport, taskId = '', pid = 0 }) {
     const started = Date.now()
     let doc = null
     let session = null
+    let aiTask = null
     try {
       if (!commandList.includes(command)) throw new AlertError(`未知的集成命令：${command}`)
+      if (command === 'applyAiEdit') {
+        if (!ai) throw new AlertError('AI 写回服务不可用。')
+        // Claim the task first: it also verifies pid+docId, so the write lands
+        // in the Word process/document that started it even when several Word
+        // processes are connected at once. A rejected claim (foreign pid,
+        // expired task) must also FAIL the task, otherwise the waiting agent
+        // tool would hang until its own timeout.
+        try {
+          aiTask = ai.beginApply({ taskId, pid, docId })
+        } catch (claimError) {
+          ai.fail(taskId, claimError)
+          throw claimError
+        }
+      }
       const app = new HttpApplication(transport)
       doc = await app.getDocument(docId)
       currentDoc = doc
@@ -292,10 +404,16 @@ export function createIntegration({ styles, items, dialogs, logger = console, ve
       currentSession = session
       if (!documentImported) {
         const iface = new IntegrationInterface(app, doc, session)
-        await iface[command]()
+        const outcome = await iface[command](aiTask)
+        if (aiTask) ai.finishApply(aiTask.id, { ok: true, ...outcome })
+      } else if (aiTask) {
+        // Transfer documents cannot take an AI write-back; fail it now so the
+        // waiting agent tool does not hang until its own timeout.
+        throw new AlertError('该文档是导入的传输文档，AI 无法写回。')
       }
       await doc.setDocumentData(session.data.serialize())
     } catch (error) {
+      if (aiTask) ai.finishApply(aiTask.id, { ok: false, error: String(error?.message ?? error) })
       if (isUserCancelled(error)) {
         if (session && doc) {
           try {

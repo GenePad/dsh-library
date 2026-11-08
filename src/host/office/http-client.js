@@ -139,6 +139,42 @@ export class HttpDocument {
     return (Array.isArray(values) ? values : []).map(value => new HttpField(this.transport, this.documentID, value))
   }
 
+  // ------------------------------------------------------- AI write-back ---
+  // The Word template holds the selection Range captured when the AI task was
+  // started; these commands write text / citation fields into it sequentially.
+  // `expected` guards against the document having been edited meanwhile: the
+  // responder compares it with the live range and aborts without any mutation.
+
+  async aiBegin(mode, expected = '') {
+    const value = await this.transport.sendCommand('Document.aiBegin', [this.documentID, mode, expected])
+    const info = value && typeof value === 'object' ? value : {}
+    if (info.ok === false) {
+      throw new Error(String(info.error ?? '选区校验失败，写回已取消'))
+    }
+    return info
+  }
+
+  async aiText(text) {
+    // Word's paragraph mark is Chr(13); normalise platform newlines.
+    const payload = String(text ?? '').replace(/\r?\n/g, '\r')
+    return this.transport.sendCommand('Document.aiText', [this.documentID, payload])
+  }
+
+  async aiField(fieldType = 'Field') {
+    const value = await this.transport.sendCommand('Document.aiField', [this.documentID, fieldType])
+    return value && typeof value === 'object' ? new HttpField(this.transport, this.documentID, value) : null
+  }
+
+  async aiFieldAt(offset, fieldType, noteType = 0) {
+    const value = await this.transport.sendCommand('Document.aiFieldAt',
+      [this.documentID, Number(offset) || 0, fieldType, Number.parseInt(noteType, 10) || 0])
+    return value && typeof value === 'object' ? new HttpField(this.transport, this.documentID, value) : null
+  }
+
+  async aiEnd() {
+    return this.transport.sendCommand('Document.aiEnd', [this.documentID])
+  }
+
   async complete() {
     return this.transport.sendCommand('Document.complete', [this.documentID])
   }

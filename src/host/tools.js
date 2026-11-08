@@ -65,10 +65,11 @@ function textAttachment(db, paths, key) {
  * @param {import('./db.js').ZoteroDb} deps.db
  * @param {{storageDir:string, dataDir:string}} deps.paths
  * @param {() => object} deps.getSettings
+ * @param {() => object} [deps.wordAi] - the Word AI task service (runtime.office.ai).
  * @param {object} [deps.logger]
  */
 export function createTools(deps) {
-  const { getDb, paths, getSettings, logger = console } = deps
+  const { getDb, paths, getSettings, wordAi, logger = console } = deps
 
   return [
     {
@@ -548,6 +549,54 @@ export function createTools(deps) {
         if (keys.length === 0) throw new Error('No item keys given')
         if (args.action === 'delete') return { deleted: deleteForever(db, keys) }
         return { changed: trashItems(db, keys, args.action !== 'restore') }
+      },
+    },
+    {
+      name: 'library_word_apply',
+      description: '把修改结果写回 Microsoft Word 中发起 AI 任务的选中文本（自动检索引文 / AI 修改任务专用）。只在任务消息给出 taskId 时使用；会同步等待 Word 端应用并自动刷新引注与参考文献表。replace=整段替换：text 为完整新文本，引注位置用 [[1]]、[[2]] 占位标记；insert=原文定点插入：citations 每项的 after 填选中文本里的一段独特原文片段。',
+      parameters: {
+        type: 'object',
+        properties: {
+          taskId: { type: 'string', description: '任务消息中的 taskId（形如 AIXXXXXXXXXX）' },
+          mode: { type: 'string', enum: ['replace', 'insert'], description: 'replace=整段替换选中文本；insert=保留原文只在指定位置插入引文' },
+          text: { type: 'string', description: 'replace 模式：替换后的完整文本，引注位置写 [[N]] 占位标记' },
+          citations: {
+            type: 'array',
+            description: '引文列表，replace 模式按 id 与 [[N]] 标记对应，insert 模式按 after 定位',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'number', description: 'replace 模式：与 text 中 [[N]] 标记对应的编号' },
+                keys: { type: 'array', items: { type: 'string' }, description: '文库条目 key（8 位，来自 library_search / library_add）' },
+                after: { type: 'string', description: 'insert 模式：选中文本里的一段独特原文片段，引文插到它之后' },
+                locator: { type: 'string', description: '定位符，如页码 "10"' },
+                prefix: { type: 'string', description: '引注前缀，如 "见"' },
+                suffix: { type: 'string', description: '引注后缀，如 "及后续"' },
+              },
+            },
+          },
+        },
+        required: ['taskId', 'citations'],
+      },
+      output: { schema: JSON_SCHEMA, render: renderJson },
+      timeoutMs: 180_000,
+      async execute(args = {}) {
+        const ai = wordAi?.()
+        if (!ai) throw new Error('写作插件服务不可用（无法写回 Word）。')
+        const taskId = String(args.taskId ?? '').trim()
+        if (taskId === '') throw new Error('缺少 taskId：使用任务消息里给出的 taskId。')
+        const result = await ai.submit(taskId, {
+          mode: args.mode,
+          text: args.text,
+          citations: args.citations,
+        })
+        if (result?.ok !== true) throw new Error(String(result?.error ?? '写回失败'))
+        return {
+          ok: true,
+          mode: args.mode === 'insert' ? 'insert' : 'replace',
+          inserted: result.inserted ?? 0,
+          note: '已写回 Word 并自动刷新引注与参考文献表。',
+        }
       },
     },
   ].map(tool => ({

@@ -124,6 +124,7 @@ assert.deepEqual([...toolDefs.keys()].sort(), [
   'library_add', 'library_annotations', 'library_attach', 'library_cite', 'library_collection',
   'library_collections', 'library_import', 'library_item', 'library_lookup', 'library_open',
   'library_read', 'library_search', 'library_status', 'library_sync', 'library_trash', 'library_update',
+  'library_word_apply',
 ])
 
 const call = async (endpoint, payload) => {

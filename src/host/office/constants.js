@@ -47,6 +47,7 @@ export const commandList = [
   'addBibliography', 'editBibliography', 'addEditBibliography',
   'addNote', 'addAnnotation', 'citationExplorer',
   'refresh', 'removeCodes', 'setDocPrefs', 'exportDocument',
+  'applyAiEdit',
 ]
 
 /** The user dismissed a dialog / aborted a command. Not an error to report. */

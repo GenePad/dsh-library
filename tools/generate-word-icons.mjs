@@ -128,6 +128,29 @@ const ICONS = {
     c.triangle([14.2, 29.8], [19.8, 28.2], [15.6, 24.0], RED)
     c.line(26.3, 19.7, 28.7, 17.3, 4.5, GREY)
   } },
+  dshAiCitation: { size: 32, draw(c) {
+    // A text passage (document outline + grey lines) with a magnifier hunting
+    // a citation and an AI sparkle at the top right.
+    c.rect(2.5, 3, 25, 21, 2.4, BLUE, 4)
+    c.line(7, 9, 22, 9, 1.8, GREY)
+    c.line(7, 13.5, 22, 13.5, 1.8, GREY)
+    c.line(7, 18, 15, 18, 1.8, GREY)
+    c.circle(22.5, 23, 7, BLUE, 4.6)
+    c.line(27.3, 27.8, 30.8, 31, 3, BLUE)
+    c.line(25.5, 1.5, 25.5, 6.5, 1.7, BLUE)
+    c.line(23, 4, 28, 4, 1.7, BLUE)
+  } },
+  dshAiEdit: { size: 32, draw(c) {
+    // A text passage with a red pencil rewriting it and an AI sparkle.
+    for (const y of [4, 11, 18]) {
+      c.line(3, y + 1, 18, y + 1, 2, GREY)
+    }
+    c.line(19, 28.5, 28, 19.5, 4.5, RED)
+    c.triangle([14.2, 31.2], [20.2, 29.6], [15.8, 25.4], RED)
+    c.line(26.8, 20.7, 29.2, 18.3, 4.5, GREY)
+    c.line(25.5, 1.5, 25.5, 8.5, 1.7, BLUE)
+    c.line(22.5, 5, 28.5, 5, 1.7, BLUE)
+  } },
   // 16px: small buttons
   dshDocPrefs: { size: 16, draw(c) {
     c.circle(16, 16, 9, BLUE, 5.5)

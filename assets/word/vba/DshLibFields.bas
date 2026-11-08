@@ -60,6 +60,15 @@ Private gShowRevisionsSaved As Boolean
 Private gDocId As String
 Private gInited As Boolean
 
+' AI task state (SURVIVES transactions): the selection Range captured when the
+' user clicked the Word AI button plus the host-assigned task id. Word Range
+' objects stay live across edits, so the write-back can happen minutes later.
+Private gAiTaskId As String
+Private gAiDocId As String
+Private gAiDocName As String
+Private gAiRange As Object           ' the captured selection Range
+Private gAiWorking As Object         ' collapsed insertion cursor (replace mode)
+
 ' ---------------------------------------------------------------- public API
 
 Public Function Dispatch(ByVal command As String, ByRef args As Variant, ByVal docId As String) As Variant
@@ -116,6 +125,11 @@ Public Sub DispatchInto(ByVal command As String, ByRef args As Variant, ByVal do
         Case "getNoteIndex": CmdFieldGetNoteIndex args, result
         Case "equals": CmdFieldEquals args, result
         Case "isAdjacentToNextField": CmdFieldIsAdjacent args, result
+        Case "aiBegin": CmdAiBegin args, result
+        Case "aiText": CmdAiText args, result
+        Case "aiField": CmdAiField args, result
+        Case "aiFieldAt": CmdAiFieldAt args, result
+        Case "aiEnd": CmdAiEnd args, result
         Case Else
             ' Unknown command: answer null rather than hanging the transaction.
             result = Null
@@ -161,6 +175,223 @@ Public Function DshLibDocHasBibliography() As Boolean
     Next bm
     On Error GoTo 0
 End Function
+
+' ---------------------------------------------------------------- AI tasks
+
+' Capture the current selection as the AI write-back target. The Range is
+' duplicated so later selection changes cannot detach it; the document name
+' lets the apply re-activate exactly this document. Returns False when the
+' selection vanished between the click and this call.
+Public Function DshLibAiCapture(ByVal docName As String) As Boolean
+    On Error GoTo Fail
+    If Selection Is Nothing Then DshLibAiCapture = False: Exit Function
+    If Selection.Start = Selection.End Then DshLibAiCapture = False: Exit Function
+    Set gAiRange = Selection.Range.Duplicate
+    gAiDocName = ActiveDocument.Name
+    gAiTaskId = ""
+    gAiDocId = ""
+    Set gAiWorking = Nothing
+    DshLibAiCapture = True
+    Exit Function
+Fail:
+    DshLibAiCapture = False
+End Function
+
+Public Sub DshLibAiSetTask(ByVal taskId As String, ByVal docId As String)
+    gAiTaskId = taskId
+    gAiDocId = docId
+End Sub
+
+Public Function DshLibAiTaskId() As String
+    DshLibAiTaskId = gAiTaskId
+End Function
+
+Public Function DshLibAiDocId() As String
+    DshLibAiDocId = gAiDocId
+End Function
+
+Public Function DshLibAiActive() As Boolean
+    DshLibAiActive = (Len(gAiTaskId) > 0) And (Not gAiRange Is Nothing)
+End Function
+
+Public Function DshLibAiDocOpen() As Boolean
+    Dim doc As Object
+    On Error Resume Next
+    Set doc = Nothing
+    If Len(gAiDocName) > 0 Then Set doc = Documents(gAiDocName)
+    DshLibAiDocOpen = Not doc Is Nothing
+    If Err.Number <> 0 Then DshLibAiDocOpen = False
+    On Error GoTo 0
+End Function
+
+' Make the captured document the active one so the apply transaction's
+' Document.* commands hit the right document even when the user has switched
+' to another document in the SAME Word process meanwhile.
+Public Function DshLibAiActivateDoc() As Boolean
+    On Error Resume Next
+    If Len(gAiDocName) = 0 Then DshLibAiActivateDoc = False: Exit Function
+    Documents(gAiDocName).Activate
+    DshLibAiActivateDoc = (ActiveDocument.Name = gAiDocName)
+    If Err.Number <> 0 Then
+        Err.Clear
+        DshLibAiActivateDoc = False
+    End If
+    On Error GoTo 0
+End Function
+
+Public Sub DshLibAiClear()
+    Set gAiRange = Nothing
+    Set gAiWorking = Nothing
+    gAiTaskId = ""
+    gAiDocId = ""
+    gAiDocName = ""
+End Sub
+
+' Whitespace-insensitive comparison of the live range text with the text the
+' host recorded at task start. The round trip through JSON preserves every
+' other character exactly, so any difference means the user edited the passage
+' after starting the task and the write-back must be refused.
+Private Function DshLibAiSameText(ByVal current As String, ByVal expected As String) As Boolean
+    DshLibAiSameText = (DshLibAiStripWs(current) = DshLibAiStripWs(expected))
+End Function
+
+Private Function DshLibAiStripWs(ByVal s As String) As String
+    Dim out As String
+    Dim i As Long
+    Dim c As String
+    For i = 1 To Len(s)
+        c = Mid$(s, i, 1)
+        Select Case c
+            Case " ", vbCr, vbLf, vbTab, Chr$(11), Chr$(12), Chr$(160)
+            Case Else
+                out = out & c
+        End Select
+    Next i
+    DshLibAiStripWs = out
+End Function
+
+Private Function DshLibAiErrText() As String
+    DshLibAiErrText = DshLibCore.DshLibCN("9009 533A 5185 5BB9 5DF2 53D8 5316 FF0C 5199 56DE 5DF2 53D6 6D88 FF0C 8BF7 5728 0057 006F 0072 0064 4E2D 91CD 65B0 9009 4E2D 8BE5 6BB5 540E 91CD 8BD5")
+End Function
+
+Private Function DshLibAiErrNotBody() As String
+    DshLibAiErrNotBody = DshLibCore.DshLibCN("9009 533A 4E0D 5728 6B63 6587 4E2D FF08 8868 683C 002F 9875 7709 002F 811A 6CE8 6682 4E0D 652F 6301 FF09")
+End Function
+
+Private Sub CmdAiBegin(args As Variant, ByRef result As Variant)
+    Dim mode As String
+    Dim expected As String
+    Dim current As String
+    Dim d As Object
+    On Error GoTo Failed
+    Set d = CreateObject("Scripting.Dictionary")
+    If gAiRange Is Nothing Then
+        d.Add "ok", False
+        d.Add "error", "aiBegin: no captured selection"
+        Set result = d
+        Exit Sub
+    End If
+    If gAiRange.StoryType <> wdMainTextStory Then
+        d.Add "ok", False
+        d.Add "error", DshLibAiErrNotBody()
+        Set result = d
+        Exit Sub
+    End If
+    mode = ArgStr(args, 2, "replace")
+    expected = ArgStr(args, 3, "")
+    current = gAiRange.Text
+    If Len(expected) > 0 Then
+        If Not DshLibAiSameText(current, expected) Then
+            d.Add "ok", False
+            d.Add "error", DshLibAiErrText()
+            Set result = d
+            Exit Sub
+        End If
+    End If
+    d.Add "ok", True
+    d.Add "original", current
+    If mode = "insert" Then
+        Set gAiWorking = gAiRange.Duplicate
+    Else
+        gAiRange.Text = ""
+        Set gAiWorking = gAiRange.Duplicate
+        gAiWorking.Collapse wdCollapseStart
+    End If
+    Set result = d
+    Exit Sub
+Failed:
+    Set d = CreateObject("Scripting.Dictionary")
+    d.Add "ok", False
+    d.Add "error", "aiBegin failed: " & Err.Description
+    Set result = d
+End Sub
+
+Private Sub CmdAiText(args As Variant, ByRef result As Variant)
+    On Error GoTo Failed
+    If gAiWorking Is Nothing Then Err.Raise vbObjectError + 210, , "aiText: no working range"
+    gAiWorking.Text = ArgStr(args, 2, "")
+    gAiWorking.Collapse wdCollapseEnd
+    result = Null
+    Exit Sub
+Failed:
+    Set result = MakeError(Err.Number, Err.Description, "Document.aiText")
+End Sub
+
+Private Sub CmdAiField(args As Variant, ByRef result As Variant)
+    Dim info As Object
+    Dim afterPos As Long
+    Dim fieldType As String
+    On Error GoTo Failed
+    If gAiWorking Is Nothing Then Err.Raise vbObjectError + 211, , "aiField: no working range"
+    fieldType = NormalizeFieldType(ArgStr(args, 2, "Field"))
+    Set info = CreateFieldAt(gAiWorking.Duplicate, fieldType, 0)
+    If info Is Nothing Then
+        result = Null
+        Exit Sub
+    End If
+    RegisterNewField info, result
+    ' Move the insertion cursor past the new field. Field-mode ranges include
+    ' the field markers ({ }), bookmark mode does not.
+    afterPos = CLng(info("rangeEnd"))
+    If Len(CStr(info("bookmark"))) = 0 Then afterPos = afterPos - 1
+    gAiWorking.SetRange afterPos, afterPos
+    Exit Sub
+Failed:
+    Set result = MakeError(Err.Number, Err.Description, "Document.aiField")
+End Sub
+
+' Insert-mode: create a citation field at a character offset INSIDE the
+' original (still intact) selection. The host applies offsets in descending
+' order, so earlier insertions never shift the remaining ones.
+Private Sub CmdAiFieldAt(args As Variant, ByRef result As Variant)
+    Dim offset As Long
+    Dim fieldType As String
+    Dim noteType As Integer
+    Dim pos As Long
+    Dim rng As Object
+    Dim info As Object
+    On Error GoTo Failed
+    If gAiRange Is Nothing Then Err.Raise vbObjectError + 212, , "aiFieldAt: no captured range"
+    offset = CLng(ArgNum(args, 2, 0))
+    fieldType = NormalizeFieldType(ArgStr(args, 3, "Field"))
+    noteType = CInt(ArgNum(args, 4, 0))
+    pos = CLng(gAiRange.Start) + offset
+    Set rng = ActiveDocument.Range(pos, pos)
+    Set info = CreateFieldAt(rng, fieldType, noteType)
+    If info Is Nothing Then
+        result = Null
+        Exit Sub
+    End If
+    RegisterNewField info, result
+    Exit Sub
+Failed:
+    Set result = MakeError(Err.Number, Err.Description, "Document.aiFieldAt")
+End Sub
+
+Private Sub CmdAiEnd(args As Variant, ByRef result As Variant)
+    Set gAiWorking = Nothing
+    result = Null
+End Sub
 
 ' ---------------------------------------------------------------- arg helpers
 
@@ -1421,11 +1652,23 @@ Private Sub CmdCursorInField(args As Variant, ByRef result As Variant)
     Next id
 End Sub
 
+' Give a freshly created field an id, register it in the transaction maps and
+' fill the ByRef result with its JSON shape (shared by insertField and the AI
+' insertion commands).
+Private Sub RegisterNewField(ByVal info As Object, ByRef result As Variant)
+    Dim id As String
+    id = "F" & CStr(gNextId)
+    gNextId = gNextId + 1
+    info("id") = id
+    gFields.Add id, info
+    gOrder.Add id
+    Set result = FieldJson(info)
+End Sub
+
 Private Sub CmdInsertField(args As Variant, ByRef result As Variant)
     Dim fieldType As String
     Dim noteType As Integer
     Dim info As Object
-    Dim id As String
     fieldType = NormalizeFieldType(ArgStr(args, 2, "Field"))
     noteType = CInt(ArgNum(args, 3, 0))
     Set info = CreateFieldAt(Selection.Range, fieldType, noteType)
@@ -1433,12 +1676,7 @@ Private Sub CmdInsertField(args As Variant, ByRef result As Variant)
         result = Null
         Exit Sub
     End If
-    id = "F" & CStr(gNextId)
-    gNextId = gNextId + 1
-    info("id") = id
-    gFields.Add id, info
-    gOrder.Add id
-    Set result = FieldJson(info)
+    RegisterNewField info, result
 End Sub
 
 Private Sub CmdConvert(args As Variant, ByRef result As Variant)

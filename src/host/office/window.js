@@ -218,6 +218,82 @@ export function raiseDialogWindow(id, logger = console) {
 }
 
 /**
+ * Win32 script that brings a visible window of OUR OWN process (the dsh
+ * desktop shell — this plugin's host half runs inside it, so process.pid is
+ * dsh's pid) to the foreground. Used when a Word AI task is dispatched: the
+ * user must see dsh take over and work, instead of everything happening
+ * behind Word's maximised window.
+ */
+export function buildFocusSelfScript(pid) {
+  return `Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class DshSelfFocus {
+  public delegate bool EP(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EP cb, IntPtr l);
+  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, IntPtr pid);
+  [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr h);
+
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
+  [DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr h, bool altTab);
+
+  // Windows refuses plain SetForegroundWindow from a background process; the
+  // documented workaround is attaching to the current foreground thread first.
+  static void ForceForeground(IntPtr h) {
+    IntPtr fg = GetForegroundWindow();
+    if (fg == h) return;
+    uint fgThread = GetWindowThreadProcessId(fg, IntPtr.Zero);
+    uint myThread = GetCurrentThreadId();
+    bool attached = false;
+    if (fgThread != 0 && fgThread != myThread) attached = AttachThreadInput(myThread, fgThread, true);
+    SetForegroundWindow(h);
+    BringWindowToTop(h);
+    SwitchToThisWindow(h, true);
+    if (attached) AttachThreadInput(myThread, fgThread, false);
+  }
+
+  public static int Focus(uint pid) {
+    IntPtr best = IntPtr.Zero;
+    int bestLen = -1;
+    EnumWindows((h, l) => {
+      if (!IsWindowVisible(h)) return true;
+      uint owner;
+      GetWindowThreadProcessId(h, out owner);
+      if (owner != pid) return true;
+      int len = GetWindowTextLength(h);
+      if (len > bestLen) { bestLen = len; best = h; }
+      return true;
+    }, IntPtr.Zero);
+    if (best == IntPtr.Zero) return 0;
+    ShowWindow(best, 9);                                  // SW_RESTORE (no-op when normal)
+    ForceForeground(best);
+    return 1;
+  }
+}
+'@
+[DshSelfFocus]::Focus(${Number(pid) || 0})
+`
+}
+
+/**
+ * Bring the dsh main window to the front so the user watches the assistant
+ * work on a Word AI task. Fire-and-forget; never blocks the caller.
+ */
+export function focusMainWindow(logger = console) {
+  if (process.platform !== 'win32') return
+  if (process.env.DSH_LIBRARY_OFFICE_NO_BROWSER === '1') return
+  runWindowScript(buildFocusSelfScript(process.pid), logger, 'focusing the dsh window')
+}
+
+/**
  * Seed a brand-new Chromium profile so the first launch is not treated as a
  * first run. `First Run` is the sentinel Chromium checks; the two JSON files
  * additionally opt out of sign-in/sync. Never overwrite an existing profile.
