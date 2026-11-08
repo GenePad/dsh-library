@@ -1,23 +1,23 @@
 {
-  "version": "0.1.14",
+  "version": "0.1.15",
   "base": "../",
-  "publishedAt": 1794115011221,
+  "publishedAt": 1794116482534,
   "notes": "",
   "files": [
     {
       "path": "package.json",
-      "size": 1658,
-      "sha256": "5f11a4de8dfcc597ad7aa2fa403ff84e29adb59ed99f35c4eb48796bbed8046c"
+      "size": 1597,
+      "sha256": "ecf245989ea62286380a518fcda9b6688c4b06deb204e80d603dd7f5eac443b1"
     },
     {
       "path": "index.js",
-      "size": 6895,
-      "sha256": "73387c7c95a1bf96bb57b8a3fa9eb849fa55b6fa8a686d7062571fc038591f2f"
+      "size": 6732,
+      "sha256": "3741f0243263426f505d7116c2f97016d7121062d696a43da13ceb366af2eaed"
     },
     {
       "path": "client.js",
-      "size": 1859436,
-      "sha256": "8cb4f8758752cdca1d320f75ad6d17452c25dbb3d690fe4b5d59bdcad91945e8"
+      "size": 1859534,
+      "sha256": "834eac63c8bf424c23188b715e086250f851ba0c76296f15b54ff2091ddf949c"
     },
     {
       "path": "cordis.patch.yml",
@@ -51,8 +51,8 @@
     },
     {
       "path": "src/client/details-pane.jsx",
-      "size": 33986,
-      "sha256": "12aff1279eb86662ddc9f5a2ac83147c6eeb06b80ebe75ffc734daed98f25820"
+      "size": 34231,
+      "sha256": "66925a269ff531edde224904833f337d575f31ac2a3a23395860dcf76f5857a5"
     },
     {
       "path": "src/client/footer.jsx",
@@ -176,8 +176,8 @@
     },
     {
       "path": "src/host/runtime.js",
-      "size": 23856,
-      "sha256": "a55cb9313e817b7c0036afbf78323f903ee81da0d5a5a6af73088f74de04410c"
+      "size": 24218,
+      "sha256": "483fd40c776893efd0858f94cd9025c5797f89006875e54ef7cecf18ca633b0e"
     },
     {
       "path": "src/host/schema-data.js",
@@ -206,8 +206,8 @@
     },
     {
       "path": "src/host/tools.js",
-      "size": 29341,
-      "sha256": "1e369e84adeff42508c1e4e8e03597f29cf4e5de098b580a31876b651889e041"
+      "size": 29621,
+      "sha256": "87eb28063ed0beb87e97545aae87ab8b54a4aee3a6a21781ee575f736ce659ea"
     },
     {
       "path": "src/host/translate.js",
@@ -241,8 +241,8 @@
     },
     {
       "path": "src/host/write.js",
-      "size": 42770,
-      "sha256": "351c52cd0766a5a7c02490a7f177b9a66d1d93c5208c5444e166b70dd0a9c001"
+      "size": 48067,
+      "sha256": "725627555e9e882f66b06177ee68846a29606aa85fcdcc45b313e30df693eef9"
     },
     {
       "path": "vendor/deps.js",

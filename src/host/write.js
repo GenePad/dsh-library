@@ -311,6 +311,20 @@ export function changeItemType(db, key, newItemType) {
   if (!db.schema().itemTypes.has(newItemType)) {
     throw Object.assign(new Error(`Unknown Zotero item type "${newItemType}"`), { code: 'library/invalid' })
   }
+  // Attachments cannot take a new type in place: a standalone attachment is
+  // promoted under a fresh typed parent instead (its itemAttachments row,
+  // fulltext index and storage folder stay untouched). Child attachments and
+  // notes/annotations are refused outright.
+  const attachment = db.get('SELECT parentItemID FROM itemAttachments WHERE itemID = ?', row.itemID)
+  if (attachment) {
+    return db.transaction(() => {
+      const promoted = promoteStandaloneAttachment(db, row.itemID, { itemType: newItemType })
+      return { key: promoted.parentKey, itemType: newItemType, transferred: [], dropped: [] }
+    })
+  }
+  if (fromType === 'note' || fromType === 'annotation') {
+    throw Object.assign(new Error('笔记和批注不能更改条目类型'), { code: 'library/invalid' })
+  }
   const stored = db.all(
     `SELECT f.fieldName FROM itemData d JOIN fieldsCombined f ON f.fieldID = d.fieldID WHERE d.itemID = ?`,
     row.itemID,
@@ -412,11 +426,89 @@ export function createUrlAttachment(db, input = {}) {
   })
 }
 
+/**
+ * Turn a standalone attachment into the child of a newly created parent item.
+ * Zotero has no way to rewrite an attachment's type in place — flipping
+ * items.itemTypeID would strand the itemAttachments row, the fulltext index
+ * and the storage folder on an item that stopped being an attachment — so an
+ * update that carries a new type for a standalone attachment creates the
+ * typed parent instead and reparents the attachment (the same end state as
+ * Zotero's 创建上级条目 with metadata). The attachment keeps its key, storage
+ * folder and fulltext index untouched; fields/creators/tags/collections
+ * follow the parent. Runs inside the caller's transaction.
+ */
+function promoteStandaloneAttachment(db, itemID, patch = {}) {
+  const meta = db.schema()
+  const attachment = db.get('SELECT itemID, parentItemID, path FROM itemAttachments WHERE itemID = ?', itemID)
+  if (!attachment) return null
+  if (attachment.parentItemID) {
+    throw Object.assign(new Error('子附件不能更改条目类型'), { code: 'library/invalid' })
+  }
+  if (!meta.itemTypes.has(patch.itemType)) {
+    throw Object.assign(new Error(`Unknown Zotero item type "${patch.itemType}"`), { code: 'library/invalid' })
+  }
+  const stored = new Map(db.all(
+    `SELECT f.fieldName, v.value FROM itemData d
+     JOIN fieldsCombined f ON f.fieldID = d.fieldID
+     JOIN itemDataValues v ON v.valueID = d.valueID WHERE d.itemID = ?`, itemID,
+  ).map(entry => [entry.fieldName, entry.value]))
+  stored.delete('title')
+  const fields = { ...Object.fromEntries(stored), ...(patch.fields && typeof patch.fields === 'object' ? patch.fields : {}) }
+  // The parent is identifiable on its own even when the update carries no title.
+  if (String(fields.title ?? '').trim() === '') {
+    fields.title = path.basename(String(attachment.path ?? '').replace(/^storage:/, '')).replace(/\.[^.]+$/, '')
+  }
+  // Creators belong to the parent; attachments never carry any (rows found
+  // there come from an older in-place type write).
+  const creators = normalizeCreators(patch.creators) ?? normalizeCreators(db.all(
+    `SELECT c.firstName, c.lastName, c.fieldMode, ct.creatorType AS creatorType FROM itemCreators ic
+     JOIN creators c ON c.creatorID = ic.creatorID
+     JOIN creatorTypes ct ON ct.creatorTypeID = ic.creatorTypeID WHERE ic.itemID = ? ORDER BY ic.orderIndex`, itemID,
+  ).map(creator => ({
+    firstName: creator.firstName ?? '',
+    lastName: creator.lastName ?? '',
+    fieldMode: creator.fieldMode,
+    creatorType: creator.creatorType,
+  })))
+  const tagNames = [...new Set([
+    ...db.all(
+      'SELECT t.name FROM itemTags it JOIN tags t ON t.tagID = it.tagID WHERE it.itemID = ?', itemID,
+    ).map(entry => entry.name),
+    ...(Array.isArray(patch.tags) ? patch.tags.map(tag => (typeof tag === 'string' ? tag : tag?.name ?? tag?.tag ?? '')) : []),
+  ])].filter(name => String(name).trim() !== '')
+  // Inline creation (createItem would nest a transaction inside ours).
+  const { itemID: parentItemID, key: parentKey } = insertItem(db, patch.itemType)
+  setFieldMap(db, parentItemID, fields)
+  if (creators) setCreators(db, parentItemID, creators)
+  if (tagNames.length > 0) setTags(db, parentItemID, tagNames)
+  // Standalone attachments may sit in collections; child items cannot.
+  db.run('UPDATE collectionItems SET itemID = ? WHERE itemID = ?', parentItemID, itemID)
+  db.run('UPDATE itemAttachments SET parentItemID = ? WHERE itemID = ?', parentItemID, itemID)
+  touchItem(db, parentItemID)
+  touchItem(db, itemID)
+  return { parentItemID, parentKey }
+}
+
 /** Update an item's fields/creators/tags/collections. Omitted parts stay as they are. */
 export function updateItem(db, key, patch = {}) {
   const meta = db.schema()
   const row = db.get('SELECT itemID, itemTypeID FROM items WHERE libraryID = ? AND key = ?', meta.libraryID, key)
   if (!row) throw Object.assign(new Error(`No item with key ${key}`), { code: 'library/not-found' })
+  if (typeof patch.itemType === 'string' && patch.itemType !== '') {
+    const typeName = meta.itemTypeNames.get(row.itemTypeID)
+    if (typeName === 'note' || typeName === 'annotation') {
+      throw Object.assign(new Error('笔记和批注不能更改条目类型'), { code: 'library/invalid' })
+    }
+    if (!db.schema().itemTypes.has(patch.itemType)) {
+      throw Object.assign(new Error(`Unknown Zotero item type "${patch.itemType}"`), { code: 'library/invalid' })
+    }
+    // A new type on a (standalone) attachment promotes it under a fresh typed
+    // parent instead of rewriting the attachment row in place.
+    const attachment = db.get('SELECT parentItemID FROM itemAttachments WHERE itemID = ?', row.itemID)
+    if (attachment) {
+      return db.transaction(() => promoteStandaloneAttachment(db, row.itemID, patch))
+    }
+  }
   return db.transaction(() => {
     if (patch.fields !== undefined) {
       const merged = new Map(db.all(
@@ -428,10 +520,10 @@ export function updateItem(db, key, patch = {}) {
         else merged.set(name, String(value))
       }
       setFieldMap(db, row.itemID, Object.fromEntries(merged))
-      // An item type change rewrites the type row only; fields are validated on read.
-      if (typeof patch.itemType === 'string' && db.schema().itemTypes.has(patch.itemType)) {
-        db.run('UPDATE items SET itemTypeID = ? WHERE itemID = ?', db.itemTypeId(patch.itemType), row.itemID)
-      }
+    }
+    // An item type change rewrites the type row only; fields are validated on read.
+    if (typeof patch.itemType === 'string' && patch.itemType !== '') {
+      db.run('UPDATE items SET itemTypeID = ? WHERE itemID = ?', db.itemTypeId(patch.itemType), row.itemID)
     }
     if (patch.creators !== undefined) {
       const creators = normalizeCreators(patch.creators)
@@ -447,7 +539,7 @@ export function updateItem(db, key, patch = {}) {
       setCollections(db, row.itemID, [...next])
     }
     touchItem(db, row.itemID)
-    return row.itemID
+    return { itemID: row.itemID, parentKey: null }
   })
 }
 

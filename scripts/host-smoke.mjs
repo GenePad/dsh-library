@@ -415,6 +415,51 @@ if (hasRealLibrary) {
     assert.equal(finishedPlain.value.parentKey, null, 'no metadata keeps the attachment standalone')
     assert.equal(finishedPlain.value.needsMetadataHelp, true, 'the browser gets the AI-fix hint')
 
+    // A standalone attachment given a new type through library_update is
+    // promoted under a fresh typed parent — never rewritten in place, which
+    // would strand its itemAttachments row / fulltext index / storage folder
+    // on an item that stopped being an attachment (real-world data loss).
+    const stagedPromo = await call('import', { path: samplePdf, deferMetadata: true })
+    const promoted = await toolDefs.get('library_update').execute({
+      key: stagedPromo.value.attachmentKey,
+      itemType: 'report',
+      fields: { title: 'promoted standalone parent', reportNumber: 'R-1' },
+      creators: [{ lastName: 'Prom', firstName: 'Oted', creatorType: 'author' }],
+      tags: ['promoted'],
+    })
+    assert.ok(promoted && promoted.parentKey, `library_update reports the created parent key (${JSON.stringify(promoted)})`)
+    const promotedParent = await call('item', { key: promoted.parentKey })
+    assert.equal(promotedParent.value.itemType, 'report', 'the created parent carries the new type')
+    assert.ok(promotedParent.value.fields.some(field => field.field === 'reportNumber' && field.value === 'R-1'), 'fields land on the parent')
+    assert.ok(promotedParent.value.creators.some(creator => creator.lastName === 'Prom'), 'creators land on the parent')
+    assert.deepEqual(promotedParent.value.tags.map(tag => tag.name), ['promoted'], 'tags land on the parent')
+    assert.ok(promotedParent.value.attachments.some(entry => entry.key === stagedPromo.value.attachmentKey), 'the attachment hangs under the promoted parent')
+    const promotedChild = await call('item', { key: stagedPromo.value.attachmentKey })
+    assert.equal(promotedChild.value.itemType, 'attachment', 'the attachment row stays an attachment')
+    assert.ok(fs.existsSync(promotedChild.value.attachment.target.path), 'the storage file keeps its original key folder')
+    const promotedParentAgain = await toolDefs.get('library_update').execute({ key: promoted.parentKey, fields: { extra: 'later edits go to the parent' } })
+    assert.ok(!promotedParentAgain.parentKey, 'plain field updates report no parent key')
+    const refetchedParent = await call('item', { key: promoted.parentKey })
+    assert.ok(refetchedParent.value.fields.some(field => field.field === 'extra' && field.value === 'later edits go to the parent'), 'parent accepts follow-up edits under its own key')
+    const childRefused = await call('update', { key: promotedParent.value.attachments[0].key, patch: { itemType: 'book' } })
+    assert.equal(childRefused.ok, false, 'child attachments cannot change type')
+    const noteRefused = await call('update', { key: withNote.value.notes[0].key, patch: { itemType: 'book' } })
+    assert.equal(noteRefused.ok, false, 'notes cannot change type')
+
+    // change-type on a standalone attachment promotes the same way (plan lists
+    // nothing to drop; apply creates the typed parent from the file name).
+    const stagedPlain2 = await call('import', { path: samplePdf, deferMetadata: true })
+    const promotedPlan = await call('change-type', { key: stagedPlain2.value.attachmentKey, itemType: 'thesis' })
+    assert.equal(promotedPlan.ok, true, JSON.stringify(promotedPlan))
+    assert.deepEqual(promotedPlan.value.dropped, [], 'the promotion plan drops no fields')
+    const promotedByChangeType = await call('change-type', { key: stagedPlain2.value.attachmentKey, itemType: 'thesis', confirm: true })
+    assert.equal(promotedByChangeType.ok, true, JSON.stringify(promotedByChangeType))
+    assert.ok(promotedByChangeType.value.key && promotedByChangeType.value.key !== stagedPlain2.value.attachmentKey, 'change-type reports the new parent key')
+    const thesisParent = await call('item', { key: promotedByChangeType.value.key })
+    assert.equal(thesisParent.value.itemType, 'thesis', 'change-type created the typed parent')
+    assert.equal(thesisParent.value.title, path.basename(samplePdf).replace(/\.[^.]+$/, ''), 'the parent title falls back to the file name')
+    assert.ok(thesisParent.value.attachments.some(entry => entry.key === stagedPlain2.value.attachmentKey), 'change-type reparented the attachment')
+
     // Generic list columns: any visible field can be fetched per row, and
     // notes count rides along for the 笔记 column.
     const columnList = await call('items', { columns: ['extra', 'pages', 'numNotes'] })

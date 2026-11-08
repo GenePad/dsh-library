@@ -401,7 +401,7 @@ export function createTools(deps) {
     },
     {
       name: 'library_update',
-      description: '修改已有条目：设置或清除字段（值为 null 即清除）、整体替换作者/标签、加入或移出分类。每次写入都标记为本地改动，由 Zotero 自身同步上传。',
+      description: '修改已有条目：设置或清除字段（值为 null 即清除）、整体替换作者/标签、加入或移出分类、更换条目类型。对独立附件（无父条目的 PDF）更换类型不会改写附件本身，而是新建该类型的父条目并返回 parentKey——后续修改请改用 parentKey。每次写入都标记为本地改动，由 Zotero 自身同步上传。',
       parameters: {
         type: 'object',
         properties: {
@@ -419,7 +419,7 @@ export function createTools(deps) {
       async execute(args = {}) {
         const db = getDb()
         const key = requireKey(args)
-        updateItem(db, key, {
+        const result = updateItem(db, key, {
           itemType: typeof args.itemType === 'string' ? args.itemType : undefined,
           fields: args.fields && typeof args.fields === 'object' ? args.fields : undefined,
           creators: args.creators,
@@ -427,7 +427,7 @@ export function createTools(deps) {
           addCollections: args.addCollections,
           removeCollections: args.removeCollections,
         })
-        return { key, updated: true }
+        return result.parentKey ? { key, updated: true, parentKey: result.parentKey } : { key, updated: true }
       },
     },
     {

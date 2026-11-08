@@ -474,6 +474,12 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
       const row = instance.get('SELECT itemID, itemTypeID FROM items WHERE libraryID = ? AND key = ?', meta.libraryID, String(key ?? ''))
       if (!row) throw Object.assign(new Error(`No item with key ${key}`), { code: 'library/not-found' })
       const fromType = meta.itemTypeNames.get(row.itemTypeID)
+      // A standalone attachment has no type fields to drop — applying this plan
+      // creates a typed parent and reparents the attachment (write.js).
+      const attachment = instance.get('SELECT parentItemID FROM itemAttachments WHERE itemID = ?', row.itemID)
+      if (attachment) {
+        return { key, itemType, transferred: [], dropped: [] }
+      }
       const stored = instance.all(
         'SELECT f.fieldName FROM itemData d JOIN fieldsCombined f ON f.fieldID = d.fieldID WHERE d.itemID = ?', row.itemID,
       ).map(entry => entry.fieldName)

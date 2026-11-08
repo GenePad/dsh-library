@@ -307,15 +307,20 @@ function InfoSection({ detail, schema, onPatch, onOpenUrl, onNotify }) {
     <>
       <div className="lib-field lib-field-type">
         <span className="lib-field-label">条目类型</span>
-        <select
-          className="lib-type-menu"
-          value={detail.itemType}
-          onChange={event => void changeType(event.target.value)}
-        >
-          {(schema ? [...schema.keys()] : [detail.itemType]).map(name => (
-            <option key={name} value={name}>{typeLabel(name)}</option>
-          ))}
-        </select>
+        {detail.itemType === 'attachment' ? (
+          // Zotero's itemBox: attachments have a fixed type, no type menu.
+          <span className="lib-type-menu">{typeLabel('attachment')}</span>
+        ) : (
+          <select
+            className="lib-type-menu"
+            value={detail.itemType}
+            onChange={event => void changeType(event.target.value)}
+          >
+            {(schema ? [...schema.keys()] : [detail.itemType]).map(name => (
+              <option key={name} value={name}>{typeLabel(name)}</option>
+            ))}
+          </select>
+        )}
       </div>
 
       <div className="lib-fields">
