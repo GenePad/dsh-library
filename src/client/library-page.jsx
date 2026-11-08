@@ -95,6 +95,64 @@ function Toast({ message }) {
   )
 }
 
+/**
+ * 检索元数据 progress dialog (右键 → 检索元数据 / 重新获取): running → done /
+ * failed; a failure asks whether to hand the job to the Library assistant.
+ * The backdrop is inert while running so the fetch cannot be dismissed away.
+ */
+function RecognitionDialog({ state, onAI, onClose }) {
+  const running = state.status === 'running'
+  return (
+    <div
+      className="lib-modal-backdrop"
+      onMouseDown={event => { if (!running && event.target === event.currentTarget) onClose() }}
+    >
+      <div className="lib-modal lib-recognize" style={{ width: 400 }} role="dialog" aria-label="检索元数据">
+        <div className="lib-modal-head">检索元数据</div>
+        <div className="lib-modal-body">
+          {running ? (
+            <>
+              <div className="lib-recognize-run">
+                <span className="lib-spinner" aria-hidden="true" />
+                <span>正在检索元数据（{state.done}/{state.total}）…</span>
+              </div>
+              {state.current ? <div className="lib-form-hint">{state.current}</div> : null}
+            </>
+          ) : null}
+          {!running && state.status === 'done' ? (
+            <>
+              <div className="lib-recognize-ok">✓ 已检索成功</div>
+              {state.succeeded.map(entry => <div className="lib-form-hint" key={entry.key}>{entry.title}</div>)}
+            </>
+          ) : null}
+          {!running && state.status === 'failed' ? (
+            <>
+              <div className="lib-recognize-bad">未能检索到元数据</div>
+              {state.succeeded.map(entry => <div className="lib-form-hint" key={entry.key}>✓ {entry.title}</div>)}
+              {state.failed.map(entry => (
+                <div className="lib-recognize-item" key={entry.key}>
+                  ✗ {entry.title || entry.key}{entry.message ? `：${entry.message}` : ''}
+                </div>
+              ))}
+              <div className="lib-form-hint">可以让文献助手阅读附件全文，用 AI 检索并补全元数据。</div>
+            </>
+          ) : null}
+        </div>
+        <div className="lib-modal-foot">
+          {running ? <span className="lib-form-hint">检索中，请稍候…</span> : null}
+          {!running && state.status === 'done' ? <Button variant="primary" size="sm" onClick={onClose}>好</Button> : null}
+          {!running && state.status === 'failed' ? (
+            <>
+              <Button variant="ghost" size="sm" onClick={onClose}>关闭</Button>
+              <Button variant="primary" size="sm" onClick={onAI}>让AI获取</Button>
+            </>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /** The whole library page: toolbar, three panes and the floating assistant. */
 export function LibraryPage({ layout, openSettings, openNativeSession, retainSession, renderSlot, SessionProvider }) {
   const dark = useDarkMode()
@@ -133,6 +191,8 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
   const [contextMenu, setContextMenu] = React.useState(null)
   // Small input dialog used where Electron lacks window.prompt (网页链接).
   const [prompt, setPrompt] = React.useState(null)
+  // 检索元数据 progress dialog (right-click → 检索元数据 / 重新获取).
+  const [recognizing, setRecognizing] = React.useState(null)
   const attachFileRef = React.useRef(null)
   const pendingAttachParentsRef = React.useRef([])
   // Bundled item-type schema (per type: field order + creator types), fetched
@@ -758,50 +818,21 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
           break
         }
         case 'recognize': {
-          for (const key of keys) {
-            const result = await api.call('import-finalize', { attachmentKey: key })
-            if (result.parentKey) await revealImported(result.parentKey)
-            else notify('没有识别到元数据，可让文献助手补全（右键该条目 → AI 或在助手提问）')
-          }
-          await refreshAll()
+          // 检索元数据 on standalone attachments: import-finalize builds the
+          // parent when the lookup hits.
+          await runRecognition('finalize', keys)
           break
         }
         case 'recognize-auto': {
           // 重新获取：re-read the attachment, resolve online, write back into
           // the SAME item (the host merges fetched values over existing ones).
           const targets = Array.isArray(arg) && arg.length > 0 ? arg : keys
-          let updated = 0
-          let missed = 0
-          for (const key of targets) {
-            try {
-              const result = await api.call('recognize-item', { key })
-              if (result?.updated) updated += 1
-              else missed += 1
-            } catch (error) {
-              missed += 1
-              notify(error?.message ?? String(error))
-            }
-          }
-          await refreshAll()
-          if (updated > 0) {
-            await revealImported(targets[0])
-            notify(targets.length > 1 ? `已重新获取 ${updated} 条元数据` : '已重新获取元数据')
-          }
-          if (missed > 0) notify(`${missed} 条未能自动识别，可右键 → 重新获取元数据 → 让AI获取`)
+          await runRecognition('item', targets)
           break
         }
         case 'recognize-ai': {
           // 让AI获取：hand the whole job to the Library assistant dock.
-          const targets = Array.isArray(arg) && arg.length > 0 ? arg : keys
-          const list = targets.map((key) => {
-            const row = rowByKey(key)
-            return `「${row?.title || '（未命名条目）'}」（条目 key ${key}）`
-          }).join('、')
-          const task = [
-            `请为以下文献重新获取元数据：${list}。`,
-            '先用 library_read 的 search 从附件全文确认题名、作者、年份、期刊/出版物、卷期页、DOI 等，再用联网搜索核对，最后用 library_update 把字段写回原条目（不要新建条目）。',
-          ].join('')
-          void dockRef.current?.openAndSend(task, { mode: 'list' })
+          sendRefetchTask(Array.isArray(arg) && arg.length > 0 ? arg : keys)
           break
         }
         case 'detach': {
@@ -911,6 +942,59 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
     } catch (error) {
       notify(error?.message ?? String(error))
     }
+  }
+
+  /** 让AI获取: hand the whole job to the Library assistant dock. */
+  const sendRefetchTask = (targets) => {
+    const list = targets.map((key) => {
+      const row = rowByKey(key)
+      return `「${row?.title || '（未命名条目）'}」（条目 key ${key}）`
+    }).join('、')
+    const task = [
+      `请为以下文献重新获取元数据：${list}。`,
+      '先用 library_read 的 search 从附件全文确认题名、作者、年份、期刊/出版物、卷期页、DOI 等，再用联网搜索核对，最后用 library_update 把字段写回原条目（不要新建条目）。',
+    ].join('')
+    void dockRef.current?.openAndSend(task, { mode: 'list' })
+  }
+
+  /**
+   * 重新获取/检索元数据 with visible feedback: a progress dialog that ends in
+   * 已检索成功 or — with a one-click hand-off — 让AI获取 on failure.
+   * kind 'finalize' re-recognizes standalone attachments (import-finalize,
+   * which builds the parent), kind 'item' refreshes an item in place.
+   */
+  const runRecognition = async (kind, keys) => {
+    const rows = keys.map(key => ({ key, title: rowByKey(key)?.title ?? '' }))
+    setRecognizing({ status: 'running', total: rows.length, done: 0, current: rows[0]?.title ?? '', succeeded: [], failed: [] })
+    const succeeded = []
+    const failed = []
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index]
+      setRecognizing(previous => ({ ...previous, done: index, current: row.title }))
+      try {
+        const result = kind === 'finalize'
+          ? await api.call('import-finalize', { attachmentKey: row.key })
+          : await api.call('recognize-item', { key: row.key })
+        const okResult = kind === 'finalize' ? Boolean(result?.parentKey) : Boolean(result?.updated)
+        const title = result?.title ?? result?.metadata?.title ?? row.title
+        if (okResult) {
+          succeeded.push({ key: kind === 'finalize' ? result.parentKey : (result.key ?? row.key), title })
+        } else {
+          failed.push({ key: row.key, title, message: result?.message })
+        }
+      } catch (error) {
+        failed.push({ key: row.key, title: row.title, message: error?.message ?? String(error) })
+      }
+      setRecognizing(previous => ({ ...previous, done: index + 1 }))
+    }
+    await refreshAll()
+    if (succeeded[0]) await revealImported(succeeded[0].key)
+    setRecognizing(previous => ({
+      ...previous,
+      status: failed.length === 0 ? 'done' : 'failed',
+      succeeded,
+      failed,
+    }))
   }
 
   /**
@@ -1367,6 +1451,17 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
           confirmLabel={prompt.confirmLabel}
           onConfirm={prompt.onConfirm}
           onClose={() => setPrompt(null)}
+        />
+      ) : null}
+      {recognizing ? (
+        <RecognitionDialog
+          state={recognizing}
+          onAI={() => {
+            const targets = recognizing.failed.map(entry => entry.key)
+            setRecognizing(null)
+            if (targets.length > 0) sendRefetchTask(targets)
+          }}
+          onClose={() => setRecognizing(null)}
         />
       ) : null}
       <input

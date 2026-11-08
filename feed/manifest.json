@@ -1,23 +1,23 @@
 {
-  "version": "0.1.10",
+  "version": "0.1.11",
   "base": "../",
-  "publishedAt": 1794112988733,
+  "publishedAt": 1794113323678,
   "notes": "",
   "files": [
     {
       "path": "package.json",
       "size": 1658,
-      "sha256": "16c644a23ac40b2d56cf0884cc5bb4fb7fc1240a40fbb5bb2bf5a9db1aae6324"
+      "sha256": "e63321387bfafc2b018cb51f0aabb0de05ed5fb8a26281279f267bd143f60993"
     },
     {
       "path": "index.js",
       "size": 6895,
-      "sha256": "8be7a05304caec1838435afbbd5c221c10105b2dc86fc8afb81aaa0b8bdb4b58"
+      "sha256": "d688a7c4cf1e35e7729e832ac66c8c3a41274aeb5b492c26c0e56427e92c2e7d"
     },
     {
       "path": "client.js",
-      "size": 1855750,
-      "sha256": "de9d509404303ca010747d1bdc0fe10cbb3d0d35433337a3a9836d820ce0d4a4"
+      "size": 1859002,
+      "sha256": "4e1916295ff15f8a7c0a3926d16a9b653cc7edbd06e8245319c83006ef6937ff"
     },
     {
       "path": "cordis.patch.yml",
@@ -86,8 +86,8 @@
     },
     {
       "path": "src/client/library-page.jsx",
-      "size": 56494,
-      "sha256": "576338037cea762b6837568d4d37d03bae896c19b1a137d100ed53269f688c0b"
+      "size": 60713,
+      "sha256": "67d24459c770627a1583d92244ce4406b06a34d2fb1313990c90b7792ae01316"
     },
     {
       "path": "src/client/pdf-util.js",
@@ -111,8 +111,8 @@
     },
     {
       "path": "src/client/styles.js",
-      "size": 51865,
-      "sha256": "daa2a8de8b3dbca1fb0738a3f0c08d2272f50ccede84403fcbb24997690dc5d6"
+      "size": 52619,
+      "sha256": "0f74bc30157e0501064618e674b48d84f04ebc80bfb8c5ec121b4aad822c072a"
     },
     {
       "path": "src/client/util.js",

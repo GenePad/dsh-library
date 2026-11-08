@@ -262,6 +262,19 @@ body.lib-col-resizing .lib-colresize { background: color-mix(in srgb, var(--lib-
 .lib-ctx-sep { height: 1px; margin: 4px 6px; background: var(--lib-border-soft); }
 .lib-prompt-input { width: 100%; height: 30px; padding: 0 8px; font-size: 13px; }
 
+/* 检索元数据 progress dialog (右键 → 检索元数据 / 重新获取). */
+.lib-recognize-run { display: flex; align-items: center; gap: 9px; color: var(--lib-text); }
+.lib-spinner {
+  width: 14px; height: 14px; border-radius: 50%; flex: none;
+  border: 2px solid var(--lib-border); border-top-color: var(--lib-accent);
+  display: inline-block; animation: lib-spin 0.8s linear infinite;
+}
+@keyframes lib-spin { to { transform: rotate(360deg); } }
+.lib-recognize-ok { color: var(--lib-text); font-weight: 600; }
+.lib-recognize-bad { color: var(--lib-danger); font-weight: 600; }
+.lib-recognize-item { color: var(--lib-text-2); font-size: 12px; overflow-wrap: anywhere; }
+.lib-modal-foot .lib-form-hint { margin-right: auto; align-self: center; }
+
 .lib-detail-head { padding-bottom: 10px; border-bottom: 1px solid var(--lib-border); padding-right: 26px; }
 .lib-detail-title { font-size: 15px; font-weight: 600; line-height: 1.35; word-break: break-word; }
 .lib-detail-sub { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--lib-text-3); font-size: 11px; }

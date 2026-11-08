@@ -819,6 +819,15 @@ await act(async () => {
 })
 const recognizeBody = bodies.find(body => body.endpoint === 'recognize-item')
 assert.ok(recognizeBody?.payload?.key === 'AAAAAAAA', '自动重新获取 calls recognize-item for the item')
+// The recognition dialog reports the outcome; success closes with 好.
+const doneDialog = container.querySelector('.lib-recognize')
+assert.ok(doneDialog?.textContent.includes('已检索成功'), 'the recognition dialog reports success')
+await act(async () => {
+  ;[...doneDialog.querySelectorAll('button')].find(node => node.textContent.includes('好'))
+    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  await tick()
+})
+assert.ok(!container.querySelector('.lib-recognize'), 'the success dialog closes')
 // 让AI获取: reopen the menu, toggle the submenu, then dispatch the task —
 // assertions outside act (trap 17).
 await act(async () => {
@@ -838,6 +847,30 @@ await act(async () => {
 })
 const aiBody = bodies.filter(body => body.endpoint === 'chat-send')[sendsBeforeRefetch]
 assert.ok(aiBody?.payload?.text.includes('重新获取元数据') && aiBody.payload.text.includes('AAAAAAAA'), '让AI获取 dispatches the refetch task to the assistant')
+
+// 检索元数据 on a STANDALONE attachment: the dialog shows 检索中 while the
+// lookup runs, reports the failure, and offers a one-click AI hand-off.
+await act(async () => {
+  container.querySelector('[data-key="GGGGGGGG"]')
+    .dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }))
+  await tick()
+})
+await act(async () => {
+  const entry = [...container.querySelectorAll('.lib-ctxmenu .lib-ctx-item')].find(node => node.textContent.includes('检索元数据'))
+  assert.ok(entry, 'standalone attachments offer 检索元数据')
+  entry.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  for (let i = 0; i < 6; i += 1) await tick()
+})
+const failedDialog = container.querySelector('.lib-recognize')
+assert.ok(failedDialog, 'the recognition dialog shows the outcome')
+assert.ok(failedDialog.textContent.includes('未能检索到元数据'), 'a failed lookup is reported in the dialog')
+await act(async () => {
+  ;[...failedDialog.querySelectorAll('button')].find(node => node.textContent.includes('让AI获取'))
+    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  for (let i = 0; i < 6; i += 1) await tick()
+})
+const aiFixBody = bodies.filter(body => body.endpoint === 'chat-send').at(-1)
+assert.ok(aiFixBody?.payload?.text.includes('GGGGGGGG') && aiFixBody.payload.text.includes('mystery-paper.pdf'), 'the failed lookup offers a one-click AI hand-off')
 // Trash through the menu (context menu closed by the previous action).
 await act(async () => {
   firstRow.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }))
