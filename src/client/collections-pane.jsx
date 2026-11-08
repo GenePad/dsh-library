@@ -30,8 +30,11 @@ function ancestorIds(nodes, id, path = []) {
   return []
 }
 
-function TreeRow({ node, depth, expanded, toggle, selected, onSelect, onContext }) {
+function TreeRow({ node, depth, expanded, toggle, selectedId, onSelect, onContext }) {
   const hasChildren = node.children.length > 0
+  // Compare by id HERE: passing the parent's `selected` down made a whole
+  // subtree light up when only the clicked collection is active.
+  const selected = selectedId === node.id
   return (
     <>
       <div
@@ -66,7 +69,7 @@ function TreeRow({ node, depth, expanded, toggle, selected, onSelect, onContext 
               depth={depth + 1}
               expanded={expanded}
               toggle={toggle}
-              selected={selected}
+              selectedId={selectedId}
               onSelect={onSelect}
               onContext={onContext}
             />
@@ -149,7 +152,7 @@ export function CollectionsPane({
             depth={0}
             expanded={expanded}
             toggle={toggle}
-            selected={selectedCollectionID === node.id}
+            selectedId={selectedCollectionID}
             onSelect={onSelectView}
             onContext={onCollectionContext}
           />

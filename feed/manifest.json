@@ -1,23 +1,23 @@
 {
-  "version": "0.1.13",
+  "version": "0.1.14",
   "base": "../",
-  "publishedAt": 1794114394198,
+  "publishedAt": 1794115011221,
   "notes": "",
   "files": [
     {
       "path": "package.json",
       "size": 1658,
-      "sha256": "cff84024e9f181d0b49055841368c64ebc7177b2e5143f6e8b5f4c3aff71e5ec"
+      "sha256": "5f11a4de8dfcc597ad7aa2fa403ff84e29adb59ed99f35c4eb48796bbed8046c"
     },
     {
       "path": "index.js",
       "size": 6895,
-      "sha256": "1216c85f9c9e58bf5a5a5857458873b543db590b09ce7a3963d85198aebc2da7"
+      "sha256": "73387c7c95a1bf96bb57b8a3fa9eb849fa55b6fa8a686d7062571fc038591f2f"
     },
     {
       "path": "client.js",
-      "size": 1859473,
-      "sha256": "d085fff958c4cfd6241bf06b1403903954410fa6174b54ec622f1e7c47e0b812"
+      "size": 1859436,
+      "sha256": "8cb4f8758752cdca1d320f75ad6d17452c25dbb3d690fe4b5d59bdcad91945e8"
     },
     {
       "path": "cordis.patch.yml",
@@ -41,8 +41,8 @@
     },
     {
       "path": "src/client/collections-pane.jsx",
-      "size": 7203,
-      "sha256": "dbb29d014d5e038e7bc7ac621371cca9cb7ddfe6e18649f2f8dc10a26e56985a"
+      "size": 7382,
+      "sha256": "0a880b98d3c38deb6fea95cdf3c9c9b49aca69b6e6623c52b53e02c43ae310da"
     },
     {
       "path": "src/client/create-dialog.jsx",
@@ -111,8 +111,8 @@
     },
     {
       "path": "src/client/styles.js",
-      "size": 53090,
-      "sha256": "c8c4053e4be8b0c291fb3be62c7c1813cf128d5116cec00816ce65ae82e0601c"
+      "size": 53847,
+      "sha256": "c047f604816eb4b6035495824324edd7e395d303a7bb6db0f94fff0e6ba0ff4a"
     },
     {
       "path": "src/client/util.js",
@@ -261,8 +261,8 @@
     },
     {
       "path": "AGENTS.md",
-      "size": 47309,
-      "sha256": "e220649f5ddb9dd0a69d405d4bdc5b88aa85e8b45643a0d036f3b4628936ffd9"
+      "size": 47515,
+      "sha256": "c6fe33d00c24de93be0d9d7cfa08a296c884fc3be93d6f84217ae42d9af669ec"
     }
   ]
 }

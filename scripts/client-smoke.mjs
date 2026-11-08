@@ -47,7 +47,10 @@ globalThis.URL = window.URL
 let scrollIntoViewCalls = []
 window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() { scrollIntoViewCalls.push(this.getAttribute('data-key')) }
 
-const collection = { id: 1, key: 'COLLAAAA', name: 'Cas-Screen', parentID: null, count: 0, totalCount: 2, children: [] }
+const collection = {
+  id: 1, key: 'COLLAAAA', name: 'Cas-Screen', parentID: null, count: 0, totalCount: 2,
+  children: [{ id: 2, key: 'COLLBBBB', name: '子分类', parentID: 1, count: 0, totalCount: 0, children: [] }],
+}
 const items = [
   {
     key: 'AAAAAAAA', itemType: 'journalArticle', title: 'A test paper about AAV capsids',
@@ -480,6 +483,27 @@ assert.ok(
   ![...container.querySelectorAll('.lib-left .lib-row')].find(node => node.textContent.includes('我的文库'))?.classList.contains('selected'),
   'the previous selection loses its highlight',
 )
+await act(async () => {
+  const all = [...container.querySelectorAll('.lib-left .lib-row')].find(node => node.textContent.includes('我的文库'))
+  all.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  for (let i = 0; i < 3; i += 1) await tick()
+})
+// Selecting a collection highlights ONLY that row — children never inherit
+// the parent's selection (the whole subtree used to light up).
+await act(async () => {
+  const parentRow = [...container.querySelectorAll('.lib-left .lib-row')].find(node => node.textContent.includes('Cas-Screen'))
+  parentRow.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  for (let i = 0; i < 3; i += 1) await tick()
+})
+assert.ok(
+  [...container.querySelectorAll('.lib-left .lib-row')].find(node => node.textContent.includes('Cas-Screen'))?.classList.contains('selected'),
+  'selecting a collection highlights its own row',
+)
+// Selecting the parent auto-expands its ancestor chain, so the child row is
+// visible right away and must NOT carry the parent's highlight.
+const treeChildRow = [...container.querySelectorAll('.lib-left .lib-row')].find(node => node.textContent.includes('子分类'))
+assert.ok(treeChildRow, 'the expanded child collection row renders')
+assert.ok(!treeChildRow.classList.contains('selected'), 'child rows do NOT inherit the parent selection highlight')
 await act(async () => {
   const all = [...container.querySelectorAll('.lib-left .lib-row')].find(node => node.textContent.includes('我的文库'))
   all.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
