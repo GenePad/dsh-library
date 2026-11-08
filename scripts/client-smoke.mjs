@@ -283,6 +283,9 @@ globalThis.fetch = async (url, options) => {
         needsMetadataHelp: true, textChars: 0, annotations: { extracted: 0, added: 0 },
       }
       break
+    case 'recognize-item':
+      value = { key: body.payload?.key, updated: true, title: 'A test paper about AAV capsids', needsMetadataHelp: false }
+      break
     case 'duplicate':
       value = { key: 'DUPLICATE' }
       break
@@ -794,6 +797,47 @@ await act(async () => {
 })
 const addCollBody = bodies.filter(body => body.endpoint === 'update').find(body => body.payload?.patch?.addCollections)
 assert.ok(addCollBody?.payload?.patch?.addCollections[0] === 1, 'add-to-collection writes the membership')
+// 重新获取元数据: submenu with 重新获取 (auto re-recognize) and 让AI获取.
+// The previous action closed the menu, so reopen it on the same row first.
+const sendsBeforeRefetch = bodies.filter(body => body.endpoint === 'chat-send').length
+await act(async () => {
+  firstRow.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }))
+  await tick()
+})
+await act(async () => {
+  const entry = [...container.querySelectorAll('.lib-ctxmenu .lib-ctx-item')].find(node => node.textContent.includes('重新获取元数据'))
+  assert.ok(entry, 'refetch metadata submenu offered for a metadata-bearing item')
+  entry.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  await tick()
+})
+const refetchSub = container.querySelector('.lib-ctx-sub')
+assert.ok(refetchSub?.textContent.includes('重新获取') && refetchSub?.textContent.includes('让AI获取'), 'the submenu offers auto refetch and the AI path')
+await act(async () => {
+  ;[...refetchSub.querySelectorAll('.lib-ctx-item')].find(node => node.textContent.includes('重新获取'))
+    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  for (let i = 0; i < 6; i += 1) await tick()
+})
+const recognizeBody = bodies.find(body => body.endpoint === 'recognize-item')
+assert.ok(recognizeBody?.payload?.key === 'AAAAAAAA', '自动重新获取 calls recognize-item for the item')
+// 让AI获取: reopen the menu, toggle the submenu, then dispatch the task —
+// assertions outside act (trap 17).
+await act(async () => {
+  firstRow.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }))
+  await tick()
+})
+await act(async () => {
+  const entry = [...container.querySelectorAll('.lib-ctxmenu .lib-ctx-item')].find(node => node.textContent.includes('重新获取元数据'))
+  entry.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  await tick()
+})
+const aiEntry = [...container.querySelectorAll('.lib-ctx-sub .lib-ctx-item')].find(node => node.textContent.includes('让AI获取'))
+assert.ok(aiEntry, 'the AI submenu entry renders after the parent toggle')
+await act(async () => {
+  aiEntry.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  for (let i = 0; i < 6; i += 1) await tick()
+})
+const aiBody = bodies.filter(body => body.endpoint === 'chat-send')[sendsBeforeRefetch]
+assert.ok(aiBody?.payload?.text.includes('重新获取元数据') && aiBody.payload.text.includes('AAAAAAAA'), '让AI获取 dispatches the refetch task to the assistant')
 // Trash through the menu (context menu closed by the previous action).
 await act(async () => {
   firstRow.dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }))

@@ -132,6 +132,12 @@ export function createChannel(runtime) {
             lookup: body.lookup !== false,
             metadata: body.metadata && typeof body.metadata === 'object' ? body.metadata : undefined,
           }))
+        case 'recognize-item':
+          return ok(await runtime.recognizeItem({
+            key: String(body.key ?? ''),
+            lookup: body.lookup !== false,
+            metadata: body.metadata && typeof body.metadata === 'object' ? body.metadata : undefined,
+          }))
         case 'upload': {
           const saved = runtime.saveUpload(String(body.name ?? 'upload'), String(body.data ?? ''))
           if (body.deferMetadata === true) {

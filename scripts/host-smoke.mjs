@@ -480,6 +480,34 @@ if (hasRealLibrary) {
     const annoNoteEmpty = await call('note-from-annotations', { key: duplicate.value.key })
     assert.equal(annoNoteEmpty.ok, false, 'items without annotations refuse the note')
 
+    // 重新获取元数据: re-recognize an item that already has metadata. The
+    // explicit draft stands in for the online lookup here (own item, so the
+    // later cite assertions keep seeing the import's metadata); fetched
+    // values win while untouched fields survive the merge.
+    const refetchHost = await call('create', {
+      itemType: 'journalArticle',
+      fields: { title: 'refetch origin', DOI: '10.0000/keep', extra: 'mine' },
+      creators: [{ firstName: 'Old', lastName: 'Author', creatorType: 'author' }],
+    })
+    const refetch = await call('recognize-item', {
+      key: refetchHost.value.key,
+      metadata: {
+        itemType: 'journalArticle',
+        fields: { title: 'refetch result', pages: '3-9' },
+        creators: [{ firstName: 'Re', lastName: 'Fetch', creatorType: 'author' }],
+      },
+    })
+    assert.equal(refetch.ok, true, JSON.stringify(refetch))
+    assert.equal(refetch.value.updated, true, 'refetch reports success')
+    const refetched = await call('item', { key: refetchHost.value.key })
+    assert.equal(refetched.value.title, 'refetch result', 'the fetched title overwrites')
+    assert.ok(refetched.value.fields.some(field => field.field === 'pages' && field.value === '3-9'), 'the fetched field is added')
+    assert.ok(refetched.value.fields.some(field => field.field === 'DOI' && field.value === '10.0000/keep'), 'untouched fields survive the merge')
+    assert.ok(refetched.value.fields.some(field => field.field === 'extra' && field.value === 'mine'), "the user's own fields survive the merge")
+    assert.ok(refetched.value.creators.some(creator => creator.lastName === 'Fetch'), 'creators are refreshed from the fetch')
+    const refetchStandalone = await call('recognize-item', { key: finishedPlain.value.attachmentKey })
+    assert.equal(refetchStandalone.ok, false, 'standalone attachments belong to import-finalize')
+
     // Regression for double-click open: a parent item's PDF child must resolve
     // to a real path (delete the file so the open fails gracefully instead of
     // spawning a reader during the test).

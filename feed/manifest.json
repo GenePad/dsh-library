@@ -1,23 +1,23 @@
 {
-  "version": "0.1.9",
+  "version": "0.1.10",
   "base": "../",
-  "publishedAt": 1794110779870,
+  "publishedAt": 1794112988733,
   "notes": "",
   "files": [
     {
       "path": "package.json",
-      "size": 1657,
-      "sha256": "dc6831559b4f3b77b52a9a595cf1af403663909505c20d240c18cea246fd442e"
+      "size": 1658,
+      "sha256": "16c644a23ac40b2d56cf0884cc5bb4fb7fc1240a40fbb5bb2bf5a9db1aae6324"
     },
     {
       "path": "index.js",
-      "size": 6894,
-      "sha256": "00b47d0ce562e279d8c2d1a34a9ff8e966c6323ec538f0bb09d3ebeac5339b5f"
+      "size": 6895,
+      "sha256": "8be7a05304caec1838435afbbd5c221c10105b2dc86fc8afb81aaa0b8bdb4b58"
     },
     {
       "path": "client.js",
-      "size": 1854240,
-      "sha256": "1059b839dc04254cefad6403e1be891b7023abf6160d7b8f0215ce5b865b6f22"
+      "size": 1855750,
+      "sha256": "de9d509404303ca010747d1bdc0fe10cbb3d0d35433337a3a9836d820ce0d4a4"
     },
     {
       "path": "cordis.patch.yml",
@@ -71,8 +71,8 @@
     },
     {
       "path": "src/client/item-menu.jsx",
-      "size": 9015,
-      "sha256": "75a13b179840cc082843acf08e6f77d188482d03d3980398b41bbd5ca753362c"
+      "size": 10058,
+      "sha256": "0970dedd821e2fbb48844cba2b977822c7421f6104962dabe260f42ae544a11d"
     },
     {
       "path": "src/client/items-pane.jsx",
@@ -86,8 +86,8 @@
     },
     {
       "path": "src/client/library-page.jsx",
-      "size": 54310,
-      "sha256": "b8f2e88e69b08d12b96cf2a872cb85f3e698dec62fa0aecb75798b642d70ac0c"
+      "size": 56494,
+      "sha256": "576338037cea762b6837568d4d37d03bae896c19b1a137d100ed53269f688c0b"
     },
     {
       "path": "src/client/pdf-util.js",
@@ -126,8 +126,8 @@
     },
     {
       "path": "src/host/channel.js",
-      "size": 11907,
-      "sha256": "cf63177c50837b510187c9f35c98bd5135ab067fd3a455c55b3c85c33351971f"
+      "size": 12194,
+      "sha256": "8d66ecb8c193f440ebaf3e7043f745d0117c992f52a90bdfe2e0ac86a7109c28"
     },
     {
       "path": "src/host/chat.js",
@@ -146,8 +146,8 @@
     },
     {
       "path": "src/host/ingest.js",
-      "size": 13425,
-      "sha256": "9af2e484bc2ed36ceaed6d58c37345904417881e5e4208eefda9b5fa5685d598"
+      "size": 17976,
+      "sha256": "e51fbb8a93a48724c7fa5ee43314bdb8b3013c30b8bf96932ea95c264b65adcc"
     },
     {
       "path": "src/host/locate.js",
@@ -176,8 +176,8 @@
     },
     {
       "path": "src/host/runtime.js",
-      "size": 23289,
-      "sha256": "6876317e30759e80229060c23a10725851feb03c26c04c9d88562da07f06f436"
+      "size": 23856,
+      "sha256": "a55cb9313e817b7c0036afbf78323f903ee81da0d5a5a6af73088f74de04410c"
     },
     {
       "path": "src/host/schema-data.js",
@@ -261,8 +261,8 @@
     },
     {
       "path": "AGENTS.md",
-      "size": 45771,
-      "sha256": "c94a8ecf54c844fe9521585037a068875ef36c4926ce225b18d4db2a28ea50f9"
+      "size": 46688,
+      "sha256": "569e4ed4c6f91f6c0227a296b64599d71e84717bed19b1db658b622d30f5f3d5"
     }
   ]
 }

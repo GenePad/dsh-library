@@ -766,6 +766,44 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
           await refreshAll()
           break
         }
+        case 'recognize-auto': {
+          // 重新获取：re-read the attachment, resolve online, write back into
+          // the SAME item (the host merges fetched values over existing ones).
+          const targets = Array.isArray(arg) && arg.length > 0 ? arg : keys
+          let updated = 0
+          let missed = 0
+          for (const key of targets) {
+            try {
+              const result = await api.call('recognize-item', { key })
+              if (result?.updated) updated += 1
+              else missed += 1
+            } catch (error) {
+              missed += 1
+              notify(error?.message ?? String(error))
+            }
+          }
+          await refreshAll()
+          if (updated > 0) {
+            await revealImported(targets[0])
+            notify(targets.length > 1 ? `已重新获取 ${updated} 条元数据` : '已重新获取元数据')
+          }
+          if (missed > 0) notify(`${missed} 条未能自动识别，可右键 → 重新获取元数据 → 让AI获取`)
+          break
+        }
+        case 'recognize-ai': {
+          // 让AI获取：hand the whole job to the Library assistant dock.
+          const targets = Array.isArray(arg) && arg.length > 0 ? arg : keys
+          const list = targets.map((key) => {
+            const row = rowByKey(key)
+            return `「${row?.title || '（未命名条目）'}」（条目 key ${key}）`
+          }).join('、')
+          const task = [
+            `请为以下文献重新获取元数据：${list}。`,
+            '先用 library_read 的 search 从附件全文确认题名、作者、年份、期刊/出版物、卷期页、DOI 等，再用联网搜索核对，最后用 library_update 把字段写回原条目（不要新建条目）。',
+          ].join('')
+          void dockRef.current?.openAndSend(task, { mode: 'list' })
+          break
+        }
         case 'detach': {
           if (!window.confirm('确定将该附件转换为独立条目吗？')) return
           await api.call('detach-attachment', { key: first })
@@ -833,6 +871,17 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
         : '建议先用 library_read 的 search 参数从全文中确认题名与作者，再用联网搜索核对，最后用 library_add 建立规范的父条目并补全字段。',
     ].join('')
     void dockRef.current?.openAndSend(task, { mode: 'list' })
+  }
+
+  /** Find a list row (parent or expanded child) by its item key. */
+  const rowByKey = (key) => {
+    for (const row of itemsRef.current) {
+      if (row.key === key) return row
+      for (const child of row.children ?? []) {
+        if (child.key === key) return child
+      }
+    }
+    return undefined
   }
 
   /**

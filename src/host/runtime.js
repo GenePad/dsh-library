@@ -8,7 +8,7 @@ import { attachmentTarget, readAnnotations, readCollections, readItem, readItems
 import { createItem, updateItem, trashItems, deleteForever, createCollection, renameCollection, trashCollection, createAnnotationRecord, updateAnnotationRecord, removeAnnotationRecord, changeItemType, createNoteItem, updateNoteItem, createUrlAttachment, duplicateItem, createParentAttachment, detachAttachment, mergeItems, noteFromAnnotations } from './write.js'
 import { typeList, typeSchema, planTypeChange } from './schema.js'
 import { resolveEachIdentifier } from './metadata.js'
-import { importFile, importStagedFile, finalizeImportFile } from './ingest.js'
+import { importFile, importStagedFile, finalizeImportFile, recognizeItemMetadata } from './ingest.js'
 import { createStorageWatcher } from './watcher.js'
 import { WebDavClient, syncStorage } from './webdav.js'
 import { openExternal, revealInFolder } from './open.js'
@@ -282,6 +282,24 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
     return importChain
   }
 
+  // Re-fetch metadata for an item that already has one (重识别走同一队列，
+  // 避免与导入的 PDF 提取并发争用)。
+  function recognizeOne(input) {
+    const run = async () => {
+      ensureBackup()
+      const result = await recognizeItemMetadata(db(), paths(), {
+        key: input.key,
+        metadata: input.metadata,
+        lookup: input.lookup,
+        logger,
+      })
+      bump()
+      return result
+    }
+    importChain = importChain.then(run, run)
+    return importChain
+  }
+
   function saveUpload(name, base64) {
     const buffer = Buffer.from(String(base64 ?? ''), 'base64')
     if (buffer.byteLength === 0) throw Object.assign(new Error('The uploaded file is empty'), { code: 'library/invalid' })
@@ -521,6 +539,7 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
     importFile: importOne,
     importStaged,
     finalizeImport: finalizeOne,
+    recognizeItem: recognizeOne,
     duplicate: key => {
       ensureBackup()
       const created = withDb(instance => duplicateItem(instance, key, paths()))

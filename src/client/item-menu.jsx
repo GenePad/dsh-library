@@ -45,6 +45,14 @@ export function ItemContextMenu({ menu, rows, collections, view, onAction, onClo
   const allRegular = info.length > 0 && info.every(row => isRegular(row))
   const standaloneAttachments = info.filter(row => row.itemType === 'attachment' && !row.hasParent)
   const hasCollections = (collections ?? []).length > 0
+  // 重新获取元数据 targets: regular items themselves, child attachments via
+  // their parent (its metadata is what gets refreshed).
+  const metaTargets = []
+  for (const row of info) {
+    if (isRegular(row)) metaTargets.push(row.key)
+    else if (row.hasParent && row.itemType === 'attachment' && row.parentKey) metaTargets.push(row.parentKey)
+  }
+  const refetchTargets = [...new Set(metaTargets)]
 
   const entries = []
   const push = (entry) => { entries.push(entry) }
@@ -99,6 +107,16 @@ export function ItemContextMenu({ menu, rows, collections, view, onAction, onClo
       push({ label: '创建上级条目…', action: 'create-parent' })
       push({ label: '检索元数据', action: 'recognize' })
     }
+    if (refetchTargets.length > 0) {
+      push({
+        label: '重新获取元数据',
+        id: 'refetch',
+        children: [
+          { label: '重新获取', action: 'recognize-auto', arg: refetchTargets, title: '重新读取附件并自动检索元数据，写回当前条目' },
+          { label: '让AI获取', action: 'recognize-ai', arg: refetchTargets, title: '把这个任务交给文献助手，由 AI 检索并写回元数据' },
+        ],
+      })
+    }
     if (info.length === 1 && info[0].hasParent && info[0].itemType === 'attachment') {
       push({ label: '转换为独立附件', action: 'detach' })
     }
@@ -140,6 +158,7 @@ export function ItemContextMenu({ menu, rows, collections, view, onAction, onClo
                         key={`${child.action}-${child.arg ?? ''}`}
                         role="menuitem"
                         className="lib-ctx-item"
+                        title={child.title}
                         onClick={(event) => {
                           event.stopPropagation()
                           onAction(child.action, child.arg)
@@ -158,12 +177,13 @@ export function ItemContextMenu({ menu, rows, collections, view, onAction, onClo
   )
 }
 
-/** One row's kind info, resolved from the visible rows (parents and children). */
+/** One row's kind info, resolved from the visible rows (parents and children).
+ *  Child rows carry `parentKey` so actions can climb to the item itself. */
 function rowInfos(rows, keys) {
   const byKey = new Map()
   for (const row of rows ?? []) {
     byKey.set(row.key, row)
-    for (const child of row.children ?? []) byKey.set(child.key, { ...child, hasParent: true })
+    for (const child of row.children ?? []) byKey.set(child.key, { ...child, hasParent: true, parentKey: row.key })
   }
   return keys.map(key => byKey.get(key)).filter(Boolean)
 }
