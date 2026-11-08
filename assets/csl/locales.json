@@ -1,0 +1,22 @@
+[
+  { "code": "en-US", "name": "English (US)" },
+  { "code": "en-GB", "name": "English (UK)" },
+  { "code": "zh-CN", "name": "中文（简体）" },
+  { "code": "zh-TW", "name": "中文（繁體）" },
+  { "code": "ja-JP", "name": "日本語" },
+  { "code": "de-DE", "name": "Deutsch (Deutschland)" },
+  { "code": "fr-FR", "name": "Français (France)" },
+  { "code": "es-ES", "name": "Español (España)" },
+  { "code": "it-IT", "name": "Italiano" },
+  { "code": "ru-RU", "name": "Русский" },
+  { "code": "ko-KR", "name": "한국어" },
+  { "code": "pt-BR", "name": "Português (Brasil)" },
+  { "code": "nl-NL", "name": "Nederlands" },
+  { "code": "sv-SE", "name": "Svenska" },
+  { "code": "da-DK", "name": "Dansk" },
+  { "code": "nb-NO", "name": "Norsk bokmål" },
+  { "code": "fi-FI", "name": "Suomi" },
+  { "code": "pl-PL", "name": "Polski" },
+  { "code": "cs-CZ", "name": "Čeština" },
+  { "code": "tr-TR", "name": "Türkçe" }
+]

@@ -18,7 +18,8 @@
 | WebDAV 同步 | 完整实现 Zotero 的 WebDAV 文件同步协议：OPTIONS/PROPFIND 验证、`zotero/<key>.zip` 上传下载、`.prop` 标记、`storageDeleteLog` 删除同步，可与 Zotero 客户端共用同一台 WebDAV；独立文库同样可用 |
 | 文献助手 | 悬浮于文献列表之上的对话 dock：平时只占底部一行，点开即浮出面板；消息发送到专属 **Library 工作区**的 dsh 会话，具备完整对话/工具能力，可用 ↗ 一键跳到 **dsh 原生对话界面**继续；对话结束自动刷新文库 |
 | 提示词注入 | 仅文献助手的消息附带上下文前缀：优先用 `library_search`/`library_item` 从标题、摘要等元数据回答，需要全文时优先用 `library_read` 的 `search` 参数定位而非通读；正在查看某篇文献时自动告知 agent（内置阅读器场景已预留 reader 模式）。原生 dsh 对话不受影响 |
-| 引用导出 | `cite-json`/`cite-bibtex` 通道端点与设置页一键导出 **CSL JSON / BibTeX**（Zotero「导入…」可直接读取）；这也是为未来 **Word / LibreOffice 插件**预留的接口 |
+| 引用导出 | `cite-json`/`cite-bibtex` 通道端点与设置页一键导出 **CSL JSON / BibTeX**（Zotero「导入…」可直接读取） |
+| Word 引文插件 | **完全重写、完整移植 Zotero 文字处理集成**：Zotero 兼容命令（插入/编辑引注、插入参考文献表、编辑参考文献表、文档设置、刷新、移除域代码、查看引注、导出文档）、Zotero 兼容域代码与文档数据、citeproc 排版、引文对话框（气泡/文献列表按关键词检索/默认文献库按分类浏览（分类数字=实际列出条目数）/输入关键词自动切到文献列表/已选中条目高亮/定位符/前缀后缀/实时预览）、参考文献编辑、样式在线检索安装。**插入/编辑引文后自动重算全文引注与参考文献表**（无需手动刷新；文档设置里仍可开启「延迟更新」提速大文档）。功能区 7 个中文命令按钮：「插入参考文献表」在文档已有参考文献表时自动置灰（改用「编辑参考文献表」）。**与 Zotero 相同的一键安装**：随插件分发预构建的 `DshLibrary.dotm`（内含 VBA 工程与功能区），点击安装只是把文件复制到 Word 的 STARTUP 启动目录，不调用 Word、不需要管理员；安装器会解包自检模板完整性并检测 Word 是否正在运行。完全退出并重启 Word 后出现「文库引用」选项卡。引文对话框在弹出的**独立无边框小窗口**中显示（不是浏览器标签页，且自动置顶，Word 最大化时也不会被遮住），确定/取消自动关窗；功能区与对话框按钮均为中文，7 个引文相关命令配自绘图标与相邻「?」帮助按钮（与命令同行成对排列，悬停显示功能说明，点击弹出完整说明） |
 | Agent 工具 | `library_status/search/item/read/annotations/collections/add/update/import/open/sync/cite/trash` 十三个工具，任何 dsh 会话都能阅读、检索、修改、总结文库并导出引用 |
 | 黑夜模式 | 全部颜色走 `--dsw-alias-*` 令牌并以 `body[data-ds-dark-theme]` 探测的暗色回退兜底；工具栏/对话框采用 dsh 原生 Button 原子组件 |
 | 安全 | 首次写入前自动备份 `zotero.sqlite`（保留最近 3 份）；修改前无需关闭 Zotero，但建议关闭以避免锁冲突 |
@@ -77,7 +78,7 @@ dsh plugin --profile desktop add "file:C:\path\to\dsh-library"
 ```sh
 npm install
 npm run build      # src/client → client.js；tools/vendor-entry → vendor/deps.js
-npm run check      # 语法 + 宿主/浏览器/WebDAV 三个冒烟测试
+npm run check      # 语法 + 宿主/办公集成/浏览器/WebDAV 四个冒烟测试
 npm run manifest   # 生成 feed/manifest.json（发版用）
 ```
 
@@ -88,8 +89,12 @@ npm run manifest   # 生成 feed/manifest.json（发版用）
 ```
 index.js                宿主半身入口（cordis 插件）
 src/host/               Zotero 数据层、WebDAV、导入流水线、工具、对话、升级器
+src/host/office/        Word 引文集成（Zotero integration.js / 对话框 / HTTP 协议 / 安装器）
 src/client/             浏览器半身（React + JSX，esbuild 打包）
+assets/csl/             种子 CSL 样式与本地化（zotero.org + CSL locales 官方仓库）
+assets/word/            Word 端 VBA 与 Ribbon（安装器打包为 .dotm）
 vendor/deps.js          fflate + unpdf/pdf.js 的离线打包（零 npm 运行时依赖）
+vendor/citeproc.js      Zotero 官方打包的 citeproc-js
 tools/                  构建脚本
 scripts/                冒烟测试
 feed/manifest.json      自升级清单

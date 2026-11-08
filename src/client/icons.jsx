@@ -168,6 +168,16 @@ export function ExternalIcon({ size = 13 }) {
   )
 }
 
+/** 窗口扩大: two opposing diagonal arrows expanding out of the corners. */
+export function ExpandIcon({ size = 13 }) {
+  return (
+    <Svg size={size}>
+      <path {...stroke} d="M13.5 4H20v6.5M20 4l-7 7" />
+      <path {...stroke} d="M10.5 20H4v-6.5M4 20l7-7" />
+    </Svg>
+  )
+}
+
 export function HighlightIcon({ size = 14 }) {
   return (
     <Svg size={size}>

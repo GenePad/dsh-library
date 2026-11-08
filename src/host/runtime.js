@@ -17,6 +17,7 @@ import { PluginUpdater } from './updater.js'
 import { createStandaloneLibrary } from './standalone.js'
 import { ensureSession, openSession, readPage, sendMessage, stopTurn, workspaceDir } from './chat.js'
 import { createTranslator } from './translate.js'
+import { createOfficeService } from './office/index.js'
 import { safeFileName, safeUnlink } from './util.js'
 
 /** The library runtime shared by the API channel and tools. */
@@ -660,8 +661,13 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
       watcher?.dispose()
       clearInterval(autoSyncTimer)
       closeDb()
+      runtime.office?.dispose()
     },
   }
+
+  // Microsoft Word 引文集成：Zotero HTTP 协议 + 完整 Zotero 集成引擎。
+  // 未选择文库时服务照常监听，Word 按钮至少能得到明确的错误提示。
+  runtime.office = createOfficeService({ runtime, logger, packageDir, version: config.version })
 
   startWatcher()
   if (settings.autoSync && settings.webdav.url !== '') {

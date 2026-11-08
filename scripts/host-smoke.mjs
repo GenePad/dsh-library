@@ -27,6 +27,8 @@ const toolDefs = new Map()
 const disposers = []
 const prompts = []
 const createdSessions = []
+const archivedSessions = []
+let sessionCounter = 0
 const llmCalls = []
 let running = false
 const agent = {
@@ -85,7 +87,7 @@ const mockCtx = {
   },
   connection: { fetch: { register(route) { routes.push(route); return () => {} } } },
   sessionController: {
-    async create({ workspaceId }) { createdSessions.push(workspaceId); return { sessionId: 'session-smoke' } },
+    async create({ workspaceId }) { sessionCounter += 1; createdSessions.push(workspaceId); return { sessionId: `session-${sessionCounter}` } },
     async resolveAgent() { return { agent } },
     async prompt(request) { prompts.push(request); running = true; return {} },
     async page() {
@@ -105,7 +107,7 @@ const mockCtx = {
     async resolveByPath() { return { id: 'ws-smoke' } },
     async create() { return { id: 'ws-smoke' } },
     get() { return undefined },
-    async archiveSession() {},
+    async archiveSession(id) { archivedSessions.push(id) },
   },
 }
 
@@ -614,7 +616,7 @@ if (hasRealLibrary) {
     assert.ok(Array.isArray(readSearch.matches) && readSearch.matches.length > 0, 'search matches returned')
     assert.ok(Number.isInteger(readSearch.matches[0].offset))
 
-    // Citation export endpoints (also the future Office add-in interface).
+    // Citation export endpoints.
     const citeJson = await call('cite-json', { keys: [withMeta.value.parentKey] })
     assert.equal(citeJson.ok, true, JSON.stringify(citeJson))
     assert.equal(citeJson.value.items.length, 1)
@@ -666,7 +668,7 @@ if (hasRealLibrary) {
 // Chat: session creation, prompt delivery, transcript normalization.
 const opened = await call('chat-open', {})
 assert.equal(opened.ok, true, JSON.stringify(opened))
-assert.equal(opened.value.sessionId, 'session-smoke')
+assert.equal(opened.value.sessionId, 'session-1')
 assert.ok(createdSessions.length >= 1)
 
 // Dock binding: an article open in the reader keeps ONE bound conversation —
@@ -679,8 +681,22 @@ const boundAgain = await call('chat-open', { bindKey: 'BBBBBBBB' })
 assert.equal(boundAgain.value.created, false, 'reopening the article reuses its bound conversation')
 const rebound = await call('chat-open', { bindKey: 'BBBBBBBB', fresh: true })
 assert.equal(rebound.value.created, true, '新对话 rebinds the article to a new session')
+// Regression: a plain open (the AI-task hand-off, no bindKey) must NEVER
+// continue the reader-bound session — the list dock gets a NEW conversation,
+// the bound session is left unarchived and still resolves for the article.
+const plainAfterBind = await call('chat-open', {})
+assert.equal(plainAfterBind.value.created, true, 'a plain open after a reader bind starts a NEW conversation')
+assert.notEqual(plainAfterBind.value.sessionId, rebound.value.sessionId, 'the plain open did not land in the bound session')
+assert.ok(!archivedSessions.includes(rebound.value.sessionId), 'the bound session was not archived by the list open')
+const boundResumed = await call('chat-open', { bindKey: 'BBBBBBBB' })
+assert.equal(boundResumed.value.sessionId, rebound.value.sessionId, 'the article still resumes its own bound conversation')
 const listOpen = await call('chat-open', { fresh: true })
 assert.equal(listOpen.value.bound, false, 'list-view open is unbound')
+// No dock open ever archives: old conversations stay in the workspace —
+// neither the list sessions nor the reader binding above are ever removed.
+const listOpenAgain = await call('chat-open', { fresh: true })
+assert.notEqual(listOpenAgain.value.sessionId, listOpen.value.sessionId, 'list fresh open creates a new conversation')
+assert.deepEqual(archivedSessions, [], 'no conversation is archived by any dock open')
 const page = await call('chat-page', { maxMessages: 50 })
 assert.equal(page.ok, true)
 const roles = page.value.messages.map(message => message.role)

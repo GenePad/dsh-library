@@ -320,6 +320,7 @@ const clientModule = registration.factory((specifier) => {
   if (specifier === 'react') return React
   if (specifier === 'react/jsx-runtime') return JsxRuntime
   if (specifier === 'react-dom/client') return ReactDOMClient
+  if (specifier === 'react-dom') return ReactDOMClient
   if (specifier === '@deepseek-ai/dsh-client-ui-primitives') {
     // Plain stand-ins for the host's themed atoms (the real CSS-module styling
     // is irrelevant here; contracts are what the smoke exercises).
@@ -759,6 +760,21 @@ await act(async () => {
 assert.ok(bodies.filter(body => body.endpoint === 'chat-open').length > chatOpensBefore, 'reopening asks the host for a session')
 assert.ok(bodies.filter(body => body.endpoint === 'chat-open').at(-1).payload.fresh === true, 'list-view open starts a NEW conversation')
 assert.ok(container.querySelector('.lib-chatdock-panel'), 'the dock is open again')
+
+// The bar's right chevron collapses the dock too (it used to sit inside a
+// stopPropagation span and swallow the click).
+await act(async () => {
+  container.querySelector('.lib-chatdock-bar .lib-chatdock-actions .lib-iconbtn')
+    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  await tick()
+})
+assert.ok(!container.querySelector('.lib-chatdock-panel'), 'the bar chevron collapses the dock')
+await act(async () => {
+  container.querySelector('.lib-chatdock-bar').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  await tick()
+  await tick()
+})
+assert.ok(container.querySelector('.lib-chatdock-panel'), 'the dock reopens after the chevron collapse')
 
 // The dock header: 新对话 is an icon+text button, highlighted, and sits to the
 // LEFT of the 在原生对话界面中打开 button.
@@ -1233,6 +1249,56 @@ await act(async () => {
 assert.equal(container.querySelectorAll('.lib-rdr-pane').length, 1, 'exiting split restores one pane')
 assert.ok(container.querySelector('.lib-rdr-openwith-main[aria-label="在系统默认阅读器中打开"]'), 'open-with (system reader) control still offered')
 
+console.log('MARK4 dockbind')
+
+// Regression (chat dock session selection): with a reader tab active, opening
+// the dock binds the article's conversation; back on the 文献列表 tab, an AI
+// hand-off (让AI获取) must start a NEW conversation — never continue the
+// reader's bound session.
+const dockOpensBeforeBind = bodies.filter(body => body.endpoint === 'chat-open').length
+await act(async () => {
+  container.querySelector('.lib-chatdock-bar').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  await tick()
+})
+assert.ok(!container.querySelector('.lib-chatdock-panel'), 'the open dock collapses first')
+await act(async () => {
+  container.querySelector('.lib-chatdock-bar').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  await tick()
+  await tick()
+})
+const bindOpen = bodies.filter(body => body.endpoint === 'chat-open').at(-1)
+assert.ok(bodies.filter(body => body.endpoint === 'chat-open').length > dockOpensBeforeBind, 'reader-tab open asks the host for a session')
+assert.equal(bindOpen.payload.bindKey, 'BBBBBBBB', 'reader-tab open binds the open article')
+assert.equal(bindOpen.payload.title, 'sample.pdf', 'the bound conversation is titled after the article')
+// Back to the list tab: the dock still shows the bound session, but an AI
+// hand-off from the list must open a fresh conversation instead.
+await act(async () => {
+  const listTab = [...container.querySelectorAll('.lib-midcol .lib-tab')].find(node => node.textContent.includes('文献列表'))
+  listTab.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  await tick()
+})
+assert.ok(container.querySelector('[data-key="AAAAAAAA"]'), 'the 文献列表 tab restores the item list')
+await act(async () => {
+  container.querySelector('[data-key="AAAAAAAA"]').dispatchEvent(new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }))
+  await tick()
+})
+await act(async () => {
+  const entry = [...container.querySelectorAll('.lib-ctxmenu .lib-ctx-item')].find(node => node.textContent.includes('重新获取元数据'))
+  assert.ok(entry, 'refetch submenu offered again on the list tab')
+  entry.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  await tick()
+})
+await act(async () => {
+  ;[...container.querySelectorAll('.lib-ctx-sub .lib-ctx-item')].find(node => node.textContent.includes('让AI获取'))
+    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  for (let i = 0; i < 6; i += 1) await tick()
+})
+const handoffOpen = bodies.filter(body => body.endpoint === 'chat-open').at(-1)
+assert.equal(handoffOpen.payload.fresh, true, 'AI hand-off from the list starts a NEW conversation')
+assert.equal(handoffOpen.payload.bindKey, undefined, 'the list hand-off neither binds nor reuses the reader session')
+const handoffSend = bodies.filter(body => body.endpoint === 'chat-send').at(-1)
+assert.equal(handoffSend.payload.context.mode, 'list', 'the hand-off message carries list context')
+
 assert.ok(container.textContent.includes('文献列表'), 'list tab rendered')
 assert.ok(container.querySelector('.lib-back-to-chat'), 'back-to-chat button shown while the sidebar is hidden')
 assert.ok([...container.querySelectorAll('.lib-midcol .lib-tab')].some(node => node.textContent.includes('文献列表')), 'the tab strip lives inside the middle column and always offers the list tab')
@@ -1321,6 +1387,7 @@ await act(async () => {
 assert.ok(calls.includes('settings-set'), 'save posts the settings patch')
 const saveBody = [...bodies].reverse().find(body => body.endpoint === 'settings-set')
 assert.ok(saveBody?.payload?.patch?.translate, 'the settings patch carries the translate section')
+
 settingsRoot.unmount()
 
 console.log('client-smoke: OK')

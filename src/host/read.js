@@ -2,7 +2,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-const TOP_LEVEL = `NOT EXISTS (SELECT 1 FROM itemAttachments a WHERE a.itemID = i.itemID AND a.parentItemID IS NOT NULL)
+export const TOP_LEVEL = `NOT EXISTS (SELECT 1 FROM itemAttachments a WHERE a.itemID = i.itemID AND a.parentItemID IS NOT NULL)
   AND NOT EXISTS (SELECT 1 FROM itemNotes n WHERE n.itemID = i.itemID AND n.parentItemID IS NOT NULL)
   AND NOT EXISTS (SELECT 1 FROM itemAnnotations an WHERE an.itemID = i.itemID)`
 
@@ -143,6 +143,8 @@ export function readTags(db) {
  * @param {import('./db.js').ZoteroDb} db
  * @param {object} filter
  * @param {number} [filter.collectionID] - direct collection membership.
+ * @param {number[]} [filter.collectionIDs] - membership in any of these collections
+ *   (used by the citation dialog for a collection + all its descendants).
  * @param {boolean} [filter.unfiled] - items in no collection.
  * @param {string} [filter.tag] - tag name.
  * @param {string} [filter.query] - title/abstract/creator/tag/DOI text.
@@ -165,6 +167,13 @@ export function readItems(db, filter = {}) {
   if (Number.isInteger(filter.collectionID)) {
     where.push('i.itemID IN (SELECT itemID FROM collectionItems WHERE collectionID = ?)')
     params.push(filter.collectionID)
+  }
+  if (Array.isArray(filter.collectionIDs) && filter.collectionIDs.length) {
+    const ids = filter.collectionIDs.filter(Number.isInteger)
+    if (ids.length) {
+      where.push(`i.itemID IN (SELECT itemID FROM collectionItems WHERE collectionID IN (${ids.map(() => '?').join(',')}))`)
+      params.push(...ids)
+    }
   }
   if (filter.unfiled === true) {
     where.push('NOT EXISTS (SELECT 1 FROM collectionItems ci WHERE ci.itemID = i.itemID)')

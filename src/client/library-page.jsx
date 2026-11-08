@@ -528,23 +528,24 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
     })
   }
 
-  // While an article is open in the viewer, keep the host-side chat context
-  // fresh (the native composer bypasses chat-send): the Literature Assistant
-  // then knows which paper is on screen.
-  const syncReaderContext = React.useCallback((tab) => {
-    if (!tab) return
+  // Keep the host-side chat context in step with the ACTIVE tab: a reader tab
+  // → reader guidance for that paper; the 文献列表 tab → list guidance (the
+  // selected item only as a weak hint). The native composer bypasses
+  // chat-send, so without the list-side push the host would keep grounding
+  // composer messages on the last-read paper after the user returns to the
+  // list.
+  React.useEffect(() => {
     clearTimeout(selectionContextTimer.current)
     selectionContextTimer.current = setTimeout(() => {
-      api.call('chat-context', {
-        context: { mode: 'reader', itemKey: tab.parentKey, itemTitle: tab.title },
-      }).catch(() => {})
+      const context = activeReaderTab
+        ? { mode: 'reader', itemKey: activeReaderTab.parentKey, itemTitle: activeReaderTab.title }
+        : (activeKeyRef.current && detailRef.current?.key === activeKeyRef.current
+          ? { mode: 'list', itemKey: activeKeyRef.current, itemTitle: detailRef.current.title }
+          : { mode: 'list' })
+      api.call('chat-context', { context }).catch(() => {})
     }, 400)
-  }, [])
-
-  React.useEffect(() => {
-    syncReaderContext(activeReaderTab)
     return () => clearTimeout(selectionContextTimer.current)
-  }, [activeReaderTab?.key, syncReaderContext]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeReaderTab?.key, activeKey, detail]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const revealItem = async (key) => {
     try {

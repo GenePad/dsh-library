@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<customUI xmlns="http://schemas.microsoft.com/office/2006/01/customui" onLoad="DshLibRibbon.DshLibRibbonOnLoad">
+  <ribbon>
+    <tabs>
+      <tab id="DshLibraryTab" label="文库引用" keytip="C" insertBeforeMso="TabAddIns">
+        <group id="DshLibraryGroup" label="文库引用">
+          <button id="DshAddEditCitation" label="添加/编辑引文" size="large" image="dshCitation" onAction="DshLibRibbon.DshLibRibbonAddEditCitation" keytip="C" screentip="添加/编辑引文" supertip="在光标处插入一条新引文，或编辑光标所在的已有引文。在「文献列表」输入关键词检索，或切到「文献库」按分类浏览并逐条添加；可设置页码定位、前缀后缀与省略作者。确定后自动重算全文引注与参考文献表。"/>
+          <button id="DshHelpCitation" label="?" showLabel="false" image="dshHelp" screentip="？ 添加/编辑引文是做什么的" supertip="在光标处插入一条新引文，或编辑光标所在的已有引文。在「文献列表」输入关键词检索，或切到「文献库」按分类浏览并逐条添加；可设置页码定位、前缀后缀与省略作者。确定后自动重算全文引注与参考文献表。" tag="添加/编辑引文：在光标处插入一条新引文，或编辑光标所在的已有引文。在「文献列表」输入关键词检索，或切到「文献库」按分类浏览并逐条添加；可设置页码定位、前缀后缀与省略作者。确定后自动重算全文引注与参考文献表。" onAction="DshLibRibbon.DshLibRibbonHelp"/>
+          <button id="DshAddBibliography" label="插入参考文献表" size="large" image="dshBibliography" getEnabled="DshLibRibbon.DshLibRibbonGetInsertBibEnabled" onAction="DshLibRibbon.DshLibRibbonInsertBibliography" keytip="B" screentip="插入参考文献表" supertip="在光标处插入参考文献表，条目按当前样式自动生成，并随引文的增删自动更新。文档中已有参考文献表时此按钮置灰，请改用「编辑参考文献表」。"/>
+          <button id="DshHelpBibliography" label="?" showLabel="false" image="dshHelp" screentip="？ 插入参考文献表是做什么的" supertip="在光标处插入参考文献表，条目按当前样式自动生成，并随引文的增删自动更新。文档中已有参考文献表时此按钮置灰，请改用「编辑参考文献表」。" tag="插入参考文献表：在光标处插入参考文献表，条目按当前样式自动生成，并随引文的增删自动更新。文档中已有参考文献表时此按钮置灰，请改用「编辑参考文献表」。" onAction="DshLibRibbon.DshLibRibbonHelp"/>
+          <button id="DshEditBibliography" label="编辑参考文献表" size="large" image="dshBibEdit" onAction="DshLibRibbon.DshLibRibbonEditBibliography" keytip="E" screentip="编辑参考文献表" supertip="打开参考文献表编辑窗口：可手工改写某条文字、把未引用的文库条目加进表里，或从表中隐藏某些条目；这些修改在刷新后仍会保留。文档中还没有参考文献表时，请先插入参考文献表。"/>
+          <button id="DshHelpEditBibliography" label="?" showLabel="false" image="dshHelp" screentip="？ 编辑参考文献表是做什么的" supertip="打开参考文献表编辑窗口：可手工改写某条文字、把未引用的文库条目加进表里，或从表中隐藏某些条目；这些修改在刷新后仍会保留。文档中还没有参考文献表时，请先插入参考文献表。" tag="编辑参考文献表：打开参考文献表编辑窗口：可手工改写某条文字、把未引用的文库条目加进表里，或从表中隐藏某些条目；这些修改在刷新后仍会保留。文档中还没有参考文献表时，请先插入参考文献表。" onAction="DshLibRibbon.DshLibRibbonHelp"/>
+          <separator id="DshSeparator1"/>
+          <box id="DshBoxDocPrefs" boxStyle="horizontal">
+            <button id="DshSetDocPrefs" label="文档设置" image="dshDocPrefs" onAction="DshLibRibbon.DshLibRibbonSetDocPrefs" keytip="P" screentip="文档设置" supertip="设置当前文档的引文样式、语言区域、引注显示方式（正文/脚注/尾注）与字段类型（域/书签），可在线检索并安装 CSL 样式。切换样式后全文引注会自动按新样式重排。"/>
+            <button id="DshHelpDocPrefs" label="?" showLabel="false" image="dshHelp" screentip="？ 文档设置是做什么的" supertip="设置当前文档的引文样式、语言区域、引注显示方式（正文/脚注/尾注）与字段类型（域/书签），可在线检索并安装 CSL 样式。切换样式后全文引注会自动按新样式重排。" tag="文档设置：设置当前文档的引文样式、语言区域、引注显示方式（正文/脚注/尾注）与字段类型（域/书签），可在线检索并安装 CSL 样式。切换样式后全文引注会自动按新样式重排。" onAction="DshLibRibbon.DshLibRibbonHelp"/>
+          </box>
+          <box id="DshBoxRefresh" boxStyle="horizontal">
+            <button id="DshRefresh" label="刷新" image="dshRefresh" onAction="DshLibRibbon.DshLibRibbonRefresh" keytip="R" screentip="刷新" supertip="重新计算文档中全部引注与参考文献表，使其与文库条目和当前样式保持一致。插入或编辑引文后插件会自动刷新；在文库里修改过条目信息后，可点此手动同步。"/>
+            <button id="DshHelpRefresh" label="?" showLabel="false" image="dshHelp" screentip="？ 刷新是做什么的" supertip="重新计算文档中全部引注与参考文献表，使其与文库条目和当前样式保持一致。插入或编辑引文后插件会自动刷新；在文库里修改过条目信息后，可点此手动同步。" tag="刷新：重新计算文档中全部引注与参考文献表，使其与文库条目和当前样式保持一致。插入或编辑引文后插件会自动刷新；在文库里修改过条目信息后，可点此手动同步。" onAction="DshLibRibbon.DshLibRibbonHelp"/>
+          </box>
+          <box id="DshBoxRemoveCodes" boxStyle="horizontal">
+            <button id="DshRemoveCodes" label="取消引文链接" image="dshUnlink" onAction="DshLibRibbon.DshLibRibbonRemoveCodes" keytip="U" screentip="取消引文链接" supertip="断开本文档与文库的连接：移除全部引文域代码，把引注与参考文献表转成普通文本。转成纯文本后将无法再自动更新引文；此操作不可撤销，建议先另存一份文档副本。"/>
+            <button id="DshHelpRemoveCodes" label="?" showLabel="false" image="dshHelp" screentip="？ 取消引文链接是做什么的" supertip="断开本文档与文库的连接：移除全部引文域代码，把引注与参考文献表转成普通文本。转成纯文本后将无法再自动更新引文；此操作不可撤销，建议先另存一份文档副本。" tag="取消引文链接：断开本文档与文库的连接：移除全部引文域代码，把引注与参考文献表转成普通文本。转成纯文本后将无法再自动更新引文；此操作不可撤销，建议先另存一份文档副本。" onAction="DshLibRibbon.DshLibRibbonHelp"/>
+          </box>
+          <separator id="DshSeparator2"/>
+          <box id="DshBoxExplorer" boxStyle="horizontal">
+            <button id="DshCitationExplorer" label="查看引注" image="dshExplorer" onAction="DshLibRibbon.DshLibRibbonCitationExplorer" keytip="V" screentip="查看引注" supertip="列出本文档中已插入的全部引注及其对应条目，可按关键词筛选，选中后直接打开引注编辑器。"/>
+            <button id="DshHelpExplorer" label="?" showLabel="false" image="dshHelp" screentip="？ 查看引注是做什么的" supertip="列出本文档中已插入的全部引注及其对应条目，可按关键词筛选，选中后直接打开引注编辑器。" tag="查看引注：列出本文档中已插入的全部引注及其对应条目，可按关键词筛选，选中后直接打开引注编辑器。" onAction="DshLibRibbon.DshLibRibbonHelp"/>
+          </box>
+        </group>
+      </tab>
+    </tabs>
+  </ribbon>
+</customUI>

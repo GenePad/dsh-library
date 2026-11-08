@@ -1,6 +1,4 @@
-// Citation export: Zotero items → CSL-JSON and BibTeX. This is also the
-// reserved integration surface for future MS Word / LibreOffice add-ins (they
-// consume the same two formats over the /api/library channel).
+// Citation export: Zotero items → CSL-JSON and BibTeX.
 import { readItems } from './read.js'
 import { GLOBAL_SCHEMA } from './schema-data.js'
 

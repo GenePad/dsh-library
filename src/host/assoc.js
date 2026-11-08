@@ -23,7 +23,15 @@ const commandCache = new Map() // progId (lower) → shell\open\command template
 /** Run `reg query` and resolve to its stdout, or null when the key is absent. */
 function regQuery(args) {
   return new Promise((resolve) => {
-    const child = spawn('reg', ['query', ...args], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
+    let child
+    try {
+      child = spawn('reg', ['query', ...args], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
+    } catch {
+      // Locked-down environments can forbid spawning reg.exe entirely. An
+      // empty association list is a valid (if less convenient) answer.
+      resolve(null)
+      return
+    }
     const chunks = []
     child.stdout.on('data', chunk => { chunks.push(chunk) })
     const timer = setTimeout(() => { try { child.kill() } catch { /* gone */ } resolve(null) }, 5000)
@@ -156,10 +164,16 @@ function runIconPowerShell(payload) {
     '[Console]::Out.Write([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json)))',
   ].join('\n')
   return new Promise((resolve) => {
-    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'ignore'],
-    })
+    let child
+    try {
+      child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'ignore'],
+      })
+    } catch {
+      resolve(null)
+      return
+    }
     let out = ''
     child.stdout.on('data', chunk => { out += chunk })
     const timer = setTimeout(() => { try { child.kill() } catch { /* gone */ } resolve(null) }, 15_000)
@@ -173,7 +187,7 @@ function runIconPowerShell(payload) {
         resolve(null)
       }
     })
-    child.stdin.end(Buffer.from(JSON.stringify(payload), 'utf8').toString('base64'))
+    try { child.stdin?.end(Buffer.from(JSON.stringify(payload), 'utf8').toString('base64')) } catch { /* spawn failed */ }
   })
 }
 

@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process'
 
 /**
- * Open a file or URL in the operating system's default application.
+ * Open a file or URL with the operating system's default application.
  * @param {string} target - absolute path or URL.
  * @returns {boolean} whether a launcher was started.
  */
@@ -11,8 +11,16 @@ export function openExternal(target) {
   if (value === '') return false
   try {
     if (process.platform === 'win32') {
-      // explorer.exe performs ShellExecute on the path without cmd re-parsing it.
-      spawn('explorer.exe', [value], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
+      if (/^https?:\/\//i.test(value)) {
+        // explorer.exe opens files reliably, but handing it an http(s) URL
+        // from an Electron host silently does nothing (office dialogs never
+        // appeared). FileProtocolHandler goes straight through the shell
+        // association without cmd's argument re-parsing (trap 8).
+        spawn('rundll32.exe', ['url.dll,FileProtocolHandler', value], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
+      } else {
+        // explorer.exe performs ShellExecute on the path without cmd re-parsing it.
+        spawn('explorer.exe', [value], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
+      }
     } else if (process.platform === 'darwin') {
       spawn('open', [value], { detached: true, stdio: 'ignore' }).unref()
     } else {

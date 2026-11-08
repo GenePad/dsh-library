@@ -1,23 +1,23 @@
 {
-  "version": "0.1.15",
+  "version": "0.3.8",
   "base": "../",
-  "publishedAt": 1794116482534,
+  "publishedAt": 1794153419312,
   "notes": "",
   "files": [
     {
       "path": "package.json",
-      "size": 1597,
-      "sha256": "ecf245989ea62286380a518fcda9b6688c4b06deb204e80d603dd7f5eac443b1"
+      "size": 1701,
+      "sha256": "73ad8111768262b84bf50cd196663dc2a7b55e0cc0a56f5389f6f74842e0a6c1"
     },
     {
       "path": "index.js",
-      "size": 6732,
-      "sha256": "3741f0243263426f505d7116c2f97016d7121062d696a43da13ceb366af2eaed"
+      "size": 6731,
+      "sha256": "9e3220d054a916c099a4d3de46f6ab6a93d2804ff1d8493e3b67a281a75e66f6"
     },
     {
       "path": "client.js",
-      "size": 1859534,
-      "sha256": "834eac63c8bf424c23188b715e086250f851ba0c76296f15b54ff2091ddf949c"
+      "size": 1865884,
+      "sha256": "610208963432197db1672d9d1ae1b10116462a09b1c2eb3d2cdf7a9f3b95e5c5"
     },
     {
       "path": "cordis.patch.yml",
@@ -36,8 +36,8 @@
     },
     {
       "path": "src/client/chat-dock.jsx",
-      "size": 10278,
-      "sha256": "2e036e8b51e12cd8eeadba8b63519c958d52e4d69e766054a619277ee608be58"
+      "size": 12110,
+      "sha256": "178267fb9ddb1a7cc0ea056d8012b21b84b9a5d1444a4f62ec2285b0a2182727"
     },
     {
       "path": "src/client/collections-pane.jsx",
@@ -56,13 +56,13 @@
     },
     {
       "path": "src/client/footer.jsx",
-      "size": 1038,
-      "sha256": "0988dedb51093731c77efb483f8ff28e64b2e26834a69a5db2efa731b9bd0851"
+      "size": 1073,
+      "sha256": "ae748a5b7709cf389477e0717c067d39cbb8807eb88d4f17dd87489b0413b037"
     },
     {
       "path": "src/client/icons.jsx",
-      "size": 7171,
-      "sha256": "ca5708706f4ed31bca33ea8cb3527f78d13f0cc134c6afdb239510dc86f2b9a9"
+      "size": 7458,
+      "sha256": "b58e4e01b1e49397a458580b2a6aaca78326cc74c93b9a2387ebc01e06b671ce"
     },
     {
       "path": "src/client/index.js",
@@ -86,8 +86,8 @@
     },
     {
       "path": "src/client/library-page.jsx",
-      "size": 60713,
-      "sha256": "67d24459c770627a1583d92244ce4406b06a34d2fb1313990c90b7792ae01316"
+      "size": 61051,
+      "sha256": "a81f86bc5a12878b8fb25b201a641ed5ca82faaf71a98bb1e3881ecf3576daaf"
     },
     {
       "path": "src/client/pdf-util.js",
@@ -106,13 +106,13 @@
     },
     {
       "path": "src/client/settings-section.jsx",
-      "size": 17180,
-      "sha256": "9d79e93ccd049be7d4285179cfbc591e6d45680421673259228f0e56b59c6db4"
+      "size": 25593,
+      "sha256": "2c93e66070346bd1be5dab995208bd8e0398e1f115470ff4e1a9699808f8ee4b"
     },
     {
       "path": "src/client/styles.js",
-      "size": 53847,
-      "sha256": "c047f604816eb4b6035495824324edd7e395d303a7bb6db0f94fff0e6ba0ff4a"
+      "size": 53849,
+      "sha256": "45b162e6252ecf91aacdfdc36d55d0bcf44e4c67237823974130316ecf656d51"
     },
     {
       "path": "src/client/util.js",
@@ -121,23 +121,23 @@
     },
     {
       "path": "src/host/assoc.js",
-      "size": 13182,
-      "sha256": "7f70454fca6a21f1ca4efd91c3f2904e7d5453bd6993d453e9a524a444f39cd8"
+      "size": 13519,
+      "sha256": "bce196c74713478b879444eb7d34504b80fa2b419baa3695678ea23c1f79355f"
     },
     {
       "path": "src/host/channel.js",
-      "size": 12194,
-      "sha256": "8d66ecb8c193f440ebaf3e7043f745d0117c992f52a90bdfe2e0ac86a7109c28"
+      "size": 13557,
+      "sha256": "a0ada80aed407a40d6ce9271eb7dd96c4c8b421542642928ff03884d0b391b3c"
     },
     {
       "path": "src/host/chat.js",
-      "size": 13505,
-      "sha256": "0c05bbddc01994919c090d37ace20f197ecbcc4863725419809efc3f8d8e47c3"
+      "size": 14324,
+      "sha256": "1722e2d17fc5ffb7fc42f1f300c9d9f39bb452eda872bd4fbe91641cf30fdbe7"
     },
     {
       "path": "src/host/cite.js",
-      "size": 7595,
-      "sha256": "1b41dde00611b6fd2ef2686be9d49cb61e44514572516c4a915e8c6cbda6f96d"
+      "size": 7435,
+      "sha256": "28f88aedd27a4f7c3ab936bca50794155571de2a2fd7898a8e5cbb28e1f7bca4"
     },
     {
       "path": "src/host/db.js",
@@ -160,9 +160,89 @@
       "sha256": "3f3f03ec8978c6d71ea04c1f06cf2867e2ab51be3e554129a0d39f98fa185b7c"
     },
     {
+      "path": "src/host/office/citation.js",
+      "size": 8170,
+      "sha256": "6ce92c182306cdce536901f34a90b8bd69dd2997a01a6b2b4101902c4fa34338"
+    },
+    {
+      "path": "src/host/office/commands.js",
+      "size": 14542,
+      "sha256": "5943b941644ffb1df6b19fe9850bc9377529aeeecef45369a88f07df2f1e2a13"
+    },
+    {
+      "path": "src/host/office/constants.js",
+      "size": 3463,
+      "sha256": "0edd62f6ac311654c5babae3718f23ffc74815efe4d0a39b607988fee89de35c"
+    },
+    {
+      "path": "src/host/office/csl-citeproc.js",
+      "size": 4073,
+      "sha256": "95da105a3db56d0b632f2731fdf14cada0a9575abfd9ac715f356b09e0afb283"
+    },
+    {
+      "path": "src/host/office/csl-styles.js",
+      "size": 10280,
+      "sha256": "23563f26c56a1e3a18f9eeb095caf1d3097bdc846750d5151a3f389f738e1885"
+    },
+    {
+      "path": "src/host/office/dialogs.js",
+      "size": 11087,
+      "sha256": "17e5ef7ee2064502ea8d68811fc0ec06fe67aa524fdd80e420ced3dfd79f2ae5"
+    },
+    {
+      "path": "src/host/office/document-data.js",
+      "size": 5203,
+      "sha256": "65186ca19e0bc15a2e68304e8f4c274057c6eed9b809ca172c760090c0e70777"
+    },
+    {
+      "path": "src/host/office/fields.js",
+      "size": 9660,
+      "sha256": "d4cb5b030a1b0e7a9f3ca2a1bc6318f85f13e0378097ff565d098318daa1b9ee"
+    },
+    {
+      "path": "src/host/office/http-client.js",
+      "size": 7401,
+      "sha256": "b746c54f7f5dcb51a1d20edd49bf8cebc21ee8192045781b74434cfeb49e9df2"
+    },
+    {
+      "path": "src/host/office/index.js",
+      "size": 2216,
+      "sha256": "723cab578599cb4d6c5d2875c9b61cf18f2c0f970d631e6ad87077fce7618487"
+    },
+    {
+      "path": "src/host/office/installer.js",
+      "size": 25690,
+      "sha256": "11ebdfbba0495474621302e0917a4aa870eb8aba342ab0cc3895df515a4d1990"
+    },
+    {
+      "path": "src/host/office/items.js",
+      "size": 10925,
+      "sha256": "763a3cbb2152f852fc06b752cb519ee1cf0b04ebbee09f31a14cbbdf724589de"
+    },
+    {
+      "path": "src/host/office/pages.js",
+      "size": 58498,
+      "sha256": "b59aa611af5ec4f173e34f8dc64beecec47ef1792d65088c1e0b2dbb3a2af42a"
+    },
+    {
+      "path": "src/host/office/server.js",
+      "size": 11565,
+      "sha256": "12cd923f3373ef6b7b71dd1be4e42d4b7c942a539024e6395e99ac3c73b3df4b"
+    },
+    {
+      "path": "src/host/office/session.js",
+      "size": 30437,
+      "sha256": "0f86723f4bdad90ce0ae966ae665601d18c055010804e1b96332015175774b81"
+    },
+    {
+      "path": "src/host/office/window.js",
+      "size": 12166,
+      "sha256": "f6e1367dc1c2868505a308afda4173357bd2e9e9380da5027e294d664ba7b758"
+    },
+    {
       "path": "src/host/open.js",
-      "size": 1964,
-      "sha256": "490a7609dbfd3ad7202a10193b75b6a3fdf1c24913d76a40641c9fafe1ce5353"
+      "size": 2470,
+      "sha256": "4808a95129e8946a7bc0dddd8b7b0b80e283473d267cf66f3ceee1f158091ef2"
     },
     {
       "path": "src/host/pdf.js",
@@ -171,13 +251,13 @@
     },
     {
       "path": "src/host/read.js",
-      "size": 25624,
-      "sha256": "2b9c09c87995e33aa91491b9910f9671152f4c25660957278073e35b4727cfe5"
+      "size": 26121,
+      "sha256": "40293a811acb41f34368e31726647ebc220ce2ed6016c8a0169911b6a7e75fb2"
     },
     {
       "path": "src/host/runtime.js",
-      "size": 24218,
-      "sha256": "483fd40c776893efd0858f94cd9025c5797f89006875e54ef7cecf18ca633b0e"
+      "size": 24585,
+      "sha256": "ab63d78af4e3b5c51e06a3b4cd1b9204bbdff5a749dec0f7e2962cd469fc225d"
     },
     {
       "path": "src/host/schema-data.js",
@@ -206,8 +286,8 @@
     },
     {
       "path": "src/host/tools.js",
-      "size": 29621,
-      "sha256": "87eb28063ed0beb87e97545aae87ab8b54a4aee3a6a21781ee575f736ce659ea"
+      "size": 29570,
+      "sha256": "04f2f43c034a6285c61da3d1a4eddbcf579992e851119cc2bfd212304287b5b7"
     },
     {
       "path": "src/host/translate.js",
@@ -216,8 +296,8 @@
     },
     {
       "path": "src/host/updater.js",
-      "size": 10779,
-      "sha256": "b0f32f3ed336d737ecaa4d38c5da9d309e89dcbf4a2abca8e4192cc3c37c9983"
+      "size": 10545,
+      "sha256": "35311665ee260b6ccb7fb065c7e9133adf4158729b070388ab12eab58ba05fe1"
     },
     {
       "path": "src/host/userdata-sql.js",
@@ -245,14 +325,194 @@
       "sha256": "725627555e9e882f66b06177ee68846a29606aa85fcdcc45b313e30df693eef9"
     },
     {
+      "path": "vendor/citeproc.js",
+      "size": 995927,
+      "sha256": "e3909f01c9ca52efcdb3b47d3af6e3df5e3a4ff34d351b2e91350badfdc3df5b"
+    },
+    {
       "path": "vendor/deps.js",
       "size": 2424993,
       "sha256": "ad231878444fee5024f3cb820db18ef73f01c4f086998653e44096f7b333b0d9"
     },
     {
+      "path": "assets/csl/locales/locales-de-DE.xml",
+      "size": 25679,
+      "sha256": "befaeb7c9b4f2ce8e4b7e4ef028500c317ba4e92a5edf2125dad267b9b9951ad"
+    },
+    {
+      "path": "assets/csl/locales/locales-en-US.xml",
+      "size": 32649,
+      "sha256": "ac864c7c21166b4390d82c31792cdc509400727fa0060b43d8aa17e07f9cb079"
+    },
+    {
+      "path": "assets/csl/locales/locales-fr-FR.xml",
+      "size": 31110,
+      "sha256": "bd6820660e6a4dab73bfd48df7348320708263b413c06fdd2e5445bcdf788bfb"
+    },
+    {
+      "path": "assets/csl/locales/locales-ja-JP.xml",
+      "size": 24352,
+      "sha256": "5167d0686946405a0531c484b61a6e0e43b652631443f06908b3396ce6ffb543"
+    },
+    {
+      "path": "assets/csl/locales/locales-zh-CN.xml",
+      "size": 18641,
+      "sha256": "95cebc667f2da8fb5b9864e49941e3f867d59f79feba929bc58e8ed6bfd4d582"
+    },
+    {
+      "path": "assets/csl/locales.json",
+      "size": 942,
+      "sha256": "c1b8a184c82f30b576567902bbf9f1ad21b7f85a529d51e2abcb8b7667cc9b4e"
+    },
+    {
+      "path": "assets/csl/renamed-styles.json",
+      "size": 43099,
+      "sha256": "0facc70f2947a41359649a8bfc28a4a8475ff5bd3ab519f89ddeadb96389cb52"
+    },
+    {
+      "path": "assets/csl/styles/american-chemical-society.csl",
+      "size": 10783,
+      "sha256": "b4fb122e2fab55e9753768a1329c7bfa7a54e44fc630ec856b93785c59b942e7"
+    },
+    {
+      "path": "assets/csl/styles/american-medical-association.csl",
+      "size": 11575,
+      "sha256": "72c0b0920a36e52525726824fc36f377775b5dfbcaed927c465e548fc77eac59"
+    },
+    {
+      "path": "assets/csl/styles/american-political-science-association.csl",
+      "size": 8159,
+      "sha256": "e4544cc85010b6c29baad90b4c63833fa63fbf43169c505f734c6445ffb1cb8f"
+    },
+    {
+      "path": "assets/csl/styles/apa.csl",
+      "size": 85817,
+      "sha256": "d9554546338c8f54f02706c4464a18bbce8e53c50cc28ff571e5713d5682adaa"
+    },
+    {
+      "path": "assets/csl/styles/cell.csl",
+      "size": 5449,
+      "sha256": "bd184f6fdb06e559324301abdc8700fc1bc23a272a2aff9c7053892be62a9734"
+    },
+    {
+      "path": "assets/csl/styles/chicago-author-date.csl",
+      "size": 167761,
+      "sha256": "1e221633b442d5865985f2ed0e3e50ae699315bd60e629e00ab1ad952704f70a"
+    },
+    {
+      "path": "assets/csl/styles/chicago-note-bibliography.csl",
+      "size": 176402,
+      "sha256": "1c21a3d272eaaf7742e9661c9d2adf174ef8f5c69f386aa2edfa28af75d7fe69"
+    },
+    {
+      "path": "assets/csl/styles/china-national-standard-gb-t-7714-2015-author-date.csl",
+      "size": 16728,
+      "sha256": "59259f5533fb01a4e2d05a927acf48565c41eb4c4a1aad7c7029cd4f2b92bb23"
+    },
+    {
+      "path": "assets/csl/styles/china-national-standard-gb-t-7714-2015-numeric.csl",
+      "size": 15530,
+      "sha256": "c1f8cad17d4846f5650347e0ee19be6cc9ebfafbc950ad019b1836229ef8fafa"
+    },
+    {
+      "path": "assets/csl/styles/elsevier-harvard.csl",
+      "size": 8102,
+      "sha256": "ef1a2d368f954586cb0efde1aa672745e4703ed13d957d93640020f30d0279c5"
+    },
+    {
+      "path": "assets/csl/styles/ieee.csl",
+      "size": 17587,
+      "sha256": "a7d41be2d57452c78930b4b0032763c04dbbdf5a6ddd54e2915f856ddaafbeee"
+    },
+    {
+      "path": "assets/csl/styles/modern-language-association.csl",
+      "size": 44381,
+      "sha256": "043661d1d47c018ecbd8b9855ebafca3f6d73be1300eae89735eafee8539e3cc"
+    },
+    {
+      "path": "assets/csl/styles/nature.csl",
+      "size": 6444,
+      "sha256": "600d5141a92512da9b0fb33fee516fb126bc093bb2ab9ff48282a26a2f25b836"
+    },
+    {
+      "path": "assets/csl/styles/vancouver.csl",
+      "size": 18126,
+      "sha256": "3bcebfe5ac07cba3d17716e77e6ded213435fba77ceb28a55e8e39f1eb9d2dfd"
+    },
+    {
+      "path": "assets/word/customUI.xml",
+      "size": 6138,
+      "sha256": "453e805c11fe8a612624b01e57e1f28d2c61ddaa736c3c72cffcdec4b9e6c7b4"
+    },
+    {
+      "path": "assets/word/DshLibrary.dotm",
+      "size": 99444,
+      "sha256": "d2546495d3974655296e461f4526a4d8064c188a6e695234b67889ce71612476"
+    },
+    {
+      "path": "assets/word/icons/dshBibliography.png",
+      "size": 150,
+      "sha256": "ca010d4281efd163719a9c0dcfab36014d30090184f81d58947575097c2dc844"
+    },
+    {
+      "path": "assets/word/icons/dshCitation.png",
+      "size": 478,
+      "sha256": "7b974babbdc7bdacaa83d2893f55d01c5c6936cafaf46d0c27327d0c5052a295"
+    },
+    {
+      "path": "assets/word/icons/dshDocPrefs.png",
+      "size": 298,
+      "sha256": "7afa81e1b4bed789137c97bbfaa093e42f240d4021d7c84b471da76562fe29c6"
+    },
+    {
+      "path": "assets/word/icons/dshExplorer.png",
+      "size": 277,
+      "sha256": "0e4eea19d3b00b6823ede65cd4d20e9551d5e5a30d436fc480aaa0f2b8b23ec1"
+    },
+    {
+      "path": "assets/word/icons/dshHelp.png",
+      "size": 400,
+      "sha256": "aa3299d493646488f741135cd347873e3077008d3307670e846d1ce01b161e02"
+    },
+    {
+      "path": "assets/word/icons/dshRefresh.png",
+      "size": 312,
+      "sha256": "5cb06b80683ca69dd40c640ae51732d2b32f1035aa2c59e580718704657aecd6"
+    },
+    {
+      "path": "assets/word/icons/dshUnlink.png",
+      "size": 304,
+      "sha256": "358de7a511bfde7641cb99b45e3da54f595a6095c2d573daf27997b8f4831595"
+    },
+    {
+      "path": "assets/word/vba/DshLibCore.bas",
+      "size": 16522,
+      "sha256": "a78c648dcbb5b8438e6afc573e064c2610611419cb6914be676917d9ff6479ef"
+    },
+    {
+      "path": "assets/word/vba/DshLibFields.bas",
+      "size": 59797,
+      "sha256": "c737a38d38433bf956acf6729ccc578f0a03138873e4ed7e908b29e9ff1e399a"
+    },
+    {
+      "path": "assets/word/vba/DshLibJson.bas",
+      "size": 16529,
+      "sha256": "bebf267c5c7ca97a3e9b2b0179f9c512830fd157b7bd9eb6908594dd01a451f1"
+    },
+    {
+      "path": "assets/word/vba/DshLibRibbon.bas",
+      "size": 2074,
+      "sha256": "951ac8cdd388dc1de418610b6d6e27efcb5bd5c6122f47360d0190b2b76ab71e"
+    },
+    {
+      "path": "assets/word/vba/ThisDocument.cls",
+      "size": 305,
+      "sha256": "ea9af5107b3a15158aa6d65f83f3762778360347e74b41dba566b8022c02f1dd"
+    },
+    {
       "path": "README.md",
-      "size": 8424,
-      "sha256": "acdabce3dacf4b54d7be10a0286a92ed91a7afa682d4e413ece07a7dabe320f6"
+      "size": 10003,
+      "sha256": "c9e1782ac5c9099b0feef8a54b85dfd30b0d161c4b2deb8454fb5adc8a7d9614"
     },
     {
       "path": "LICENSE",
@@ -261,8 +521,8 @@
     },
     {
       "path": "AGENTS.md",
-      "size": 47515,
-      "sha256": "c6fe33d00c24de93be0d9d7cfa08a296c884fc3be93d6f84217ae42d9af669ec"
+      "size": 69283,
+      "sha256": "8bee4146979bee60630ba0591d543f8255da39354c3148fd6558eabaedfbeaf9"
     }
   ]
 }

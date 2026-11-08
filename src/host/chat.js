@@ -30,27 +30,29 @@ async function presetName(ctx) {
   }
 }
 
+/** Whether the session id is some article's bound reader conversation. */
+function isReaderBound(state, sessionId) {
+  if (!sessionId) return false
+  const bindings = state.itemBindings
+  if (!bindings || typeof bindings !== 'object') return false
+  return Object.values(bindings).includes(sessionId)
+}
+
 /**
  * Reuse the stored chat session, or create a new one in the Library workspace.
+ * Opening a fresh conversation NEVER archives the previous one — every dock
+ * conversation stays in the workspace (the user keeps the full history).
  * @param {object} ctx - host context.
  * @param {string} home - plugin data directory.
  * @param {object} state - runtime state (mutated with the session id).
  * @param {{fresh?:boolean, logger?:object}} [options]
  */
 export async function ensureSession(ctx, home, state, options = {}) {
-  const logger = options.logger ?? console
   if (state.chatSessionId && options.fresh !== true) {
     const resolved = await ctx.sessionController.resolveAgent(state.chatSessionId).catch(() => undefined)
     if (resolved && !('error' in resolved)) return state.chatSessionId
   }
-  if (state.chatSessionId && options.fresh === true) {
-    try {
-      await ctx.workspaceRegistry.archiveSession(state.chatSessionId)
-    } catch (error) {
-      logger.warn?.(`library: could not archive the previous chat session: ${error?.message ?? error}`)
-    }
-  }
-  return createSession(ctx, home, state, { logger })
+  return createSession(ctx, home, state, { logger: options.logger ?? console })
 }
 
 /** Create a fresh session in the Library workspace and set it as current. */
@@ -79,7 +81,11 @@ async function createSession(ctx, home, state, { title, logger = console } = {})
  *   conversation — it is reused on every open; `fresh` unbinds the old
  *   session (it stays in the workspace) and binds a new one instead.
  * - no `bindKey` (plain list view): every open starts a new conversation,
- *   like the toolbar's 新对话.
+ *   like the toolbar's 新对话. The current session is only continued when the
+ *   dock is already open on it (the AI-task hand-off) — and NEVER when it is
+ *   a reader binding: a list open must not inherit the last-read paper's
+ *   conversation. No open ever ARCHIVES the previous session — every
+ *   conversation (list or reader-bound) stays in the workspace.
  * @param {object} ctx
  * @param {string} home
  * @param {object} state
@@ -108,8 +114,14 @@ export async function openSession(ctx, home, state, options = {}) {
     for (const stale of keys.slice(0, Math.max(0, keys.length - 200))) delete state.itemBindings[stale]
     return { sessionId, created: true, bound: true }
   }
-  const sessionId = await ensureSession(ctx, home, state, { fresh: options.fresh === true, logger })
-  return { sessionId, created: options.fresh === true, bound: false }
+  if (state.chatSessionId && options.fresh !== true && !isReaderBound(state, state.chatSessionId)) {
+    // Plain open with the dock already on an unbound (list) conversation:
+    // keep that conversation running.
+    const sessionId = await ensureSession(ctx, home, state, { logger })
+    return { sessionId, created: false, bound: false }
+  }
+  const sessionId = await ensureSession(ctx, home, state, { fresh: true, logger })
+  return { sessionId, created: true, bound: false }
 }
 
 /**

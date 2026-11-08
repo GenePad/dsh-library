@@ -788,6 +788,7 @@ body.lib-col-resizing .lib-colresize { background: color-mix(in srgb, var(--lib-
 }
 .lib-settings-foot { display: flex; align-items: center; gap: 10px; justify-content: flex-end; padding-top: 4px; }
 .lib-settings-message { font-size: 12px; color: var(--dsw-alias-label-tertiary); margin-right: auto; overflow-wrap: anywhere; }
+
 `
 
 /** Install the stylesheet once; returns a disposer. */

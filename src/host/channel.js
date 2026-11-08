@@ -228,6 +228,34 @@ export function createChannel(runtime) {
           return ok(await runtime.updates.apply())
         case 'translate-models':
           return ok(await runtime.translateModels())
+        case 'office-status':
+          return ok({
+            server: runtime.office.server.status(),
+            install: await runtime.office.installer.status({ fresh: body.fresh === true }),
+            dialogs: runtime.office.dialogs.pendingDialogs(),
+          })
+        case 'office-open-folder':
+          return ok({ opened: runtime.office.installer.openStartupFolder() })
+        case 'office-install':
+          return ok(await runtime.office.installer.install())
+        case 'office-uninstall':
+          return ok(await runtime.office.installer.uninstall())
+        case 'office-server-restart':
+          return ok(await runtime.office.restart(Number(body.port) || 0))
+        case 'cite-styles-list':
+          return ok(runtime.office.styles.list())
+        case 'cite-styles-search':
+          return ok(await runtime.office.styles.search(String(body.query ?? body.q ?? '')))
+        case 'cite-styles-install':
+          return ok(await runtime.office.styles.install({ styleID: String(body.styleID ?? '') }))
+        case 'office-dialogs':
+          return ok(runtime.office.dialogs.pendingDialogs())
+        case 'office-dialog-open':
+          return ok({
+            opened: body.id
+              ? runtime.office.dialogs.reopen(String(body.id))
+              : runtime.office.dialogs.reopenAll(),
+          })
         default:
           return fail(Object.assign(new Error(`Unknown endpoint "${endpoint}"`), { code: 'library/not-found' }))
       }

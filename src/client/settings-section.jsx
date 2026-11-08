@@ -13,6 +13,7 @@ export const SETTINGS_SAVED_EVENT = 'dsh-library:settings-saved'
 const TABS = [
   { value: 'source', label: '数据来源', id: 'lib-set-tab-source', panelId: 'lib-set-panel-source' },
   { value: 'pdf', label: 'PDF 与导出', id: 'lib-set-tab-pdf', panelId: 'lib-set-panel-pdf' },
+  { value: 'office', label: '写作插件', id: 'lib-set-tab-office', panelId: 'lib-set-panel-office' },
   { value: 'translate', label: 'AI 翻译', id: 'lib-set-tab-translate', panelId: 'lib-set-panel-translate' },
   { value: 'webdav', label: 'WebDAV 同步', id: 'lib-set-tab-webdav', panelId: 'lib-set-panel-webdav' },
   { value: 'misc', label: '更新', id: 'lib-set-tab-misc', panelId: 'lib-set-panel-misc' },
@@ -45,6 +46,11 @@ export function LibrarySettingsSection() {
   // dsh 已配置的模型（供「指定模型」下拉选择），随设置页一起加载。
   const [models, setModels] = React.useState([])
   const [currentModel, setCurrentModel] = React.useState(null)
+  // Microsoft Word 引文插件：服务 / 安装 / 样式管理。
+  const [office, setOffice] = React.useState(undefined)
+  const [styleQuery, setStyleQuery] = React.useState('')
+  const [styleResults, setStyleResults] = React.useState([])
+  const [installedStyles, setInstalledStyles] = React.useState([])
 
   const load = React.useCallback(async () => {
     try {
@@ -190,6 +196,96 @@ export function LibrarySettingsSection() {
     }
   }
 
+  const loadOffice = React.useCallback(async (fresh = false) => {
+    try {
+      const result = await api.call('office-status', { fresh })
+      setOffice(result)
+    } catch {
+      setOffice(undefined)
+    }
+  }, [])
+  React.useEffect(() => {
+    if (tab !== 'office') return
+    void loadOffice()
+    void api.call('cite-styles-list', {}).then(list => setInstalledStyles(Array.isArray(list) ? list : [])).catch(() => {})
+  }, [tab, loadOffice])
+
+  const wordInstall = async (uninstall) => {
+    setBusy('office-word')
+    setMessage('')
+    try {
+      const result = await api.call(uninstall ? 'office-uninstall' : 'office-install', {})
+      await loadOffice(true)
+      if (uninstall) {
+        setMessage('已移除 Word 引文插件，重启 Word 后生效。')
+      } else {
+        const where = Array.isArray(result?.paths) ? ` 安装位置：${result.paths.join('、')}` : ''
+        setMessage(`${result?.note ?? '安装完成。'}${where}`)
+      }
+    } catch (error) {
+      setMessage(error?.message ?? String(error))
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const officeRestart = async () => {
+    setBusy('office-restart')
+    setMessage('')
+    try {
+      await api.call('office-server-restart', {})
+      await loadOffice(true)
+      setMessage('写作插件服务已重启。')
+    } catch (error) {
+      setMessage(error?.message ?? String(error))
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const styleSearch = async () => {
+    setBusy('style-search')
+    try {
+      const list = await api.call('cite-styles-search', { query: styleQuery })
+      setStyleResults(Array.isArray(list) ? list : [])
+    } catch (error) {
+      setMessage(error?.message ?? String(error))
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const styleInstall = async (styleID) => {
+    setBusy(`style-${styleID}`)
+    try {
+      await api.call('cite-styles-install', { styleID })
+      const list = await api.call('cite-styles-list', {})
+      setInstalledStyles(Array.isArray(list) ? list : [])
+      setMessage('样式已安装，可在 Word 的「文档首选项」中选用。')
+    } catch (error) {
+      setMessage(error?.message ?? String(error))
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const openPendingDialogs = async () => {
+    try {
+      const result = await api.call('office-dialog-open', {})
+      setMessage(result?.opened ? '已在独立小窗口中重新打开待处理的引文对话框。' : '当前没有待处理的对话框。')
+    } catch (error) {
+      setMessage(error?.message ?? String(error))
+    }
+  }
+
+  const openStartupFolder = async () => {
+    try {
+      await api.call('office-open-folder', {})
+    } catch (error) {
+      setMessage(error?.message ?? String(error))
+    }
+  }
+
   const sourceLabel = snapshot?.source === 'standalone'
     ? `独立文库（${snapshot.dataDir}）`
     : snapshot?.available ? `Zotero（${snapshot.dataDir}）` : '未连接'
@@ -240,13 +336,89 @@ export function LibrarySettingsSection() {
               </div>
             </div>
             <div className="lib-settings-row">
-              <div className="lib-settings-label">导出（也是未来 Word / LibreOffice 插件的接口）</div>
+              <div className="lib-settings-label">导出</div>
               <div className="lib-settings-actions">
                 <Button variant="outline" size="sm" disabled={busy !== ''} onClick={() => exportLibrary('csl-json')}>{busy === 'export-csl-json' ? '导出中…' : '导出 CSL JSON'}</Button>
                 <Button variant="outline" size="sm" disabled={busy !== ''} onClick={() => exportLibrary('bibtex')}>{busy === 'export-bibtex' ? '导出中…' : '导出 BibTeX'}</Button>
               </div>
               <div className="lib-settings-hint">CSL JSON 可直接被 Zotero「导入…」读取。</div>
             </div>
+          </div>
+        ) : null}
+
+        {tab === 'office' ? (
+          <div id="lib-set-panel-office" role="tabpanel" aria-labelledby="lib-set-tab-office">
+            <div className="lib-settings-row">
+              <div className="lib-settings-label">Word 引文集成服务</div>
+              <div className="lib-settings-value">
+                {office === undefined ? '（加载中…）'
+                  : office.server?.running ? `运行中（127.0.0.1:${office.server.port}）` : `未运行${office.server?.error ? `：${office.server.error}` : ''}`}
+              </div>
+              <div className="lib-settings-actions">
+                <Button variant="outline" size="sm" disabled={busy !== ''} onClick={officeRestart}>重启服务</Button>
+                <Button variant="outline" size="sm" disabled={busy !== ''} onClick={openPendingDialogs}>打开待处理对话框</Button>
+              </div>
+              <div className="lib-settings-hint">
+                完整移植 Zotero 的文字处理集成：引文对话框（文献列表按关键词检索 / 文献库按分类浏览）、参考文献表、文档首选项、刷新、移除域代码、引注浏览器。
+                引文对话框在独立的无地址栏小窗口中打开（不是浏览器标签页），确定/取消后自动关闭。以 Zotero 兼容的本地 HTTP 协议与 Word 通信，域代码可与 Zotero 文档互通。
+              </div>
+            </div>
+            <div className="lib-settings-row">
+              <div className="lib-settings-label">Microsoft Word</div>
+              <div className="lib-settings-value">
+                {office?.install === undefined ? '（加载中…）'
+                  : !office.install.installed
+                    ? (office.install.available ? '未安装' : `未检测到 Word${office.install.reason ? `（${office.install.reason}）` : ''}`)
+                    : office.install.valid === false ? '已安装，但模板损坏（功能区不会出现）'
+                      : `已安装「文库引用」加载项（${office.install.modules?.length ?? 0} 个宏模块${office.install.size ? ` · ${Math.round(office.install.size / 1024)} KB` : ''}）`}
+              </div>
+              <div className="lib-settings-actions">
+                {office?.install?.installed ? (
+                  <Button variant="outline" size="sm" disabled={busy !== ''} onClick={() => wordInstall(true)}>
+                    {busy === 'office-word' ? '卸载中…' : '卸载插件'}
+                  </Button>
+                ) : (
+                  <Button variant="outline" size="sm" disabled={busy !== '' || office?.install?.available === false} onClick={() => wordInstall(false)}>
+                    {busy === 'office-word' ? '安装中…' : '安装 Word 引文插件'}
+                  </Button>
+                )}
+                <Button variant="outline" size="sm" disabled={busy !== ''} onClick={openStartupFolder}>打开启动文件夹</Button>
+              </div>
+              <div className="lib-settings-hint">
+                {office?.install?.valid === false
+                  ? `模板自检未通过：${(office.install.problems ?? []).join('；')}。请点「卸载插件」后重新「安装 Word 引文插件」。`
+                  : office?.install?.wordRunning
+                    ? '检测到 Word 正在运行：必须完全退出 Word（含后台进程）再打开，启动目录里的插件才会被加载。'
+                    : '安装后启动 Word 即出现「文库引用」选项卡；插入/编辑引注会在默认浏览器打开引注对话框。'}
+              </div>
+            </div>
+            <div className="lib-settings-row">
+              <div className="lib-settings-label">引用样式（已安装 {installedStyles.length} 个）</div>
+              <div className="lib-settings-actions">
+                <Input value={styleQuery} onChange={event => setStyleQuery(event.target.value)} placeholder="检索 Zotero 样式库" />
+                <Button variant="outline" size="sm" disabled={busy !== ''} onClick={styleSearch}>
+                  {busy === 'style-search' ? '检索中…' : '在线检索'}
+                </Button>
+              </div>
+              <div className="lib-settings-hint">
+                文档内切换样式请用 Word 功能区的「文档首选项」；这里用于预先安装样式。
+              </div>
+            </div>
+            {styleResults.length ? (
+              <div className="lib-settings-row">
+                <div className="lib-settings-label">在线样式</div>
+                <div className="lib-settings-value">
+                  {styleResults.slice(0, 8).map(style => (
+                    <div key={style.styleID} className="lib-settings-value" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <span style={{ flex: 1 }}>{style.title}</span>
+                      {style.installed ? <span className="lib-settings-hint">已安装</span> : (
+                        <Button variant="outline" size="sm" disabled={busy !== ''} onClick={() => styleInstall(style.styleID)}>安装</Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
 

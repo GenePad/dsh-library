@@ -506,7 +506,7 @@ export function createTools(deps) {
     },
     {
       name: 'library_cite',
-      description: '按条目 key 列表或搜索词导出 CSL-JSON 或 BibTeX。用户要引用格式、参考文献列表或给其他工具提供文献数据时用（也是未来 Word/LibreOffice 插件的接口）。',
+      description: '按条目 key 列表或搜索词导出 CSL-JSON 或 BibTeX。用户要引用格式、参考文献列表或给其他工具提供文献数据时用。',
       parameters: {
         type: 'object',
         properties: {

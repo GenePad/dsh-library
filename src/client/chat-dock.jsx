@@ -1,6 +1,6 @@
 import * as React from 'react'
 import * as api from './api.js'
-import { ChatIcon, ChevronDown, ExternalIcon, PlusIcon } from './icons.jsx'
+import { ChatIcon, ChevronDown, ExpandIcon, PlusIcon } from './icons.jsx'
 
 /**
  * Fixed Chat selection for the embedded Conversation occurrence (same pattern
@@ -51,6 +51,11 @@ export function ChatDock({ onLibraryChanged, openNativeSession, retainSession, S
   const [error, setError] = React.useState('')
   const [reference, setReference] = React.useState(undefined)
   const runningRef = React.useRef(false)
+  // How the displayed session was chosen: 'reader' = bound to the open
+  // article, 'list' = a list-view conversation. The AI-task hand-off needs
+  // this to tell "continue what the dock shows" from "still showing a reader
+  // binding while the user is back on the list tab".
+  const sessionModeRef = React.useRef('list')
   const contextRef = React.useRef(getContext)
   contextRef.current = getContext
   const changedRef = React.useRef(onLibraryChanged)
@@ -66,15 +71,38 @@ export function ChatDock({ onLibraryChanged, openNativeSession, retainSession, S
 
   // Hold one SessionReference while the dock shows this session; the
   // SessionProvider scope (and therefore the embedded conversation) binds to it.
+  // sessions.retain THROWS synchronously while the client catalog has not yet
+  // caught up with a session the host just created (and while the controller
+  // recycles) — a throw escaping an effect resets the whole shell back to the
+  // native conversation, so it is caught and retried here instead.
   React.useEffect(() => {
     if (!open || sessionId === '' || retainSession === undefined) return undefined
-    const abort = new AbortController()
-    const held = retainSession(sessionId, abort.signal)
-    setReference(held)
+    let cancelled = false
+    let retryTimer = 0
+    let abort = undefined
+    let held = undefined
+    const acquire = (attempt) => {
+      if (cancelled) return
+      abort = new AbortController()
+      try {
+        held = retainSession(sessionId, abort.signal)
+      } catch (error) {
+        if (attempt < 6) {
+          retryTimer = setTimeout(() => acquire(attempt + 1), 350)
+          return
+        }
+        console.warn('[dsh-library] could not retain the dock session', error)
+        return
+      }
+      setReference(held)
+    }
+    acquire(0)
     return () => {
-      abort.abort()
+      cancelled = true
+      clearTimeout(retryTimer)
+      try { abort?.abort() } catch { /* already gone */ }
       setReference(previous => (previous === held ? undefined : previous))
-      held.release()
+      try { held?.release() } catch { /* already released */ }
     }
   }, [open, sessionId, retainSession])
 
@@ -87,6 +115,7 @@ export function ChatDock({ onLibraryChanged, openNativeSession, retainSession, S
     setError('')
     const value = await api.call('chat-open', options)
     show(value)
+    sessionModeRef.current = options.bindKey ? 'reader' : 'list'
     return value.sessionId
   }
 
@@ -102,7 +131,9 @@ export function ChatDock({ onLibraryChanged, openNativeSession, retainSession, S
   /**
    * Toggle the dock. Opening decides the session from the current view:
    * reader tab → the article's bound conversation (create if unbound);
-   * plain list → a fresh conversation each time.
+   * plain list → a fresh conversation each time. The bar ONLY ever opens the
+   * dock panel — it must never navigate to the native conversation (that is
+   * what the dedicated 在原生对话界面中打开 button is for).
    */
   const toggleDock = async () => {
     if (open) {
@@ -114,20 +145,11 @@ export function ChatDock({ onLibraryChanged, openNativeSession, retainSession, S
     try {
       const context = contextRef.current?.() ?? { mode: 'list' }
       if (context.mode === 'reader' && context.itemKey) {
-        const id = await ensureSession({ bindKey: context.itemKey, title: context.itemTitle })
-        if (retainSession === undefined) {
-          if (openNativeSession) openNativeSession(id)
-        } else {
-          setOpen(true)
-        }
+        await ensureSession({ bindKey: context.itemKey, title: context.itemTitle })
       } else {
-        const id = await ensureSession({ fresh: true })
-        if (retainSession === undefined) {
-          if (openNativeSession) openNativeSession(id)
-        } else {
-          setOpen(true)
-        }
+        await ensureSession({ fresh: true })
       }
+      setOpen(true)
     } catch (failure) {
       setError(failure?.message ?? String(failure))
     } finally {
@@ -160,6 +182,10 @@ export function ChatDock({ onLibraryChanged, openNativeSession, retainSession, S
   // Imperative handle so the page can hand a task to the assistant (e.g.
   // "complete this import's metadata with the agent"): the context preamble
   // is prepended host-side, then the docked native conversation takes over.
+  // The session follows the CURRENT tab, mirroring the bar click: an article
+  // on screen → its bound conversation; the list → a NEW conversation, unless
+  // the dock is already open on a list conversation (the task then joins the
+  // visible one). It must never continue the reader's session from the list.
   React.useImperativeHandle(controller, () => ({
     async open() {
       await toggleDock()
@@ -167,10 +193,17 @@ export function ChatDock({ onLibraryChanged, openNativeSession, retainSession, S
     async openAndSend(text, context) {
       setError('')
       try {
-        const id = await ensureSession({})
+        const chatContext = context ?? contextRef.current?.() ?? { mode: 'list' }
+        let options = {}
+        if (chatContext.mode === 'reader' && chatContext.itemKey) {
+          options = { bindKey: chatContext.itemKey, title: chatContext.itemTitle }
+        } else if (!(open && sessionModeRef.current === 'list')) {
+          options = { fresh: true }
+        }
+        const id = await ensureSession(options)
         // The context preamble (list/item + abstract-first guidance) is
         // prepended host-side and only for messages sent from this dock.
-        await api.call('chat-send', { text, context: context ?? contextRef.current?.() })
+        await api.call('chat-send', { text, context: chatContext })
         if (retainSession === undefined) {
           if (openNativeSession) openNativeSession(id)
         } else {
@@ -211,7 +244,7 @@ export function ChatDock({ onLibraryChanged, openNativeSession, retainSession, S
               </button>
               {sessionId && openNativeSession ? (
                 <button className="lib-iconbtn" title="在原生对话界面中打开" onClick={jumpNative}>
-                  <ExternalIcon size={13} />
+                  <ExpandIcon size={13} />
                 </button>
               ) : null}
               <button className="lib-iconbtn" title="收起对话" onClick={() => setOpen(false)}><ChevronDown size={13} /></button>
@@ -236,9 +269,11 @@ export function ChatDock({ onLibraryChanged, openNativeSession, retainSession, S
           {busy ? '正在打开…' : running ? '正在处理…' : open ? '' : sessionId ? '点击收起或再开一个对话' : '点击开始新对话；阅读器中的文献会各自绑定一个对话'}
         </span>
         <span className="lib-chatdock-actions" onClick={event => event.stopPropagation()}>
-          <span style={{ display: 'inline-flex', alignItems: 'center' }} className={open ? '' : 'lib-dock-closed-chevron'}>
-            {open ? <ChevronDown size={13} /> : null}
-          </span>
+          {open ? (
+            <button type="button" className="lib-iconbtn" title="收起对话" onClick={() => setOpen(false)}>
+              <ChevronDown size={13} />
+            </button>
+          ) : null}
         </span>
       </div>
       {error ? <div className="lib-chatdock-error">{error}</div> : null}

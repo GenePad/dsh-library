@@ -16,15 +16,17 @@ export function LibraryFooterEntry({ wide, layout }) {
     }
   }
   return (
-    <button
-      type="button"
-      className={`lib-footer-entry${active ? ' active' : ''}${dark ? ' lib-scope-dark' : ''}`}
-      onClick={toggle}
-      title={active ? '回到对话模式' : '打开文库'}
-      aria-label={active ? '回到对话模式' : '打开文库'}
-    >
-      <LibraryIcon size={15} />
-      {wide ? <span className="lib-footer-label">{active ? '回到对话模式' : '文库'}</span> : null}
-    </button>
+    <>
+      <button
+        type="button"
+        className={`lib-footer-entry${active ? ' active' : ''}${dark ? ' lib-scope-dark' : ''}`}
+        onClick={toggle}
+        title={active ? '回到对话模式' : '打开文库'}
+        aria-label={active ? '回到对话模式' : '打开文库'}
+      >
+        <LibraryIcon size={15} />
+        {wide ? <span className="lib-footer-label">{active ? '回到对话模式' : '文库'}</span> : null}
+      </button>
+    </>
   )
 }

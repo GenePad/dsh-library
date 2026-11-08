@@ -6,7 +6,7 @@ import path from 'node:path'
 import { safeRemoveTree } from './util.js'
 
 /** Files a release carries, relative to the package root. */
-export const RELEASE_ENTRIES = ['package.json', 'index.js', 'client.js', 'cordis.patch.yml', 'icon.svg', 'src', 'vendor', 'README.md', 'LICENSE', 'AGENTS.md']
+export const RELEASE_ENTRIES = ['package.json', 'index.js', 'client.js', 'cordis.patch.yml', 'icon.svg', 'src', 'vendor', 'assets', 'README.md', 'LICENSE', 'AGENTS.md']
 
 /** Compare dotted versions; returns -1, 0 or 1. */
 export function compareVersions(left, right) {
