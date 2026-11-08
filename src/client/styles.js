@@ -224,6 +224,16 @@ body.lib-col-resizing .lib-colresize { background: color-mix(in srgb, var(--lib-
   border-radius: 0 0 5px 5px; cursor: pointer;
 }
 .lib-colmenu-restore:hover { background: var(--lib-bg-hover); color: var(--lib-text); }
+/* Two-layer column picker: checked columns (drag to reorder = header order)
+   on top, unchecked ones below. */
+.lib-colmenu-title { padding: 4px 7px 2px; font-size: 11px; font-weight: 600; color: var(--lib-text-3); user-select: none; }
+.lib-colmenu .lib-colitem-drag {
+  display: inline-flex; align-items: center; color: var(--lib-text-3);
+  font-size: 11px; letter-spacing: -1.5px; cursor: grab; user-select: none; flex: none; padding-right: 1px;
+}
+.lib-colmenu .lib-colitem:active .lib-colitem-drag { cursor: grabbing; }
+.lib-colmenu .lib-colitem-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-colmenu .lib-colitem.drag-over { background: var(--lib-accent-soft); }
 
 /* Item context menu (right-click on a row), Zotero-style: flat list with
    separators, hover-expanded submenus, fixed positioning + viewport clamp. */
@@ -263,6 +273,8 @@ body.lib-col-resizing .lib-colresize { background: color-mix(in srgb, var(--lib-
 .lib-field { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 8px; padding: 4px 2px; border-radius: 4px; align-items: start; }
 .lib-field:hover { background: var(--lib-bg-hover); }
 .lib-field-label { color: var(--lib-text-3); font-size: 12px; padding-top: 1px; overflow-wrap: anywhere; }
+.lib-field-editor { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.lib-field-hint { font-size: 11px; color: var(--lib-text-3); line-height: 1.5; overflow-wrap: anywhere; user-select: none; }
 .lib-field-value { color: var(--lib-text); overflow-wrap: anywhere; white-space: pre-wrap; min-height: 18px; }
 .lib-field-value.empty { color: var(--lib-text-3); font-style: italic; }
 .lib-field input, .lib-field textarea { width: 100%; padding: 2px 6px; font-size: 12.5px; }

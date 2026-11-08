@@ -74,7 +74,7 @@ const items = [
 const schemaTypes = [
   {
     itemType: 'journalArticle',
-    fields: ['title', 'abstractNote', 'date', 'publicationTitle', 'volume', 'issue', 'pages', 'DOI', 'ISSN', 'url', 'language', 'extra'],
+    fields: ['title', 'abstractNote', 'date', 'publicationTitle', 'volume', 'issue', 'pages', 'DOI', 'ISSN', 'url', 'language', 'shortTitle', 'extra'],
     fieldBases: {},
     creatorTypes: [{ creatorType: 'author', primary: true }, { creatorType: 'editor' }],
   },
@@ -499,6 +499,10 @@ assert.ok(afterSelect.includes('打开 PDF'), 'open button rendered')
 const fieldLabels = [...container.querySelectorAll('.lib-sectionpane[data-section="info"] .lib-field-label')].map(node => node.textContent)
 assert.ok(fieldLabels.includes('标题') && fieldLabels.includes('页码') && fieldLabels.includes('其他'), 'all type fields offered (empty ones included, extra = 其他 like Zotero)')
 assert.ok(fieldLabels.includes('添加日期') && fieldLabels.includes('修改日期'), 'read-only date rows close the info section')
+// 短标题 = the user's own key-points marker: right under the title, with a
+// hint explaining its purpose (the mock schema lists it late on purpose).
+assert.ok(fieldLabels.indexOf('短标题') === fieldLabels.indexOf('标题') + 1, '短标题 sits right under the title in the info pane')
+assert.ok(container.querySelector('.lib-sectionpane[data-section="info"]').textContent.includes('自己标记这篇文章需要关注的要点'), 'the short-title hint notes its key-points purpose')
 
 // The type menu changes the item type: a Zotero-style change-type plan runs
 // first (listing dropped fields), then the applied write re-renders.
@@ -558,6 +562,11 @@ await act(async () => {
   colBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
   await tick()
 })
+const menuSections = [...container.querySelectorAll('.lib-colmenu-title')].map(node => node.textContent)
+assert.ok(menuSections.some(text => text.includes('显示中的列')) && menuSections.some(text => text.includes('可添加的列')), 'column picker splits into checked/unchecked layers')
+const firstMenuItem = container.querySelector('.lib-colmenu .lib-colitem')
+assert.ok(firstMenuItem?.textContent.includes('短标题'), '短标题 leads the checked columns (= header order)')
+assert.ok(firstMenuItem?.querySelector('input')?.checked === true, '短标题 checked by default')
 const menuItems = [...container.querySelectorAll('.lib-colitem')].map(node => node.textContent.trim())
 assert.ok(menuItems.some(text => text.includes('出版物')), 'publication column offered')
 assert.ok(menuItems.some(text => text.includes('其他')), 'Zotero 其他 (extra) column offered')
@@ -598,6 +607,16 @@ await act(async () => {
 assert.ok(headerLabels().findIndex(text => text.includes('其他')) < headerLabels().findIndex(text => text.includes('年份')), 'dragging a header cell reorders the columns')
 const columnsSaved = JSON.parse(localStorage.getItem('dsh-library:columns'))
 assert.ok(columnsSaved.includes('extra') && columnsSaved.includes('pages'), 'visible columns persisted across sessions')
+// Reordering inside the picker: drag 短标题 onto 创建者 in the checked layer.
+await act(async () => {
+  const from = [...container.querySelectorAll('.lib-colmenu .lib-colitem')].find(node => node.textContent.includes('短标题'))
+  const to = [...container.querySelectorAll('.lib-colmenu .lib-colitem')].find(node => node.textContent.includes('创建者'))
+  from.dispatchEvent(Object.defineProperty(new window.MouseEvent('dragstart', { bubbles: true }), 'dataTransfer', { value: { setData() {}, effectAllowed: 'move' } }))
+  to.dispatchEvent(Object.defineProperty(new window.MouseEvent('drop', { bubbles: true, cancelable: true }), 'dataTransfer', { value: { getData: () => 'shortTitle' } }))
+  await tick()
+})
+const orderAfterMenu = JSON.parse(localStorage.getItem('dsh-library:columns'))
+assert.ok(orderAfterMenu.indexOf('shortTitle') > orderAfterMenu.indexOf('creator'), 'dragging inside the picker reorders the header order')
 // Header and rows share the .lib-table width wrapper so their grid tracks
 // resolve identically (alignment).
 assert.ok(container.querySelector('.lib-items > .lib-table > .lib-table-head'), 'header and rows share the .lib-table width wrapper')

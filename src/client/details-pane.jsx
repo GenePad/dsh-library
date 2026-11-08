@@ -58,7 +58,7 @@ function Section({ id, label, count, open, onToggle, actions, children }) {
   )
 }
 
-function EditableField({ field, value, onSave, autoEdit = false, readOnly = false }) {
+function EditableField({ field, value, onSave, autoEdit = false, readOnly = false, hint }) {
   const [editing, setEditing] = React.useState(autoEdit)
   const [draft, setDraft] = React.useState(value)
   React.useEffect(() => {
@@ -69,35 +69,39 @@ function EditableField({ field, value, onSave, autoEdit = false, readOnly = fals
     setEditing(false)
     if (draft !== value) onSave(draft)
   }
+  const hintNode = hint ? <span className="lib-field-hint">{hint}</span> : null
   if (editing) {
     return (
       <div className="lib-field">
         <span className="lib-field-label">{fieldLabel(field)}</span>
-        {multiline
-          ? (
-              <textarea
-                autoFocus
-                value={draft}
-                onChange={event => setDraft(event.target.value)}
-                onBlur={commit}
-                onKeyDown={(event) => {
-                  if (event.key === 'Escape') { setDraft(value); setEditing(false) }
-                  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) commit()
-                }}
-              />
-            )
-          : (
-              <input
-                autoFocus
-                value={draft}
-                onChange={event => setDraft(event.target.value)}
-                onBlur={commit}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') commit()
-                  if (event.key === 'Escape') { setDraft(value); setEditing(false) }
-                }}
-              />
-            )}
+        <span className="lib-field-editor">
+          {multiline
+            ? (
+                <textarea
+                  autoFocus
+                  value={draft}
+                  onChange={event => setDraft(event.target.value)}
+                  onBlur={commit}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') { setDraft(value); setEditing(false) }
+                    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) commit()
+                  }}
+                />
+              )
+            : (
+                <input
+                  autoFocus
+                  value={draft}
+                  onChange={event => setDraft(event.target.value)}
+                  onBlur={commit}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') commit()
+                    if (event.key === 'Escape') { setDraft(value); setEditing(false) }
+                  }}
+                />
+              )}
+          {hintNode}
+        </span>
       </div>
     )
   }
@@ -109,7 +113,10 @@ function EditableField({ field, value, onSave, autoEdit = false, readOnly = fals
       style={readOnly ? undefined : { cursor: 'text' }}
     >
       <span className="lib-field-label">{fieldLabel(field)}</span>
-      <span className={`lib-field-value${String(value ?? '') === '' ? ' empty' : ''}`}>{String(value ?? '') || '—'}</span>
+      <span className="lib-field-editor">
+        <span className={`lib-field-value${String(value ?? '') === '' ? ' empty' : ''}`}>{String(value ?? '') || '—'}</span>
+        {hintNode}
+      </span>
     </div>
   )
 }
@@ -287,7 +294,15 @@ function InfoSection({ detail, schema, onPatch, onOpenUrl, onNotify }) {
 
   // Fields valid for the type, in schema order; abstract lives in its own
   // section (Zotero's _ignoreFields), dateAdded/dateModified close the list.
+  // 短标题 is the user's own key-points marker, so it sits right under the
+  // title regardless of the schema's field order.
   const infoFields = fieldNames.filter(name => name !== 'abstractNote')
+  const shortIndex = infoFields.indexOf('shortTitle')
+  const titleIndex = infoFields.indexOf('title')
+  if (shortIndex !== -1 && titleIndex !== -1) {
+    infoFields.splice(shortIndex, 1)
+    infoFields.splice(infoFields.indexOf('title') + 1, 0, 'shortTitle')
+  }
   return (
     <>
       <div className="lib-field lib-field-type">
@@ -331,6 +346,7 @@ function InfoSection({ detail, schema, onPatch, onOpenUrl, onNotify }) {
               key={name}
               field={name}
               value={value}
+              hint={name === 'shortTitle' ? PANE_LABELS.shortTitleHint : undefined}
               onSave={(next) => {
                 const patch = { fields: { [name]: next } }
                 if (name === 'title' && String(next).trim() === '') return

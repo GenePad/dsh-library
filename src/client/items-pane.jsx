@@ -2,7 +2,7 @@ import * as React from 'react'
 import { Button } from './platform.jsx'
 import { AttachmentIcon, ChevronDown, ChevronRightIcon, LibraryIcon, NoteIcon, PdfIcon } from './icons.jsx'
 import { formatDate, itemTypeLabel } from './util.js'
-import { FIELD_LABELS } from './labels.js'
+import { FIELD_LABELS, PANE_LABELS } from './labels.js'
 
 const COLUMNS_STORAGE = 'dsh-library:columns'
 
@@ -42,14 +42,15 @@ export const COLUMN_DEFS = [
   { id: 'medium', label: FIELD_LABELS.medium, width: 80, field: 'medium' },
   { id: 'type', label: FIELD_LABELS.type, width: 80, field: 'type' },
   { id: 'system', label: FIELD_LABELS.system, width: 80, field: 'system' },
-  { id: 'shortTitle', label: FIELD_LABELS.shortTitle, width: 120, field: 'shortTitle' },
+  // 短标题 = the user's own marker for a paper's key points; shown first.
+  { id: 'shortTitle', label: FIELD_LABELS.shortTitle, width: 150, field: 'shortTitle', sort: 'field:shortTitle', hint: PANE_LABELS.shortTitleHint },
   { id: 'extra', label: FIELD_LABELS.extra, width: 110, field: 'extra' },
   { id: 'doi', label: 'DOI', width: 110, field: 'DOI', sort: 'field:DOI' },
   { id: 'tags', label: FIELD_LABELS.tags, width: 150 },
   { id: 'hasAttachment', label: '附件', width: 36, icon: 'attachment', sort: 'hasAttachment' },
   { id: 'numNotes', label: '笔记', width: 36, icon: 'note', sort: 'numNotes', numeric: true },
 ]
-const DEFAULT_COLUMNS = ['title', 'creator', 'year', 'hasAttachment']
+const DEFAULT_COLUMNS = ['shortTitle', 'title', 'creator', 'year', 'hasAttachment']
 const KNOWN = new Set(COLUMN_DEFS.map(column => column.id))
 const COLUMN_BY_ID = new Map(COLUMN_DEFS.map(column => [column.id, column]))
 const COLUMN_WIDTH_STORAGE = 'dsh-library:column-widths'
@@ -79,13 +80,15 @@ export function restoreColumnWidths() {
   return {}
 }
 
-/** Persisted visible-column order; the title column always stays. */
+/** Persisted visible-column order; the title column always stays. Older
+ * preference files are migrated so 短标题 leads the header. */
 export function restoreColumns() {
   try {
     const saved = JSON.parse(localStorage.getItem(COLUMNS_STORAGE) ?? 'null')
     if (Array.isArray(saved)) {
       const kept = saved.filter(id => KNOWN.has(id))
       if (!kept.includes('title')) kept.unshift('title')
+      if (!kept.includes('shortTitle')) kept.unshift('shortTitle')
       if (kept.length > 0) return kept
     }
   } catch {
@@ -283,6 +286,25 @@ export function ItemsPane({
     if (from && from !== id) onSetColumns(previous => reorderColumns(previous, from, id))
   }
 
+  // Reordering inside the column picker: the checked list's order IS the
+  // header order.
+  const menuDragId = React.useRef(null)
+  const startMenuDrag = (id) => (event) => {
+    menuDragId.current = id
+    try {
+      event.dataTransfer.setData('text/plain', id)
+      event.dataTransfer.effectAllowed = 'move'
+    } catch {
+      // jsdom dataTransfer is a stub; the drop handler passes the id through.
+    }
+  }
+  const dropMenuOn = (id) => (event) => {
+    event.preventDefault()
+    const from = menuDragId.current
+    menuDragId.current = null
+    if (from && from !== id) onSetColumns(previous => reorderColumns(previous, from, id))
+  }
+
   const headerCell = (column) => {
     const label = column.icon
       ? (column.icon === 'attachment' ? <AttachmentIcon size={13} /> : <NoteIcon size={13} />)
@@ -312,7 +334,7 @@ export function ItemsPane({
         className={`${sort === column.sort ? 'sorted' : ''}${column.numeric ? ' num' : ''}`}
         style={column.numeric ? { textAlign: 'right' } : undefined}
         onClick={() => onSort(column.sort)}
-        title={`按${column.label}排序（拖动可调整列顺序，右缘可调列宽）`}
+        title={`${column.hint ? `${column.label}：${column.hint}\n` : ''}按${column.label}排序（拖动可调整列顺序，右缘可调列宽）`}
       >
         {label}{sort === column.sort ? (desc ? ' ↓' : ' ↑') : ''}
         {resizeHandle(column)}
@@ -458,25 +480,55 @@ export function ItemsPane({
           <ChevronDown size={12} />
         </button>
         {menuOpen ? (
-          <div className="lib-colmenu">
-            {COLUMN_DEFS.map(column => (
-              <label
+          <div className="lib-colmenu" onDragOver={event => event.preventDefault()}>
+            <div className="lib-colmenu-title">显示中的列（拖动可调顺序）</div>
+            {columns.map((id) => {
+              const column = COLUMN_BY_ID.get(id)
+              if (!column) return null
+              return (
+                <div
+                  key={id}
+                  className={`lib-colitem${column.fixed ? ' fixed' : ''}`}
+                  draggable
+                  onDragStart={startMenuDrag(id)}
+                  onDrop={dropMenuOn(id)}
+                  onClick={(event) => {
+                    event.preventDefault()
+                    if (event.target.tagName === 'INPUT') return
+                    toggleColumn(id, column.fixed)
+                  }}
+                  title={column.hint ? `${column.label}：${column.hint}` : (column.fixed ? '标题列始终显示，可拖动调整位置' : undefined)}
+                >
+                  <span className="lib-colitem-drag" title="拖动调整列顺序">⋮⋮</span>
+                  <input
+                    type="checkbox"
+                    checked
+                    disabled={column.fixed === true}
+                    onChange={() => toggleColumn(id, column.fixed)}
+                  />
+                  <span className="lib-colitem-label">{column.label}</span>
+                </div>
+              )
+            })}
+            <div className="lib-colmenu-title">可添加的列</div>
+            {COLUMN_DEFS.filter(column => !columns.includes(column.id)).map(column => (
+              <div
                 key={column.id}
-                className={`lib-colitem${column.fixed ? ' fixed' : ''}`}
+                className="lib-colitem"
                 onClick={(event) => {
                   event.preventDefault()
-                  toggleColumn(column.id, column.fixed)
+                  if (event.target.tagName === 'INPUT') return
+                  toggleColumn(column.id, false)
                 }}
-                title={column.fixed ? '标题列始终显示' : undefined}
+                title={column.hint ? `${column.label}：${column.hint}` : undefined}
               >
                 <input
                   type="checkbox"
-                  checked={columns.includes(column.id)}
-                  disabled={column.fixed === true}
-                  onChange={() => toggleColumn(column.id, column.fixed)}
+                  checked={false}
+                  onChange={() => toggleColumn(column.id, false)}
                 />
-                {column.label}
-              </label>
+                <span className="lib-colitem-label">{column.label}</span>
+              </div>
             ))}
             <button
               type="button"

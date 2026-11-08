@@ -228,5 +228,6 @@ export const PANE_LABELS = {
     "fullName": "全称"
   },
   "dateAdded": "添加日期",
-  "dateModified": "修改日期"
+  "dateModified": "修改日期",
+  "shortTitleHint": "自己标记这篇文章需要关注的要点"
 }
