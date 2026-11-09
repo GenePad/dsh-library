@@ -4,7 +4,7 @@ import { AttachmentIcon, ChevronDown, ChevronRightIcon, LibraryIcon, NoteIcon, P
 import { formatDate, itemTypeLabel } from './util.js'
 import { FIELD_LABELS, PANE_LABELS } from './labels.js'
 
-const COLUMNS_STORAGE = 'dsh-library:columns'
+const COLUMNS_STORAGE = 'dsh-zot-library:columns'
 
 /**
  * Every column the item list can show — Zotero's itemTreeColumns set (the
@@ -56,7 +56,7 @@ const DEFAULT_COLUMNS = ['shortTitle', 'title', 'creator', 'year', 'publicationT
 const LEGACY_DEFAULT_COLUMNS = ['shortTitle', 'title', 'creator', 'year', 'hasAttachment']
 const KNOWN = new Set(COLUMN_DEFS.map(column => column.id))
 const COLUMN_BY_ID = new Map(COLUMN_DEFS.map(column => [column.id, column]))
-const COLUMN_WIDTH_STORAGE = 'dsh-library:column-widths'
+const COLUMN_WIDTH_STORAGE = 'dsh-zot-library:column-widths'
 const COLUMN_MIN_WIDTH = 24
 const COLUMN_MAX_WIDTH = 1000
 // Columns whose values come from dedicated list fields, not itemData.

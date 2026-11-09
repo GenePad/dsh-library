@@ -5,7 +5,7 @@ import { bootBench, waitPainted } from './bench-harness.mjs'
 
 const SAMPLE = process.argv[2] ?? 'C:\\Users\\moqiq\\Zotero\\storage\\23AXRUBB\\2019-Nature Communications-A genetically encoded probe for imaging nascent and mature HA-tagged proteins.pdf'
 
-const { page, close } = await bootBench(SAMPLE, { dirName: 'dsh-library-openbench' })
+const { page, close } = await bootBench(SAMPLE, { dirName: 'dsh-zot-library-openbench' })
 await page.evaluate('window.__mark("click")')
 await page.click('button:has-text("打开 PDF")')
 

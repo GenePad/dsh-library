@@ -618,13 +618,13 @@ await act(async () => {
 assert.ok(container.querySelector('.lib-right-rail'), 'collapsed state renders the expand rail')
 assert.ok(!container.querySelector('.lib-right-collapse'), 'details pane is gone while collapsed')
 assert.ok(container.querySelector('.lib-main.lib-main-no-details'), 'grid reserves only the rail width')
-assert.equal(localStorage.getItem('dsh-library:details-open'), '0', 'collapsed layout is remembered')
+assert.equal(localStorage.getItem('dsh-zot-library:details-open'), '0', 'collapsed layout is remembered')
 await act(async () => {
   container.querySelector('.lib-right-rail').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
   await tick()
 })
 assert.ok(container.querySelector('.lib-right-collapse'), 'the rail expands the pane again')
-assert.equal(localStorage.getItem('dsh-library:details-open'), '1', 'expanded layout is remembered again')
+assert.equal(localStorage.getItem('dsh-zot-library:details-open'), '1', 'expanded layout is remembered again')
 
 // Zotero's item tree: a parent with attachments expands into indented child
 // rows (twisty column); children select/open like regular items.
@@ -695,7 +695,7 @@ await act(async () => {
   await tick()
 })
 assert.ok(headerLabels().findIndex(text => text.includes('其他')) < headerLabels().findIndex(text => text.includes('年份')), 'dragging a header cell reorders the columns')
-const columnsSaved = JSON.parse(localStorage.getItem('dsh-library:columns'))
+const columnsSaved = JSON.parse(localStorage.getItem('dsh-zot-library:columns'))
 assert.ok(columnsSaved.includes('extra') && columnsSaved.includes('pages'), 'visible columns persisted across sessions')
 // Reordering inside the picker: drag 短标题 onto 创建者 in the checked layer.
 await act(async () => {
@@ -705,7 +705,7 @@ await act(async () => {
   to.dispatchEvent(Object.defineProperty(new window.MouseEvent('drop', { bubbles: true, cancelable: true }), 'dataTransfer', { value: { getData: () => 'shortTitle' } }))
   await tick()
 })
-const orderAfterMenu = JSON.parse(localStorage.getItem('dsh-library:columns'))
+const orderAfterMenu = JSON.parse(localStorage.getItem('dsh-zot-library:columns'))
 assert.ok(orderAfterMenu.indexOf('shortTitle') > orderAfterMenu.indexOf('creator'), 'dragging inside the picker reorders the header order')
 // Header drag advertises move (the container's file-import copy effect used to
 // clobber it → forbidden cursor everywhere) and hovering another cell pushes
@@ -725,7 +725,7 @@ await act(async () => {
   pushFrom.dispatchEvent(Object.defineProperty(new window.MouseEvent('drop', { bubbles: true, cancelable: true }), 'dataTransfer', { value: { getData: () => 'year' } }))
   await tick()
 })
-const orderAfterPush = JSON.parse(localStorage.getItem('dsh-library:columns'))
+const orderAfterPush = JSON.parse(localStorage.getItem('dsh-zot-library:columns'))
 assert.ok(orderAfterPush.indexOf('year') < orderAfterPush.indexOf('creator'), 'drop commits the previewed push-aside slot')
 assert.ok(!container.querySelector('.lib-table.lib-coldrag'), 'drag state clears after the drop')
 // Header and rows share the .lib-table width wrapper so their grid tracks
@@ -742,7 +742,7 @@ await act(async () => {
   document.dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true }))
   await tick()
 })
-const widthsSaved = JSON.parse(localStorage.getItem('dsh-library:column-widths'))
+const widthsSaved = JSON.parse(localStorage.getItem('dsh-zot-library:column-widths'))
 assert.ok(widthsSaved && Object.keys(widthsSaved).length > 0, 'dragging the edge persists a column width')
 const savedWidth = Object.values(widthsSaved)[0]
 assert.ok(container.querySelector('.lib-itemrow').style.gridTemplateColumns.includes(`${savedWidth}px`), 'the new width drives the row grid')
@@ -1217,7 +1217,7 @@ assert.ok(!container.querySelector('.lib-sel-trans'), 'popup closed after adding
 // 翻译就开始，无需点「译」。
 stateSettings.translate.auto = true
 await act(async () => {
-  window.dispatchEvent(new window.CustomEvent('dsh-library:settings-saved', {
+  window.dispatchEvent(new window.CustomEvent('dsh-zot-library:settings-saved', {
     detail: { ...stateSettings, translate: { ...stateSettings.translate } },
   }))
   for (let i = 0; i < 4; i += 1) await tick()
@@ -1304,7 +1304,7 @@ await act(async () => {
 })
 assert.ok(container.querySelector('.lib-pdf-split.axis-v'), 'switching to 纵向 (left/right) flips the flex direction')
 assert.equal(container.querySelectorAll('.lib-rdr-pane').length, 2, 'switching the axis keeps both panes mounted')
-assert.equal(localStorage.getItem('dsh-library:reader-split'), 'v', 'split direction is remembered')
+assert.equal(localStorage.getItem('dsh-zot-library:reader-split'), 'v', 'split direction is remembered')
 const axisBack = [...container.querySelectorAll('.lib-rdr-btn')].find(node => node.textContent === '纵向')
 await act(async () => {
   axisBack.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))

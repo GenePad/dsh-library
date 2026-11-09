@@ -14,10 +14,10 @@ import {
 import { Button } from './platform.jsx'
 import { fileBase64, filePathOf, itemTypeLabel, useDarkMode, useDebounced, probeSidebarOpen } from './util.js'
 
-const VIEW_STORAGE = 'dsh-library:view'
-const SORT_STORAGE = 'dsh-library:sort'
+const VIEW_STORAGE = 'dsh-zot-library:view'
+const SORT_STORAGE = 'dsh-zot-library:sort'
 // Right pane (文献信息) visibility, remembered across sessions like view/sort.
-const DETAILS_STORAGE = 'dsh-library:details-open'
+const DETAILS_STORAGE = 'dsh-zot-library:details-open'
 
 function flattenCollections(nodes, depth = 0, out = []) {
   for (const node of nodes ?? []) {
@@ -387,8 +387,8 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
       localStorage.setItem(VIEW_STORAGE, JSON.stringify(view))
       localStorage.setItem(SORT_STORAGE, JSON.stringify({ sort, desc }))
       localStorage.setItem(DETAILS_STORAGE, detailsOpen ? '1' : '0')
-      localStorage.setItem('dsh-library:columns', JSON.stringify(columns))
-      localStorage.setItem('dsh-library:column-widths', JSON.stringify(columnWidths))
+      localStorage.setItem('dsh-zot-library:columns', JSON.stringify(columns))
+      localStorage.setItem('dsh-zot-library:column-widths', JSON.stringify(columnWidths))
     } catch {
       // Preferences are optional.
     }
@@ -1147,7 +1147,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
     return { mode: 'list' }
   }, [])
 
-  const rootClass = dark ? 'dsh-library-root lib-scope-dark' : 'dsh-library-root'
+  const rootClass = dark ? 'dsh-zot-library-root lib-scope-dark' : 'dsh-zot-library-root'
 
   if (booting) {
     return <div className={rootClass}><div className="lib-empty" style={{ marginTop: 80 }}>正在连接文库…</div></div>
@@ -1336,7 +1336,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
               onCreateCollection={() => setCollectionDialog({ open: true, mode: 'create', target: undefined })}
               onCollectionContext={(_event, node) => setCollectionDialog({ open: true, mode: 'rename', target: node })}
               onBackToChat={() => {
-                try { layout?.selectPanel?.(null) } catch (error) { console.warn('[dsh-library] selectPanel failed', error) }
+                try { layout?.selectPanel?.(null) } catch (error) { console.warn('[dsh-zot-library] selectPanel failed', error) }
               }}
             />
             <div className="lib-midcol">

@@ -9,7 +9,7 @@ import { createItem, createStoredAttachment } from '../src/host/write.js'
 import { WebDavClient, syncStorage, parseMultistatus } from '../src/host/webdav.js'
 import { unzipSync, zipSync } from '../vendor/deps.js'
 
-const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-library-dav-'))
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-zot-library-dav-'))
 const sourceDb = path.join(process.env.USERPROFILE ?? os.homedir(), 'Zotero', 'zotero.sqlite')
 if (!fs.existsSync(sourceDb)) {
   console.log('webdav-smoke: skipped (no Zotero database to clone)')

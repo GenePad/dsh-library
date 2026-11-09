@@ -110,7 +110,7 @@ export class ZoteroDb {
     const versionRow = this.get("SELECT version FROM version WHERE schema = 'userdata'")
     const schemaVersion = Number(versionRow?.version ?? 0)
     if (schemaVersion > MAX_SUPPORTED_SCHEMA) {
-      throw new Error(`library: this zotero.sqlite uses userdata schema ${schemaVersion}; dsh-library supports up to ${MAX_SUPPORTED_SCHEMA}. Update dsh-library.`)
+      throw new Error(`library: this zotero.sqlite uses userdata schema ${schemaVersion}; dsh-zot-library supports up to ${MAX_SUPPORTED_SCHEMA}. Update dsh-zot-library.`)
     }
     const library = this.get("SELECT libraryID, version, storageVersion FROM libraries WHERE type = 'user' ORDER BY libraryID LIMIT 1")
     const itemTypes = new Map()

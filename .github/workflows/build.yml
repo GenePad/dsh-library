@@ -1,9 +1,9 @@
-# Manual npm-bundle build for dsh-library (configuration follows GenePad/GenePad's
+# Manual npm-bundle build for dsh-zot-library (configuration follows GenePad/GenePad's
 # build.yml: manual trigger, previous runs cleaned up, artifacts kept for two
 # days, rolling prerelease on the default branch).
 #
 # The npm bundle (.tgz) installs into a dsh profile:
-#   dsh plugin --profile desktop add dsh-zlibrary-<version>.tgz
+#   dsh plugin --profile desktop add dsh-zot-library-<version>.tgz
 # The in-app updater is NOT served from Releases — it reads feed/manifest.json
 # at the repository root (files are committed), so this workflow never pushes
 # to main.
@@ -180,7 +180,7 @@ jobs:
             echo "BUILD_TIME=$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
             echo "VERSION=${VERSION}"
             echo "RELEASE_TAG=prerelease"
-            echo "RELEASE_TITLE=dsh-library v${VERSION} (prerelease)"
+            echo "RELEASE_TITLE=dsh-zot-library v${VERSION} (prerelease)"
           } >> "$GITHUB_ENV"
 
       - name: Delete existing prerelease
@@ -209,7 +209,7 @@ jobs:
             printf 'This is a prerelease rebuilt on every manual run of the Build workflow, replacing the previous one.\n\n'
             printf '## Install\n\n'
             printf '```sh\n'
-            printf 'dsh plugin --profile desktop add dsh-zlibrary-%s.tgz\n' "$VERSION"
+            printf 'dsh plugin --profile desktop add dsh-zot-library-%s.tgz\n' "$VERSION"
             printf '```\n\n'
             printf 'After installing, restart dsh to load the new code.\n\n'
             printf '## SHA256 checksums\n\n```text\n'

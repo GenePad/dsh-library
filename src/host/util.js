@@ -114,7 +114,7 @@ export function safeRemoveTree(dir) {
 export async function fetchJson(url, options = {}) {
   const response = await fetch(url, {
     ...options,
-    headers: { 'user-agent': 'dsh-library/0.1 (Zotero-compatible research library)', ...(options.headers ?? {}) },
+    headers: { 'user-agent': 'dsh-zot-library/0.1 (Zotero-compatible research library)', ...(options.headers ?? {}) },
     signal: options.signal ?? AbortSignal.timeout(20_000),
   })
   if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`)

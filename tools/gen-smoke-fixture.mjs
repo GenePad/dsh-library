@@ -10,11 +10,11 @@ const bodies = [
   '<< /Type /Catalog /Pages 2 0 R >>',
   '<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>',
   '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> /Annots [7 0 R 8 0 R] >>',
-  stream('BT /F1 18 Tf 72 720 Td (dsh-library smoke page) Tj ET\nBT /F1 14 Tf 72 690 Td (Go to page two) Tj ET'),
+  stream('BT /F1 18 Tf 72 720 Td (dsh-zot-library smoke page) Tj ET\nBT /F1 14 Tf 72 690 Td (Go to page two) Tj ET'),
   '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
   '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 9 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
   '<< /Type /Annot /Subtype /Link /Rect [70 684 210 702] /Border [0 0 0] /Dest [6 0 R /XYZ null null null] >>',
-  '<< /Type /Annot /Subtype /Link /Rect [70 714 320 736] /Border [0 0 0] /A << /S /URI /URI (https://example.org/dsh-library-smoke) >> >>',
+  '<< /Type /Annot /Subtype /Link /Rect [70 714 320 736] /Border [0 0 0] /A << /S /URI /URI (https://example.org/dsh-zot-library-smoke) >> >>',
   stream('BT /F1 18 Tf 72 720 Td (smoke page two) Tj ET'),
 ]
 

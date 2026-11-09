@@ -45,7 +45,7 @@ const SPLIT_MIN = 0.18
 const SPLIT_MAX = 0.82
 // Split direction preference ('h' = 上下横向, 'v' = 左右纵向), remembered across
 // sessions like the other view preferences.
-const SPLIT_AXIS_STORAGE = 'dsh-library:reader-split'
+const SPLIT_AXIS_STORAGE = 'dsh-zot-library:reader-split'
 
 function restoreSplitAxis() {
   try {

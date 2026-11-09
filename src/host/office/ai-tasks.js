@@ -21,7 +21,7 @@ import { randomString } from './constants.js'
 import { PLUGIN_SOURCE_ROOT } from '../plugin-root.js'
 
 function sourceFixHint() {
-  return `遇到暂时无法解决的报错（如写回通道、插件服务本身的问题）：先向用户说明原因，并询问是否允许你直接修改 dsh-library 插件源码（${PLUGIN_SOURCE_ROOT}）来修复；用户允许后即可自行查看、修改源码并重载插件（禁用→启用 dsh-library bundle）后重试。`
+  return `遇到暂时无法解决的报错（如写回通道、插件服务本身的问题）：先向用户说明原因，并询问是否允许你直接修改 dsh-zot-library 插件源码（${PLUGIN_SOURCE_ROOT}）来修复；用户允许后即可自行查看、修改源码并重载插件（禁用→启用 dsh-zot-library bundle）后重试。`
 }
 
 const TASK_TTL = 30 * 60_000

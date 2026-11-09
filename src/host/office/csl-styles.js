@@ -226,7 +226,7 @@ export function createStyleStore({ logger = console, packageDir, home }) {
     let source = typeof xml === 'string' && xml.startsWith('<') ? xml : null
     if (!source) {
       const response = await fetch(`${STYLE_DOWNLOAD}${short}`, {
-        headers: { 'user-agent': 'dsh-library/0.1 (Zotero-compatible research library)' },
+        headers: { 'user-agent': 'dsh-zot-library/0.1 (Zotero-compatible research library)' },
         signal: AbortSignal.timeout(25_000),
       })
       if (!response.ok) throw new Error(`下载样式失败（HTTP ${response.status}）：${short}`)

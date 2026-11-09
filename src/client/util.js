@@ -148,7 +148,7 @@ export function probeSidebarOpen() {
     const viewportWidth = window.innerWidth || 1200
     const viewportHeight = window.innerHeight || 800
     for (const element of document.body.querySelectorAll('aside, nav, [class*="sidebar"], [class*="Sidebar"]')) {
-      if (element.closest('.dsh-library-root')) continue
+      if (element.closest('.dsh-zot-library-root')) continue
       const style = window.getComputedStyle(element)
       if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) continue
       const rect = element.getBoundingClientRect()

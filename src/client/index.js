@@ -1,11 +1,11 @@
-// Browser half of dsh-library: a Zotero-like library rendered as a main panel.
+// Browser half of dsh-zot-library: a Zotero-like library rendered as a main panel.
 import { LibraryPage } from './library-page.jsx'
 import { LibraryFooterEntry } from './footer.jsx'
 import { LibraryChatArea } from './chat-dock.jsx'
 import { LibrarySettingsSection } from './settings-section.jsx'
 import { installStyles } from './styles.js'
 
-export const name = 'dsh-zlibrary'
+export const name = 'dsh-zot-library'
 export const inject = ['slots', 'layout']
 
 /**
@@ -79,7 +79,7 @@ function dispatchSettingsShortcut(shortcuts) {
           cancelable: true,
         }))
       } catch (error) {
-        console.warn('[dsh-library] opening the settings panel failed', error)
+        console.warn('[dsh-zot-library] opening the settings panel failed', error)
       }
     }
   }
@@ -89,11 +89,24 @@ function dispatchSettingsShortcut(shortcuts) {
 export function apply(ctx) {
   ctx.effect(() => installStyles(), 'library: styles')
 
+  // One-time carry-over of UI prefs saved under the previous package name's
+  // prefix (dsh-library → dsh-zlibrary → dsh-zot-library). Idempotent: after
+  // the first run the legacy keys are gone and this becomes a no-op.
+  ctx.effect(() => {
+    for (const suffix of ['view', 'sort', 'details-open', 'columns', 'column-widths', 'sections', 'collections-expanded', 'reader-split']) {
+      const legacy = localStorage.getItem(`dsh-library:${suffix}`)
+      if (legacy === null) continue
+      const key = `dsh-zot-library:${suffix}`
+      if (localStorage.getItem(key) === null) localStorage.setItem(key, legacy)
+      localStorage.removeItem(`dsh-library:${suffix}`)
+    }
+  }, 'library: storage migration')
+
   // The left sidebar's foot entry, beside Settings: one click opens the library,
   // a second click returns to the conversation.
   ctx.effect(() => ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
     name: 'sidebar.footer.action',
-    id: 'dsh-library',
+    id: 'dsh-zot-library',
     order: -50,
     inject: () => ({ layout: ctx.layout }),
   }, LibraryFooterEntry)), 'library: sidebar entry')

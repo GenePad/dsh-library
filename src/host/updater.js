@@ -150,7 +150,7 @@ export class PluginUpdater {
   async check() {
     const url = this.feedUrl()
     if (url === '') return { ...this.status(), available: false, reason: 'no-feed' }
-    const response = await fetch(url, { headers: { 'user-agent': 'dsh-library/updater' }, signal: AbortSignal.timeout(20_000) })
+    const response = await fetch(url, { headers: { 'user-agent': 'dsh-zot-library/updater' }, signal: AbortSignal.timeout(20_000) })
     if (!response.ok) throw new Error(`library: update feed answered HTTP ${response.status}`)
     const manifest = parseManifest(await response.json(), url)
     const available = compareVersions(manifest.version, this.currentVersion) > 0
@@ -184,7 +184,7 @@ export class PluginUpdater {
       safeRemoveTree(stage)
       fs.mkdirSync(stage, { recursive: true })
       for (const file of manifest.files) {
-        const response = await fetch(file.url, { headers: { 'user-agent': 'dsh-library/updater' }, signal: AbortSignal.timeout(300_000) })
+        const response = await fetch(file.url, { headers: { 'user-agent': 'dsh-zot-library/updater' }, signal: AbortSignal.timeout(300_000) })
         if (!response.ok) throw new Error(`library: could not download ${file.path} (HTTP ${response.status})`)
         const buffer = Buffer.from(await response.arrayBuffer())
         if (buffer.byteLength !== file.size) throw new Error(`library: ${file.path} size mismatch`)

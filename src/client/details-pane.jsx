@@ -10,7 +10,7 @@ import {
   itemTypeLabel, itemTypeLabel as typeLabel,
 } from './util.js'
 
-const SECTIONS_STORAGE = 'dsh-library:sections'
+const SECTIONS_STORAGE = 'dsh-zot-library:sections'
 // Zotero shows the first five creators and truncates the rest behind a
 // "还有 N 个…" row.
 const INITIAL_VISIBLE_CREATORS = 5

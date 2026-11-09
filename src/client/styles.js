@@ -5,7 +5,7 @@
 // `lib-scope-dark` (set by useDarkMode) swaps the fallbacks for dark ones —
 // tokens still win whenever they exist.
 const CSS = `
-.dsh-library-root {
+.dsh-zot-library-root {
   --lib-bg: var(--dsw-alias-bg-base, #ffffff);
   --lib-bg-soft: var(--dsw-alias-bg-layer-2, #f6f6f4);
   --lib-bg-overlay: var(--dsw-alias-bg-overlay, #ffffff);
@@ -34,7 +34,7 @@ const CSS = `
   font-size: 13px;
   line-height: 1.45;
 }
-.lib-scope-dark, .lib-scope-dark.dsh-library-root {
+.lib-scope-dark, .lib-scope-dark.dsh-zot-library-root {
   --lib-bg: var(--dsw-alias-bg-base, #17171a);
   --lib-bg-soft: var(--dsw-alias-bg-layer-2, #1f1f23);
   --lib-bg-overlay: var(--dsw-alias-bg-overlay, #242429);
@@ -49,26 +49,26 @@ const CSS = `
   --lib-danger: var(--dsw-alias-state-error-primary, #e8696a);
   --lib-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
 }
-.dsh-library-root *, .dsh-library-root *::before, .dsh-library-root *::after { box-sizing: border-box; }
+.dsh-zot-library-root *, .dsh-zot-library-root *::before, .dsh-zot-library-root *::after { box-sizing: border-box; }
 /* Only our own controls are reset, so native dsh Button atoms keep their look. */
-.dsh-library-root .lib-btn, .dsh-library-root .lib-send, .dsh-library-root .lib-tab,
-.dsh-library-root .lib-table-head button, .dsh-library-root .lib-banner button,
-.dsh-library-root .lib-tag-remove, .dsh-library-root .lib-chatdock-bar, .dsh-library-root .lib-colbtn,
-.dsh-library-root .lib-tagchip, .dsh-library-root .lib-choice-card, .dsh-library-root .lib-iconbtn {
+.dsh-zot-library-root .lib-btn, .dsh-zot-library-root .lib-send, .dsh-zot-library-root .lib-tab,
+.dsh-zot-library-root .lib-table-head button, .dsh-zot-library-root .lib-banner button,
+.dsh-zot-library-root .lib-tag-remove, .dsh-zot-library-root .lib-chatdock-bar, .dsh-zot-library-root .lib-colbtn,
+.dsh-zot-library-root .lib-tagchip, .dsh-zot-library-root .lib-choice-card, .dsh-zot-library-root .lib-iconbtn {
   font: inherit; color: inherit; background: none; border: none; padding: 0; cursor: pointer;
 }
-.dsh-library-root input, .dsh-library-root textarea, .dsh-library-root select {
+.dsh-zot-library-root input, .dsh-zot-library-root textarea, .dsh-zot-library-root select {
   font: inherit; color: var(--lib-text); background: var(--lib-bg); border: 1px solid var(--lib-border);
   border-radius: var(--lib-radius); outline: none;
 }
-.dsh-library-root select option, .dsh-library-root select optgroup {
+.dsh-zot-library-root select option, .dsh-zot-library-root select optgroup {
   background: var(--lib-bg-overlay); color: var(--lib-text);
 }
-.dsh-library-root input:focus, .dsh-library-root textarea:focus, .dsh-library-root select:focus { border-color: var(--lib-accent); }
-.dsh-library-root input[type="checkbox"], .dsh-library-root input[type="radio"] { accent-color: var(--lib-accent); }
-.dsh-library-root ::-webkit-scrollbar { width: 10px; height: 10px; }
-.dsh-library-root ::-webkit-scrollbar-thumb { background: var(--lib-border); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
-.dsh-library-root ::-webkit-scrollbar-track { background: transparent; }
+.dsh-zot-library-root input:focus, .dsh-zot-library-root textarea:focus, .dsh-zot-library-root select:focus { border-color: var(--lib-accent); }
+.dsh-zot-library-root input[type="checkbox"], .dsh-zot-library-root input[type="radio"] { accent-color: var(--lib-accent); }
+.dsh-zot-library-root ::-webkit-scrollbar { width: 10px; height: 10px; }
+.dsh-zot-library-root ::-webkit-scrollbar-thumb { background: var(--lib-border); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+.dsh-zot-library-root ::-webkit-scrollbar-track { background: transparent; }
 
 .lib-toolbar {
   display: flex; align-items: center; gap: 8px; height: 44px; flex: none;
@@ -91,7 +91,7 @@ const CSS = `
 .lib-btn.icon { width: 28px; padding: 0; justify-content: center; }
 .lib-btn.danger { color: var(--lib-danger); }
 /* A native dsh Button styled as destructive. */
-.dsh-library-root .lib-danger-text { color: var(--lib-danger); }
+.dsh-zot-library-root .lib-danger-text { color: var(--lib-danger); }
 
 .lib-main { flex: 1; display: grid; grid-template-columns: 212px minmax(340px, 1fr) 340px; min-height: 0; }
 .lib-col { min-height: 0; overflow: hidden; }
@@ -755,7 +755,7 @@ body.lib-col-resizing .lib-colresize { background: color-mix(in srgb, var(--lib-
 .lib-footer-entry:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(38,49,72,0.06)); color: var(--dsw-alias-label-primary, #1f1f1f); }
 .lib-footer-entry.active { background: color-mix(in srgb, var(--dsw-alias-brand-primary, #4176e6) 14%, transparent); color: var(--dsw-alias-label-primary, #1f1f1f); }
 .lib-footer-entry .lib-footer-label { font-size: 12px; white-space: nowrap; }
-/* The footer entry renders outside .dsh-library-root; the dark scope rides on it directly. */
+/* The footer entry renders outside .dsh-zot-library-root; the dark scope rides on it directly. */
 .lib-scope-dark.lib-footer-entry { color: var(--dsw-alias-label-secondary, #b6b6bd); }
 .lib-scope-dark.lib-footer-entry:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(255,255,255,0.07)); color: var(--dsw-alias-label-primary, #ececf1); }
 .lib-scope-dark.lib-footer-entry.active { background: color-mix(in srgb, var(--dsw-alias-brand-primary, #6c93f0) 18%, transparent); color: var(--dsw-alias-label-primary, #ececf1); }
@@ -799,7 +799,7 @@ body.lib-col-resizing .lib-colresize { background: color-mix(in srgb, var(--lib-
 
 /** Install the stylesheet once; returns a disposer. */
 export function installStyles() {
-  const existing = document.querySelector('style[data-dsh-library-styles]')
+  const existing = document.querySelector('style[data-dsh-zot-library-styles]')
   if (existing) return () => {}
   const style = document.createElement('style')
   style.dataset.dshLibraryStyles = 'true'

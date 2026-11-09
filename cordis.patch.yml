@@ -1,4 +1,4 @@
-# dsh-zlibrary bundle patch.
+# dsh-zot-library bundle patch.
 #
 # One insert row mounts the Host half; the browser half is attached by the
 # package.json `dsh.client` declaration and binds to this row because its
@@ -8,5 +8,5 @@
 # browser half (the sidebar entry disappears with no error).
 - insert:
     - id: library
-      name: dsh-zlibrary
+      name: dsh-zot-library
       config: {}

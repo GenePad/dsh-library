@@ -9,7 +9,7 @@ const argv = process.argv.slice(2)
 const SAMPLE = argv.find(arg => !arg.startsWith('--')) ?? 'C:\\Users\\moqiq\\Zotero\\storage\\23AXRUBB\\2019-Nature Communications-A genetically encoded probe for imaging nascent and mature HA-tagged proteins.pdf'
 const BACKWARDS = argv.includes('--back')
 
-const { page, close } = await bootBench(SAMPLE, { dirName: 'dsh-library-pagesbench' })
+const { page, close } = await bootBench(SAMPLE, { dirName: 'dsh-zot-library-pagesbench' })
 await page.click('button:has-text("打开 PDF")')
 await page.waitForSelector('.lib-pdf-page[data-page="1"]', { timeout: 60_000 })
 await waitPainted(page, 1)

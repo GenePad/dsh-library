@@ -24,7 +24,7 @@ const mockDataJs = JSON.stringify({
  * Boot a benchmark page over one PDF sample.
  * @returns {{browser:object, page:object, close:async ()=>void}}
  */
-export async function bootBench(samplePath, { dirName = 'dsh-library-bench', viewport = { width: 1400, height: 1000 } } = {}) {
+export async function bootBench(samplePath, { dirName = 'dsh-zot-library-bench', viewport = { width: 1400, height: 1000 } } = {}) {
   const DIR = path.join(process.env.TEMP ?? '/tmp', dirName)
   fs.rmSync(DIR, { recursive: true, force: true })
   fs.mkdirSync(DIR, { recursive: true })

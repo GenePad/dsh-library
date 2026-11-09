@@ -1,4 +1,4 @@
-# dsh-library
+# dsh-zot-library
 
 ## 这是什么
 
@@ -18,9 +18,11 @@
 
 在 dsh 里安装（三选一），安装后**重启 dsh** 生效：
 
-1. **npm 包名**：在 dsh 的插件安装入口填包名 `dsh-zlibrary`。
-2. **GitHub 地址**：填 `https://github.com/GenePad/dsh-zlibrary`。
-3. **让 agent 装**：在 dsh 对话里直接说——「用 plugin manager 从 https://github.com/GenePad/dsh-zlibrary 安装 dsh-zlibrary 插件」。
+1. **npm 包名**：在 dsh 的插件安装入口填包名 `dsh-zot-library`。
+2. **GitHub 地址**：填 `https://github.com/GenePad/dsh-zot-library`。
+3. **让 agent 装**：在 dsh 对话里直接说——「用 plugin manager 从 https://github.com/GenePad/dsh-zot-library 安装 dsh-zot-library 插件」。
+
+> 旧包名 `dsh-zlibrary` 已更名弃用：已安装旧版的请先在插件管理器卸载，再用新包名 / 新仓库地址重装。
 
 ## 怎么进入主界面
 

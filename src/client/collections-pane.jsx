@@ -7,7 +7,7 @@ import {
 // The collection tree's expansion state survives panel switches and restarts,
 // so a restored selection is visible immediately instead of buried under
 // collapsed roots.
-const EXPANDED_STORAGE = 'dsh-library:collections-expanded'
+const EXPANDED_STORAGE = 'dsh-zot-library:collections-expanded'
 
 function restoreExpanded() {
   try {

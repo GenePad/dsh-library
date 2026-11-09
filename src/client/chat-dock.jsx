@@ -95,7 +95,7 @@ export function ChatDock({ onLibraryChanged, openNativeSession, retainSession, S
           retryTimer = setTimeout(() => acquire(attempt + 1), 350)
           return
         }
-        console.warn('[dsh-library] could not retain the dock session', error)
+        console.warn('[dsh-zot-library] could not retain the dock session', error)
         return
       }
       setReference(held)

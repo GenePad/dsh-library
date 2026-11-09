@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { safeRemoveTree } from '../src/host/util.js'
 
-const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-library-smoke-'))
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-zot-library-smoke-'))
 process.env.DSH_HOME = path.join(tempRoot, 'dsh-home')
 // Every "open" lands in this JSONL file instead of spawning a real browser /
 // Explorer (open.js reads the env at import time — set it before index.js).
@@ -247,14 +247,14 @@ if (hasRealLibrary) {
   // Create → update → tags → trash → restore → delete.
   const created = await call('create', {
     itemType: 'journalArticle',
-    fields: { title: 'dsh-library smoke item', date: '2026', DOI: '10.0000/smoke', pages: '1-10' },
+    fields: { title: 'dsh-zot-library smoke item', date: '2026', DOI: '10.0000/smoke', pages: '1-10' },
     creators: [{ firstName: 'San', lastName: 'Zhang', creatorType: 'author' }],
     tags: ['smoke'],
   })
   assert.equal(created.ok, true, JSON.stringify(created))
   const key = created.value.key
   const createdDetail = await call('item', { key })
-  assert.equal(createdDetail.value.title, 'dsh-library smoke item')
+  assert.equal(createdDetail.value.title, 'dsh-zot-library smoke item')
   assert.equal(createdDetail.value.creators[0].lastName, 'Zhang')
   assert.deepEqual(createdDetail.value.tags.map(tag => tag.name), ['smoke'])
 
@@ -275,7 +275,7 @@ if (hasRealLibrary) {
   assert.equal(bookDetail.value.itemType, 'book', 'type row switched to book')
   assert.ok(!bookDetail.value.fields.some(field => field.field === 'pages'), 'dropped fields removed on type change')
   assert.ok(bookDetail.value.fields.some(field => field.field === 'DOI' && field.value === '10.0000/smoke'), 'fields valid for both types survive')
-  assert.ok(bookDetail.value.fields.some(field => field.field === 'title' && field.value === 'dsh-library smoke item'), 'title survived the type change')
+  assert.ok(bookDetail.value.fields.some(field => field.field === 'title' && field.value === 'dsh-zot-library smoke item'), 'title survived the type change')
   await call('change-type', { key, itemType: 'journalArticle', confirm: true })
 
   // Notes and web-link attachments (Zotero's 添加笔记 / 添加网页链接).
@@ -387,7 +387,7 @@ if (hasRealLibrary) {
       lookup: false,
       metadata: {
         itemType: 'journalArticle',
-        fields: { title: 'dsh-library imported parent', date: '2025', DOI: '10.0000/import' },
+        fields: { title: 'dsh-zot-library imported parent', date: '2025', DOI: '10.0000/import' },
         creators: [{ firstName: 'Meta', lastName: 'Data', creatorType: 'author' }],
         tags: ['imported'],
       },
@@ -395,12 +395,12 @@ if (hasRealLibrary) {
     assert.equal(withMeta.ok, true, JSON.stringify(withMeta))
     assert.ok(withMeta.value.parentKey, 'parent item created from metadata')
     const parentDetail = await call('item', { key: withMeta.value.parentKey })
-    assert.equal(parentDetail.value.title, 'dsh-library imported parent')
+    assert.equal(parentDetail.value.title, 'dsh-zot-library imported parent')
     assert.equal(parentDetail.value.attachments.length, 1)
 
     // List rows carry their children so the item tree can expand a parent into
     // attachments/notes (Zotero's tree expansion).
-    const expandedList = await call('items', { query: 'dsh-library imported parent' })
+    const expandedList = await call('items', { query: 'dsh-zot-library imported parent' })
     const parentRow = expandedList.value.items.find(item => item.key === withMeta.value.parentKey)
     assert.ok(Array.isArray(parentRow?.children)
       && parentRow.children.some(child => child.kind === 'attachment' && child.key === parentDetail.value.attachments[0].key),
@@ -418,14 +418,14 @@ if (hasRealLibrary) {
       attachmentKey: staged.value.attachmentKey,
       metadata: {
         itemType: 'journalArticle',
-        fields: { title: 'dsh-library staged parent', date: '2024' },
+        fields: { title: 'dsh-zot-library staged parent', date: '2024' },
         creators: [{ lastName: 'Stage', firstName: 'Two', creatorType: 'author' }],
       },
     })
     assert.equal(finished.ok, true, JSON.stringify(finished))
     assert.ok(finished.value.parentKey === withMeta.value.parentKey ? false : Boolean(finished.value.parentKey), 'finalize reports the new parent key')
     const stagedParent = await call('item', { key: finished.value.parentKey })
-    assert.equal(stagedParent.value.title, 'dsh-library staged parent')
+    assert.equal(stagedParent.value.title, 'dsh-zot-library staged parent')
     assert.ok(stagedParent.value.attachments.some(entry => entry.key === staged.value.attachmentKey), 'finalize reparents the staged attachment')
 
     // Staged import without metadata stays standalone and asks for help.
@@ -502,7 +502,7 @@ if (hasRealLibrary) {
     const duplicate = await call('duplicate', { key: withMeta.value.parentKey })
     assert.equal(duplicate.ok, true, JSON.stringify(duplicate))
     const duplicateDetail = await call('item', { key: duplicate.value.key })
-    assert.equal(duplicateDetail.value.title, 'dsh-library imported parent', 'duplicate copies the fields')
+    assert.equal(duplicateDetail.value.title, 'dsh-zot-library imported parent', 'duplicate copies the fields')
     assert.equal(duplicateDetail.value.attachments.length, 1, 'duplicate copies child attachments')
     // Child rows carry no target (trap 10) — resolve through the child's own detail.
     const duplicateChild = await call('item', { key: duplicateDetail.value.attachments[0].key })
@@ -762,7 +762,7 @@ if (hasRealLibrary) {
     const contextSaved = await call('chat-context', { context: { mode: 'reader', itemKey: readKey, itemTitle: 'A test paper' } })
     assert.equal(contextSaved.ok, true, JSON.stringify(contextSaved))
 
-    assert.equal(citeJson.value.items[0].title, 'dsh-library imported parent')
+    assert.equal(citeJson.value.items[0].title, 'dsh-zot-library imported parent')
     assert.equal(citeJson.value.items[0].DOI, '10.0000/import')
     assert.deepEqual(citeJson.value.items[0].author, [{ family: 'Data', given: 'Meta' }])
     const citeBib = await call('cite-bibtex', { keys: [withMeta.value.parentKey] })
@@ -770,8 +770,8 @@ if (hasRealLibrary) {
     assert.match(citeBib.value.text, /@article\{data2025,/)
     assert.ok(citeBib.value.text.includes('10.0000/import'))
     const citeTool = toolDefs.get('library_cite')
-    const toolBib = await citeTool.execute({ query: 'dsh-library imported parent', format: 'bibtex' })
-    assert.ok(toolBib.text.includes('dsh-library imported parent') || toolBib.entries >= 0)
+    const toolBib = await citeTool.execute({ query: 'dsh-zot-library imported parent', format: 'bibtex' })
+    assert.ok(toolBib.text.includes('dsh-zot-library imported parent') || toolBib.entries >= 0)
   }
 }
 

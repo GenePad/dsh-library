@@ -25,7 +25,7 @@ function userMessage(text) {
     id: crypto.randomUUID(),
     role: 'user',
     content: [{ type: 'text', text }],
-    source: { kind: 'dsh-library-translate' },
+    source: { kind: 'dsh-zot-library-translate' },
   }
 }
 

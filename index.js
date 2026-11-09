@@ -1,4 +1,4 @@
-// Host half of dsh-library: serves the library API and the agent tools.
+// Host half of dsh-zot-library: serves the library API and the agent tools.
 //
 // The browser half (client.js) is discovered through package.json's dsh.client
 // declaration and binds to the bundle row whose name is this package.
@@ -11,7 +11,7 @@ import { createTools } from './src/host/tools.js'
 import { chatGuidance } from './src/host/chat.js'
 
 export const name = 'library'
-export const version = '0.3.16'
+export const version = '0.4.0'
 
 // The plugin cannot do anything useful without the authenticated connection
 // (the API route) or a session controller (the chat dock).

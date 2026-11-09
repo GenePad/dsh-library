@@ -7,7 +7,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { safeRemoveTree } from '../src/host/util.js'
 
-const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-library-probe-'))
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-zot-library-probe-'))
 const dataDir = path.join(tempRoot, 'zotero-data')
 const storageDir = path.join(dataDir, 'storage')
 fs.mkdirSync(storageDir, { recursive: true })

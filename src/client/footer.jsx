@@ -20,7 +20,7 @@ export function LibraryFooterEntry({ wide, layout }) {
     try {
       layout.selectPanel(active ? null : 'library')
     } catch (error) {
-      console.warn('[dsh-library] selectPanel failed', error)
+      console.warn('[dsh-zot-library] selectPanel failed', error)
     }
   }
   const seenTaskRef = React.useRef('')
@@ -31,7 +31,7 @@ export function LibraryFooterEntry({ wide, layout }) {
       api.call('office-ai-announce').then(({ task } = {}) => {
         if (!task?.id || task.id === seenTaskRef.current) return
         seenTaskRef.current = task.id
-        try { layout?.selectPanel?.('library') } catch (error) { console.warn('[dsh-library] selectPanel failed', error) }
+        try { layout?.selectPanel?.('library') } catch (error) { console.warn('[dsh-zot-library] selectPanel failed', error) }
       }).catch(() => {})
     }, 2500)
     return () => clearInterval(timer)

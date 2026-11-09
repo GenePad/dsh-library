@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
 
 const PLUGIN = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
-const DIR = path.join(process.env.TEMP ?? '/tmp', 'dsh-library-e2e')
+const DIR = path.join(process.env.TEMP ?? '/tmp', 'dsh-zot-library-e2e')
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
 const SAMPLE = process.argv[2] ?? 'C:\\Users\\moqiq\\Zotero\\storage\\23A9Q3N2\\Li 等 - 2024 - Rationally engineered novel AAV capsids for intra-.pdf'
 
@@ -595,7 +595,7 @@ try {
     const axisV = await page.evaluate('(() => ({\n'
       + '  axisV: Boolean(document.querySelector(".lib-pdf-split.axis-v")),\n'
       + '  panes: document.querySelectorAll(".lib-rdr-pane").length,\n'
-      + '  stored: localStorage.getItem("dsh-library:reader-split")\n'
+      + '  stored: localStorage.getItem("dsh-zot-library:reader-split")\n'
     + '}))()')
     console.log('axis switch:', JSON.stringify(axisV))
     if (!axisV.axisV || axisV.panes !== 2 || axisV.stored !== 'v') { console.error('axis switch FAILED'); process.exit(1) }

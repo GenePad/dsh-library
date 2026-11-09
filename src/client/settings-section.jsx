@@ -8,7 +8,7 @@ import { Button, Input, SegmentedControl, SegmentedTabs, Switch } from './platfo
 import { downloadText } from './util.js'
 
 // The library page listens for this so "打开 PDF 的方式" applies without a reload.
-export const SETTINGS_SAVED_EVENT = 'dsh-library:settings-saved'
+export const SETTINGS_SAVED_EVENT = 'dsh-zot-library:settings-saved'
 
 const TABS = [
   { value: 'source', label: '数据来源', id: 'lib-set-tab-source', panelId: 'lib-set-panel-source' },
@@ -182,11 +182,11 @@ export function LibrarySettingsSection() {
       const stamp = new Date().toISOString().slice(0, 10)
       if (format === 'bibtex') {
         const result = await api.call('cite-bibtex', { limit: 500 })
-        downloadText(`dsh-library-${stamp}.bib`, result.text, 'application/x-bibtex;charset=utf-8')
+        downloadText(`dsh-zot-library-${stamp}.bib`, result.text, 'application/x-bibtex;charset=utf-8')
         setMessage('已导出 BibTeX。')
       } else {
         const result = await api.call('cite-json', { limit: 500 })
-        downloadText(`dsh-library-${stamp}.json`, JSON.stringify(result.items, null, 2), 'application/json;charset=utf-8')
+        downloadText(`dsh-zot-library-${stamp}.json`, JSON.stringify(result.items, null, 2), 'application/json;charset=utf-8')
         setMessage(`已导出 ${result.items.length} 条 CSL-JSON 记录。`)
       }
     } catch (error) {
@@ -531,7 +531,7 @@ export function LibrarySettingsSection() {
                 <Button variant="outline" size="sm" disabled={busy !== ''} onClick={applyUpdate}>{busy === 'apply' ? '安装中…' : '安装更新'}</Button>
               </div>
               <div className="lib-settings-hint">
-                留空使用官方源（GitHub GenePad/dsh-zlibrary 的 feed/manifest.json）；填写 off 关闭在线更新。
+                留空使用官方源（GitHub GenePad/dsh-zot-library 的 feed/manifest.json）；填写 off 关闭在线更新。
               </div>
             </div>
           </div>
