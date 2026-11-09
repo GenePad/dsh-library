@@ -712,7 +712,10 @@ assert.equal(ping.ok, true, 'connector ping')
     assert.ok(fs.existsSync(path.join(iconsDir, `${id}.png`)), `icon ${id}.png ships with the plugin`)
   }
   const packed = unzipSync(new Uint8Array(fs.readFileSync(shipped)))
-  assert.equal(dec.decode(packed['customUI/customUI.xml']).trim(), shippedUI.trim(),
+  // The working-tree copy is CRLF on Windows checkouts and LF on Linux CI
+  // (index stores LF); compare content, not line endings.
+  const eol = (text) => text.replaceAll('\r\n', '\n').trim()
+  assert.equal(eol(dec.decode(packed['customUI/customUI.xml'])), eol(shippedUI),
     'prebuilt .dotm carries the current Chinese Ribbon XML')
   assert.equal(Object.keys(packed).filter(name => name.startsWith('customUI/images/')).length, 10,
     'all icon parts are packed into the template')
