@@ -37,6 +37,15 @@ Private gAiEventsReady As Boolean
 ' still set, so every Word-side event that proves the user is back in Word
 ' calls DshLibAiKeepAlive to restart a stale loop.
 Private gAiLastPollAt As Date
+' Set while the WinAPI pump is running a poll, so a concurrent OnTime tick can
+' never double-fire one. Word drops OnTime callbacks in some sessions (the
+' template is loaded before Word's message loop is ready, a modal transaction
+' is up, ...), which used to leave the task state armed and the write-back
+' unclaimed; DshLibAiPollFromPump keeps the channel alive from the always-on
+' WinAPI timer instead. The counters below make that diagnosable.
+Private gAiPumpBusy As Boolean
+Private gAiScheduleFails As Long
+Private gAiLastScheduleError As String
 
 ' ---------------------------------------------------------------- helpers
 
@@ -143,6 +152,7 @@ End Sub
 Public Sub AutoExec()
     On Error Resume Next
     ThisDocument.DshLibInstallEvents
+    Call DshLibAgentStartPump
     On Error GoTo 0
 End Sub
 
@@ -286,8 +296,17 @@ End Sub
 Private Sub DshLibAiSchedulePoll()
     On Error Resume Next
     gAiLastPollAt = Now
+    Err.Clear
     Application.OnTime Now + TimeSerial(0, 0, 2), "DshLibAiPoll"
-    On Error GoTo 0
+    ' Never swallow the failure silently: an OnTime that Word drops or refuses
+    ' was exactly the cause of an apply that sat unclaimed for 150 s with no
+    ' trace anywhere (the pump tick below now drives the loop as well, and this
+    ' counter tells us whether OnTime itself is broken).
+    If Err.Number <> 0 Then
+        gAiScheduleFails = gAiScheduleFails + 1
+        gAiLastScheduleError = "OnTime: " & CStr(Err.Number) & " " & Err.Description
+        Err.Clear
+    End If
 End Sub
 
 ' Restart a poll loop that Word silently dropped. Called from the Application
@@ -308,6 +327,37 @@ Public Sub DshLibAiKeepAlive()
     End If
     On Error GoTo 0
 End Sub
+
+' Pump-driven poll: the always-on WinAPI timer in DshLibAgent calls this every
+' few seconds. A write-back that sat unclaimed for 150 s while the task state
+' was intact proved that Word can stop running pending OnTime callbacks
+' entirely (armed during template start-up, or dropped by a modal transaction);
+' the WM_TIMER pump is the one driver that survives, so the AI channel now
+' rides on it too and no longer depends on OnTime alone.
+Public Sub DshLibAiPollFromPump()
+    On Error Resume Next
+    If gAiPumpBusy Then Exit Sub
+    If Not DshLibFields.DshLibAiActive() Then Exit Sub
+    ' A tick already answered by the OnTime chain must not poll again: the state
+    ' only changes through the task, so one poll per ~2 s is enough.
+    If gAiLastPollAt > 0 Then
+        If Now - gAiLastPollAt < TimeSerial(0, 0, 2) Then Exit Sub
+    End If
+    gAiPumpBusy = True
+    Call DshLibAiPoll
+    gAiPumpBusy = False
+    On Error GoTo 0
+End Sub
+
+' Diagnostic snapshot of the AI channel (polls / OnTime failures / last tick).
+' Readable from anywhere, e.g. Application.Run "DshLibAiDebugInfo".
+Public Function DshLibAiDebugInfo() As String
+    DshLibAiDebugInfo = "polls=" & CStr(gAiPollCount) _
+        & "; httpFails=" & CStr(gAiHttpFailures) _
+        & "; schedFails=" & CStr(gAiScheduleFails) _
+        & "; lastPollAt=" & Format$(gAiLastPollAt, "hh:nn:ss") _
+        & "; lastSchedErr=" & gAiLastScheduleError
+End Function
 
 ' One OnTime tick: poll the host for the task state. "ready" triggers the
 ' single apply transaction; every terminal state stops the loop. The loop
@@ -412,7 +462,9 @@ End Sub
 
 ' ---------------------------------------------------------------- HTTP
 
-Private Function DshLibPingOK(ByVal port As Long) As Boolean
+' Public so DshLibAgent's pump / mask tick can reuse the same transport
+' (module-level procedures are invisible across modules while Private).
+Public Function DshLibPingOK(ByVal port As Long) As Boolean
     On Error GoTo Fail
     Dim http As Object
     Set http = CreateObject("MSXML2.ServerXMLHTTP.6.0")
@@ -435,7 +487,7 @@ Fail:
     DshLibPingOK = False
 End Function
 
-Private Function DshLibFindPort() As Long
+Public Function DshLibFindPort() As Long
     Dim p As Long
     For p = PORT_FIRST To PORT_LAST
         If DshLibPingOK(p) Then
@@ -448,7 +500,7 @@ End Function
 
 ' Synchronous JSON POST. Returns the response body decoded from UTF-8; status
 ' is filled with the HTTP status (0 on a transport failure).
-Private Function DshLibHttpPostJson(ByVal url As String, ByVal body As String, ByRef status As Long) As String
+Public Function DshLibHttpPostJson(ByVal url As String, ByVal body As String, ByRef status As Long) As String
     On Error GoTo Fail
     Dim http As Object
     Set http = CreateObject("MSXML2.ServerXMLHTTP.6.0")
@@ -760,7 +812,10 @@ End Sub
 
 ' The AI write-back transaction: applyAiEdit against the document/process that
 ' started the task. Runs ONCE per task (DshLibAiPoll stops the loop after it).
-Public Sub DshLibAiRunApply()
+' quiet=True (agent-initiated calls, DshLibAgent citeApply): NEVER MsgBox - the
+' error flows back to the dsh agent through the AI task result instead, and a
+' modal dialog in Word would freeze the whole pump until the user clicks OK.
+Public Sub DshLibAiRunApply(Optional ByVal quiet As Boolean = False)
     Dim base As String
     Dim port As Long
     Dim docId As String
@@ -829,7 +884,11 @@ Public Sub DshLibAiRunApply()
 
 Fatal:
     On Error Resume Next
-    MsgBox DshLibMsgNetworkError() & " (" & CStr(Err.Number) & ")", vbCritical, DshLibMsgTitle()
+    ' quiet (agent-initiated) runs never MsgBox: the failure reaches the dsh
+    ' agent through the AI task result, and a modal box would freeze the pump.
+    If Not quiet Then
+        MsgBox DshLibMsgNetworkError() & " (" & CStr(Err.Number) & ")", vbCritical, DshLibMsgTitle()
+    End If
     On Error GoTo 0
     ' fall through to Cleanup
 

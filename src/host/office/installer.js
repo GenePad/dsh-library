@@ -43,7 +43,7 @@ export function ribbonImageIds(customUI) {
 // the same STARTUP folder) defines modules/macros named Zotero, ZoteroRibbon,
 // ZoteroCommand, ZoteroTabLabel, ... Sharing those names makes Word resolve
 // Ribbon callbacks to the wrong template and report a broken add-in.
-const REQUIRED_MODULES = ['DshLibJson', 'DshLibCore', 'DshLibFields', 'DshLibRibbon']
+const REQUIRED_MODULES = ['DshLibJson', 'DshLibCore', 'DshLibFields', 'DshLibRibbon', 'DshLibAgent']
 
 function decodeOutput(buffer) {
   if (!buffer) return ''

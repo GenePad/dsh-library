@@ -13,6 +13,7 @@ import { createIntegration } from './commands.js'
 import { createOfficeServer } from './server.js'
 import { createWordInstaller } from './installer.js'
 import { createAiTasks } from './ai-tasks.js'
+import { createWordAgent } from './word-agent.js'
 import { createReportGenerator } from './report.js'
 import { focusMainWindow } from './window.js'
 
@@ -29,13 +30,21 @@ export function createOfficeService({ runtime, logger = console, packageDir, ver
       send: (text, context) => runtime.chat.send(text, context),
     },
     focus: () => focusMainWindow(logger),
+    items, // citation keys are verified in the host before any Word transaction
     logger,
   })
   const integration = createIntegration({ styles, items, dialogs, ai, logger, version })
+  // Agent-initiated Word document operations (read-opened-word etc.): the
+  // running Word instance's pump claims commands from the queue. The stop
+  // button in the busy mask force-cancels the dsh agent turn.
+  const wordAgent = createWordAgent({
+    onStop: () => { wordAgent.cancelActiveAgent() },
+    logger,
+  })
   // Word reports generated entirely host-side (no Word needed): the agent
   // writes a .docx with real Zotero citation fields + bibliography field.
   const report = createReportGenerator({ styles, items, home, logger, version })
-  const server = createOfficeServer({ integration, dialogs, styles, ai, logger, version })
+  const server = createOfficeServer({ integration, dialogs, styles, ai, wordAgent, logger, version })
   dialogs.setBaseUrl(() => server.baseUrl())
   const installer = createWordInstaller({
     logger, version, packageDir, home,
@@ -70,6 +79,6 @@ export function createOfficeService({ runtime, logger = console, packageDir, ver
 
   return {
     start, restart, stop: () => server.stop(), status, dispose,
-    styles, items, dialogs, integration, server, installer, ai, report,
+    styles, items, dialogs, integration, server, installer, ai, report, wordAgent,
   }
 }

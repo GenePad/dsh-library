@@ -1,18 +1,18 @@
 {
-  "version": "0.4.3",
+  "version": "0.5.0",
   "base": "../",
-  "publishedAt": 1794214807956,
+  "publishedAt": 1794236999744,
   "notes": "",
   "files": [
     {
       "path": "package.json",
       "size": 1705,
-      "sha256": "f19c108340e13475ac967ffcad0b5e73c47c997c0cd5f1e130678f2abc9445c9"
+      "sha256": "4ffb02deb87a8cf600840f2f61775943fc59df67496c6cecdd27a7cffb174ab3"
     },
     {
       "path": "index.js",
-      "size": 7612,
-      "sha256": "d4eb690df11c5c359fe7de04aa92da76649a744c3962dfff0513fc64f1da05d2"
+      "size": 7807,
+      "sha256": "4a428ad2d0bd06dab8b6e8b664401674b88983c76bf5cb9ac16f55c0ceee4c8f"
     },
     {
       "path": "client.js",
@@ -131,8 +131,8 @@
     },
     {
       "path": "src/host/chat.js",
-      "size": 15790,
-      "sha256": "d8f72b66ef2de5383c573b7fd4ba4fc1f72996c7af0194003b2be80d80d05385"
+      "size": 17174,
+      "sha256": "53edc0de5e10655ac8d3f2b8617cc7d125ec47d6013357777f91030489d0e6a9"
     },
     {
       "path": "src/host/cite.js",
@@ -161,8 +161,8 @@
     },
     {
       "path": "src/host/office/ai-tasks.js",
-      "size": 22232,
-      "sha256": "f5c052f3ce5ce53eb59c25132fd4a1367d67fccf51688438428696732e474a0a"
+      "size": 23758,
+      "sha256": "f726d51c2502d13ef16254681c46d012bb727933dc006ac89e90413d0e0a0bc3"
     },
     {
       "path": "src/host/office/citation.js",
@@ -211,13 +211,13 @@
     },
     {
       "path": "src/host/office/index.js",
-      "size": 2974,
-      "sha256": "69430e834c2f92f407b798891a99a628e71895cceb5bef6232c323402e7ee28f"
+      "size": 3448,
+      "sha256": "1f68dd893b933acc9bf3ae6117e02b26eda7f5ebdef150c76375c7d56824074e"
     },
     {
       "path": "src/host/office/installer.js",
-      "size": 25705,
-      "sha256": "197cd0077397fda3faa214d10ab99e6b1c4e730fc4577706341fad2deccd14dd"
+      "size": 25720,
+      "sha256": "b495b148a12ace572a5c013b0997e44c9e884c9adad2f6c4c9cbc63071d9884f"
     },
     {
       "path": "src/host/office/items.js",
@@ -231,13 +231,13 @@
     },
     {
       "path": "src/host/office/report.js",
-      "size": 23145,
-      "sha256": "3892259d4c5d24e931041e99a50c8fd9eda2022d4be3c0df2376726c3b912fa7"
+      "size": 25321,
+      "sha256": "068fa61216857379500c7a4e454fcf815ca536857f63babab3c4180a8a6d9ee5"
     },
     {
       "path": "src/host/office/server.js",
-      "size": 16715,
-      "sha256": "72b9c4164cd21531e49f90c52f2e002e4d37adb9ad9ae6991b351d207b8ed3ba"
+      "size": 21421,
+      "sha256": "829e260e89d345089ae657c64831f6cc545a9bed1922f754dd3ed9dc56683eef"
     },
     {
       "path": "src/host/office/session.js",
@@ -248,6 +248,11 @@
       "path": "src/host/office/window.js",
       "size": 24225,
       "sha256": "4884ebcae0b23b95f615589169540bfbbad5e2cbafe53a24e64cce5ae9be69e4"
+    },
+    {
+      "path": "src/host/office/word-agent.js",
+      "size": 18275,
+      "sha256": "dc8124337e6480f808ea7fce0db91ab1174bdfe8ae7aab990ed5633b11cf0adf"
     },
     {
       "path": "src/host/open.js",
@@ -301,8 +306,8 @@
     },
     {
       "path": "src/host/tools.js",
-      "size": 41119,
-      "sha256": "0f1e0ca1442337e28744be1d9956da240767ebe72e8fba7bf86ae386f9483292"
+      "size": 62445,
+      "sha256": "d2a921b7ed75157d3cc24a7e6822eae4dbfa122c4994294302e6f4e1a12ba160"
     },
     {
       "path": "src/host/translate.js",
@@ -461,8 +466,8 @@
     },
     {
       "path": "assets/word/DshLibrary.dotm",
-      "size": 130739,
-      "sha256": "0c1fb724dc6a3da0ad8e0d3605839398fafad3cd8ee3cd16bcdca62c3b3ded86"
+      "size": 171505,
+      "sha256": "a34000bacc232a60438eed1910cf1bae4e83dd6b9e49df216f725548f0c1e45a"
     },
     {
       "path": "assets/word/icons/dshAiCitation.png",
@@ -515,14 +520,19 @@
       "sha256": "358de7a511bfde7641cb99b45e3da54f595a6095c2d573daf27997b8f4831595"
     },
     {
+      "path": "assets/word/vba/DshLibAgent.bas",
+      "size": 44245,
+      "sha256": "e62ecb24502a280bc5e238fd4517cec1ce57bc630edc65a32de80e083ceae88a"
+    },
+    {
       "path": "assets/word/vba/DshLibCore.bas",
-      "size": 30546,
-      "sha256": "53b173d5d11ee401191d08b7a9a69b495454e3bf57b43cf5f461408447758985"
+      "size": 33700,
+      "sha256": "d64b5654e5c3d02ee27eafb3e1eb727a3562fc84e40442f75912491725f825b9"
     },
     {
       "path": "assets/word/vba/DshLibFields.bas",
-      "size": 71979,
-      "sha256": "4a202eda9df7f6dde6dcacae2b87b08b5e731fb1ed80108b475d60d2174e15ef"
+      "size": 72822,
+      "sha256": "00dba9e61948fcbc3dbddb3716feab8e6f1c2136fafa7e053c47b6e90a46d684"
     },
     {
       "path": "assets/word/vba/DshLibJson.bas",
@@ -531,13 +541,13 @@
     },
     {
       "path": "assets/word/vba/DshLibRibbon.bas",
-      "size": 4488,
-      "sha256": "6741b513363430d3b2d5f777f13a11c353b821d58f97d42fdb33415c0f23ae14"
+      "size": 5068,
+      "sha256": "6051894ce470d1f57adf26e71113129df5955ffec70cae061030091b364bbff8"
     },
     {
       "path": "assets/word/vba/ThisDocument.cls",
-      "size": 2134,
-      "sha256": "a97ec31059daa64c4d5b2579f6d4be5eb6c89dee4e4bde09554d364a887580c1"
+      "size": 2263,
+      "sha256": "d437ad01e756b1653ff550ec50a045092ecdc71233b099322d4b1b6319a64188"
     },
     {
       "path": "README.md",
@@ -551,8 +561,8 @@
     },
     {
       "path": "AGENTS.md",
-      "size": 90317,
-      "sha256": "2651505d18bd4359f42cf758d65dcdf53960f7fd61ba399ed4d8d87091457607"
+      "size": 99214,
+      "sha256": "893be4af985bc92b7b1e5793a77f67741e08789e6900076b9bc1d13dc86742e1"
     }
   ]
 }

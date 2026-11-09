@@ -10,6 +10,12 @@ Private gRibbon As Object
 Sub DshLibRibbonOnLoad(ribbon As IRibbonUI)
     On Error Resume Next
     Set gRibbon = ribbon
+    ' The ribbon onLoad fires reliably at Word startup even when AutoExec
+    ' was suppressed (macro-notification states): a second, idempotent hook
+    ' for the always-on agent pump. DshLibAgentStartPump re-arms nothing if
+    ' a chain is already live (gAgentChains > 0 keeps Schedule idle).
+    Call DshLibAgent.DshLibAgentStartPump
+    Call DshLibAgent.DshLibAgentKeepAlive
     On Error GoTo 0
 End Sub
 
@@ -40,6 +46,9 @@ End Sub
 Sub DshLibRibbonGetAiEnabled(control As IRibbonControl, ByRef enabled)
     On Error Resume Next
     enabled = DshLibCore.DshLibAiGetEnabled()
+    ' Any getEnabled query proves the ribbon is alive: revive the agent pump
+    ' if Word silently dropped its OnTime chain (modal states do that).
+    Call DshLibAgent.DshLibAgentKeepAlive
     If Err.Number <> 0 Then enabled = True
     On Error GoTo 0
 End Sub

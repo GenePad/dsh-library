@@ -129,7 +129,8 @@ assert.deepEqual([...toolDefs.keys()].sort(), [
   'library_add', 'library_annotations', 'library_attach', 'library_cite', 'library_cite_styles',
   'library_collection', 'library_collections', 'library_import', 'library_item', 'library_lookup',
   'library_note', 'library_open', 'library_read', 'library_search', 'library_status', 'library_sync',
-  'library_trash', 'library_update', 'library_word_apply', 'library_word_report',
+  'library_trash', 'library_update', 'library_word_apply', 'library_word_busy', 'library_word_cite',
+  'library_word_list', 'library_word_read', 'library_word_report', 'library_word_search', 'library_word_write',
 ])
 
 const call = async (endpoint, payload) => {

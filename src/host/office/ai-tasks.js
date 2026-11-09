@@ -125,7 +125,7 @@ function citeMessage(task) {
     '2. 本地找不到合适文献时，先在对话里问用户是否联网检索；用户同意后用 library_lookup 的 query 参数（题名关键词）检索 Crossref，把候选列给用户确认，确认后用 library_add 入库拿到 8 位 key。',
     '3. 确定条目后调用 library_word_apply 写回 Word：',
     `   - taskId：${task.id}`,
-    '   - 整段替换：mode="replace"，text 为整理/改写后的完整文本，在需要引注的位置写占位标记 [[1]]、[[2]]…，citations 数组每项 {id, keys, locator?, prefix?, suffix?} 与标记编号一一对应；',
+    '   - 整段替换：mode="replace"，text 为整理/改写后的完整文本，在需要引注的位置写 [[N]]（N 与本条 citations 的 id 对应，标记先后与数组顺序都无所谓，程序按 id 匹配；同一处引文可放多个 key）；编号与参考文献顺序由 CSL 样式自动生成，正文里不要手写 [1][2] 这类编号；',
     '   - 或只在原文定点插入：mode="insert"，citations 每项的 after 填选中文本里一段足够独特的原文片段，引文将插到该片段之后，其余文字与格式原样保留。',
     '4. 写回成功后，用一两句话告诉用户引用了哪些文献、插在了什么位置；若工具报错，向用户说明原因并按错误提示修正后重试。',
     `5. ${sourceFixHint()}`,
@@ -151,8 +151,12 @@ function editMessage(task) {
  * @param {{open:(options:object)=>Promise<{sessionId:string}>, send:(text:string, context?:object)=>Promise<{sessionId:string}>}} deps.chat
  *   runtime.chat (or a test double): opens a fresh Library session and prompts it.
  * @param {() => void} deps.focus - brings the dsh window to the foreground.
+ * @param {{cslItem:(id:string)=>object|null}} [deps.items] - the library item
+ *   provider. When present every citation key is verified in the LIBRARY
+ *   before a plan is accepted, so unknown keys fail fast in the host instead
+ *   of surfacing as an error dialog path inside the Word transaction.
  */
-export function createAiTasks({ chat, focus, logger = console }) {
+export function createAiTasks({ chat, focus, items, logger = console }) {
   const tasks = new Map()
   let announcement = null
   // Last time ANY Word instance polled us. Word polls every 2 s while a task is
@@ -338,6 +342,20 @@ export function createAiTasks({ chat, focus, logger = console }) {
       logger.info?.(`library: word ai task ${task.id} re-armed from ${task.status} for retry`)
     }
     task.plan = normalizePlan(task, plan)
+    // Fast-fail unknown keys IN THE HOST: with the items provider wired in,
+    // a bad key never reaches the Word transaction (whose failure path used
+    // to surface as an error the user had to dismiss).
+    if (items) {
+      for (const citation of task.plan.citations) {
+        for (const key of citation.keys) {
+          if (!items.cslItem(key)) {
+            task.status = 'failed'
+            task.result = { ok: false, error: `条目 ${key} 不在文库中，无法插入引文（先用 library_search / library_item 确认条目 key）` }
+            throw new Error(task.result.error)
+          }
+        }
+      }
+    }
     task.status = 'ready'
     logger.info?.(`library: word ai task ${task.id} plan ready (${task.plan.mode}, ${task.plan.citations.length} citations)`)
     return new Promise(resolve => {

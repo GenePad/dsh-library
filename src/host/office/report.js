@@ -17,6 +17,16 @@
 //
 // Word is NOT required to build the file; it only opens it afterwards (best
 // effort, via the system default application).
+//
+// Placeholder contract (this is what the tool description promises):
+//   - `text` carries [[N]] markers; N resolves to the `citations` entry whose
+//     `id` is N. The array order of `citations` never matters — the marker
+//     decides where the field lands.
+//   - one marker = one citation cluster, so the same id may be repeated and the
+//     same work can be cited twice in a single paragraph;
+//   - clusters are rendered in READING order, which is what makes numeric CSL
+//     styles number the document correctly (first appearance wins);
+//   - numbers and the bibliography are produced by citeproc — never by us.
 import fs from 'node:fs'
 import path from 'node:path'
 import { zipSync } from '../../../vendor/deps.js'
@@ -299,41 +309,57 @@ export function createReportGenerator({ styles, items, home, logger = console, v
       format: 'html',
     })
 
-    // Clusters in document order; citeproc assigns numbers on the fly and may
-    // re-render earlier clusters (disambiguation) — the changed map carries
-    // every text we need.
-    const orderedKeys = []
+    // Expand the [[N]] markers BEFORE rendering: one marker = one citation
+    // cluster, and clusters must be processed in READING order (the order the
+    // markers appear in the text), because citeproc numbers numeric styles by
+    // first appearance. The N inside a marker is resolved against
+    // `citations[].id` — the order of that array is irrelevant, and the same id
+    // may be written several times (same work cited twice in one paragraph →
+    // two independent clusters, numbered alike by the style).
+    const instances = []
     for (const block of blocks) {
-      for (const citation of block.citations ?? []) {
-        for (const key of citation.keys) if (!orderedKeys.includes(key)) orderedKeys.push(key)
+      if (block.kind !== 'paragraph') continue
+      const byId = new Map(block.citations.map(citation => [citation.id, citation]))
+      block.slots = []
+      for (const marker of block.text.matchAll(/\[\[(\d{1,3})\]\]/g)) {
+        block.slots.push(instances.length)
+        instances.push(byId.get(Number(marker[1])))
       }
+    }
+    if (instances.length > LIMITS.citations) {
+      throw new Error(`引文总数超过 ${LIMITS.citations}（[[N]] 标记计数），请分篇生成`)
+    }
+
+    const orderedKeys = []
+    for (const spec of instances) {
+      for (const key of spec.keys) if (!orderedKeys.includes(key)) orderedKeys.push(key)
     }
     if (orderedKeys.length) engine.updateItems(orderedKeys)
 
+    // Clusters in reading order; citeproc assigns numbers on the fly and may
+    // re-render earlier clusters (disambiguation) — the changed map carries
+    // every text we need.
     const clusters = []
     const texts = []
     const codes = []
-    for (const block of blocks) {
-      if (block.kind !== 'paragraph') continue
-      for (const spec of block.citations) {
-        const citation = new Citation(null, {
-          citationID: randomString(8),
-          properties: { noteIndex: 0 },
-          citationItems: spec.keys.map((key, index) => ({
-            id: key,
-            uris: items.uriFor(key),
-            ...(index === 0 && spec.prefix ? { prefix: spec.prefix } : {}),
-            ...(index === spec.keys.length - 1 && spec.suffix ? { suffix: spec.suffix } : {}),
-            ...(spec.locator ? { locator: spec.locator } : {}),
-          })),
-        }, 0)
-        const action = await citation.loadItemData(registry, { promptToReselect: false })
-        if (action !== 0 || citation.citationItems.some(item => item.missing)) {
-          throw new Error(`条目 ${spec.keys.join('、')} 无法从文库解析为 CSL 数据，已中止。`)
-        }
-        codes.push(citation.serialize(registry))
-        clusters.push(citation.toCluster())
+    for (const spec of instances) {
+      const citation = new Citation(null, {
+        citationID: randomString(8),
+        properties: { noteIndex: 0 },
+        citationItems: spec.keys.map((key, index) => ({
+          id: key,
+          uris: items.uriFor(key),
+          ...(index === 0 && spec.prefix ? { prefix: spec.prefix } : {}),
+          ...(index === spec.keys.length - 1 && spec.suffix ? { suffix: spec.suffix } : {}),
+          ...(spec.locator ? { locator: spec.locator } : {}),
+        })),
+      }, 0)
+      const action = await citation.loadItemData(registry, { promptToReselect: false })
+      if (action !== 0 || citation.citationItems.some(item => item.missing)) {
+        throw new Error(`条目 ${spec.keys.join('、')} 无法从文库解析为 CSL 数据，已中止。`)
       }
+      codes.push(citation.serialize(registry))
+      clusters.push(citation.toCluster())
     }
     for (let i = 0; i < clusters.length; i += 1) {
       // citeproc wants the surrounding citations as [citationID, noteIndex]
@@ -357,22 +383,24 @@ export function createReportGenerator({ styles, items, home, logger = console, v
 
     // ---- assemble document.xml body ------------------------------------
     const body = []
-    let citationIndex = 0
     for (const block of blocks) {
       if (block.kind === 'heading') {
         body.push(paragraphXml(`<w:r><w:t xml:space="preserve">${escapeXml(block.text)}</w:t></w:r>`, `Heading${block.level}`))
         continue
       }
+      // Markers are consumed in reading order and matched against `block.slots`,
+      // which was built from the same regex above: slot N holds the cluster that
+      // was rendered for marker N, whatever id that marker carried.
       const runs = []
+      let slot = 0
       for (const piece of block.text.split(/(\[\[\d{1,3}\]\])/g)) {
         if (piece === '') continue
-        const marker = /^\[\[(\d{1,3})\]\]$/.exec(piece)
-        if (!marker) {
+        if (!/^\[\[\d{1,3}\]\]$/.test(piece)) {
           runs.push(`<w:r><w:t xml:space="preserve">${escapeXml(piece)}</w:t></w:r>`)
           continue
         }
-        const index = citationIndex
-        citationIndex += 1
+        const index = block.slots[slot]
+        slot += 1
         // The full Word field instruction mirrors the VBA layout:
         // " ADDIN ZOTERO_" + client code + " ".
         runs.push(...fieldRuns(` ADDIN ZOTERO_${FIELD_CODE_ITEM_PREFIX}${codes[index]} `, htmlToRuns(texts[index])))

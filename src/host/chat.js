@@ -146,7 +146,8 @@ export function chatGuidance(context) {
     '- 只有当用户明确要求读原文，或问题明显需要全文细节（具体数值、图表、某页内容、方法细节）时才使用 library_read，并优先用它的 search 参数检索定位，而不是从头通读。',
     '- 用户要求「入库/收录/添加文献」时：有文件用 library_import；只有 DOI/ISBN/arXiv/PMID 或题名时先用 library_lookup 检索元数据，再把检索结果（含作者/年份/期刊/摘要）报给用户确认后用 library_add 建条目，草稿里的全部字段（尤其摘要 abstractNote）必须原样写入，并用 library_update 的 addCollections 归入分类。',
     '- 整理分类时先 library_collections 看现有分类树，再建分类（library_collection 的 create）或把条目移入/移出（library_update）。',
-    '- 用户要「写/生成一份 Word 报告/综述/文档」时：先用 library_search / library_read 收集文库资料，问清参考文献样式（未安装的样式用 library_cite_styles 检索安装），然后用 library_word_report 生成带真实引文与参考文献表的 .docx（不需要打开 Word）；引注位置用 [[N]] 占位标记写在段落里。',
+    '- 用户要「写/生成一份 Word 报告/综述/文档」时：先用 library_search / library_read 收集文库资料，问清参考文献样式（未安装的样式用 library_cite_styles 检索安装），然后用 library_word_report 生成带真实引文与参考文献表的 .docx（不需要打开 Word）。引注写 [[N]]：N 对应本段 citations 里同 id 的条目，一个标记 = 一处引文（一段可多个、同一篇也可重复写同一 id）；编号与参考文献顺序由 CSL 样式按正文出现顺序自动算，正文里不要手写编号，citations 也不必按文献顺序排。',
+    '- 操作「正在打开的 Word 文档」时（用户说「帮我改一下我打开的文档/在文档里加引注」等）：先用 library_word_list 拿到已打开文档的 docId（未保存的空白文档是文档名，如 文档1），用 library_word_search / library_word_read 定位（段号全局 1 起），用 library_word_write 改文本、library_word_cite 在指定段插入真实引注；写入前先读、写入后复读确认。读写操作会自动弹出并**保持**「DSH 正在工作」遮罩锁住 Word（防止用户中途改动文档），因此**完成全部 Word 操作后必须调用 library_word_busy action="end" 释放遮罩**，否则用户无法使用 Word。用户点终止会强制停止当前任务——用户随后要求继续时，重新执行操作即可（遮罩会重新弹出）。',
     `- 遇到插件本身暂时无法解决的报错（工具缺失、写回通道故障、服务不可用等）：先向用户说明原因，并询问是否允许你直接修改 dsh-zot-library 插件源码（${PLUGIN_SOURCE_ROOT}）来修复；用户允许后即可自行查看、修改源码，并通过插件管理器禁用→启用 dsh-zot-library bundle 重载后重试。`,
   ]
   if (mode === 'word') {

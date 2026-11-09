@@ -63,10 +63,18 @@ const ai = (await import('../src/host/office/ai-tasks.js')).createAiTasks({
     send: async (text, context) => { aiChatLog.push({ kind: 'send', text, context }); return { sessionId: 'sess-word-task' } },
   },
   focus: () => { aiFocusCount += 1 },
+  items, // host-side key pre-check (unknown keys never reach the Word transaction)
   logger: quiet,
 })
 const integration = createIntegration({ styles, items, dialogs, ai, logger, version: '0.2.1' })
-const server = createOfficeServer({ integration, dialogs, styles, ai, logger, version: '0.2.1' })
+// Word agent bridge (opened-document tools): the smoke's fake pump talks to
+// it through the same /office/api/agent-* endpoints the real VBA pump uses.
+let agentStopCount = 0
+const wordAgent = (await import('../src/host/office/word-agent.js')).createWordAgent({
+  onStop: () => { agentStopCount += 1 },
+  logger: quiet,
+})
+const server = createOfficeServer({ integration, dialogs, styles, ai, wordAgent, logger, version: '0.2.1' })
 dialogs.setBaseUrl(() => server.baseUrl())
 const started = await server.start(0)
 assert.equal(started.running, true, 'integration server starts')
@@ -656,7 +664,7 @@ assert.equal(ping.ok, true, 'connector ping')
   assert.ok(broken.problems.some(problem => problem.includes('VBA 工程')), 'diagnosis names the missing VBA project')
 
   // A template with a real VBA project (module names are UTF-16LE CFB entries).
-  const names = Buffer.concat(['DshLibJson', 'DshLibCore', 'DshLibFields', 'DshLibRibbon']
+  const names = Buffer.concat(['DshLibJson', 'DshLibCore', 'DshLibFields', 'DshLibRibbon', 'DshLibAgent']
     .map(name => Buffer.from(name, 'utf16le')))
   const vba = Buffer.alloc(30_000)
   names.copy(vba, 512)
@@ -675,7 +683,7 @@ assert.equal(ping.ok, true, 'connector ping')
   fs.writeFileSync(validTemplate, zipSync(complete))
   const good = inspectTemplate(validTemplate)
   assert.equal(good.ok, true, `a complete template passes: ${good.problems.join('; ')}`)
-  assert.equal(good.modules.length, 4, 'all four VBA modules detected')
+  assert.equal(good.modules.length, 5, 'all five VBA modules detected')
 
   // The plugin MUST ship a prebuilt, Word-ready template (Zotero's model).
   // Installing then degenerates to a file copy: no COM, no AccessVBOM, no
@@ -685,7 +693,7 @@ assert.equal(ping.ok, true, 'connector ping')
   const shippedReport = inspectTemplate(shipped)
   assert.equal(shippedReport.ok, true,
     `shipped template is a valid .dotm: ${shippedReport.problems.join('; ')}`)
-  assert.equal(shippedReport.modules.length, 4, 'shipped template carries all four VBA modules')
+  assert.equal(shippedReport.modules.length, 5, 'shipped template carries all five VBA modules')
 
   // Ribbon: Chinese command buttons, one "?" help button beside each, and
   // custom icons resolved through customUI/_rels/customUI.xml.rels.
@@ -1360,6 +1368,41 @@ assert.equal(ping.ok, true, 'connector ping')
   assert.ok(refreshedBib && refreshedBib.text.includes('Wang'), 'refresh rebuilt the bibliography from field codes')
   assert.ok(!word3.alerts.some(text => /手工修改|损坏/.test(text)), 'no damaged-document alerts')
 
+  // Marker→citation mapping is by id, never by position: markers may appear in
+  // any order and one id may be repeated (same work cited twice in a paragraph).
+  // Numbers must still follow READING order — first appearance wins — and not
+  // the order of the citations array.
+  const shuffled = await report.generate({
+    title: '乱序标记与重复引用',
+    style: 'ieee',
+    open: false,
+    outline: [{
+      text: '甲[[2]]乙[[1]]丙[[9]]丁[[9]]',
+      citations: [
+        { id: 1, keys: [keys[0]] },
+        { id: 2, keys: [keys[1]] },
+        { id: 9, keys: [keys[2]] },
+      ],
+    }],
+  })
+  const fields = []
+  for (const chunk of dec.decode(unzipSync(new Uint8Array(fs.readFileSync(shuffled.path)))['word/document.xml'])
+    .split('w:fldChar w:fldCharType="begin"').slice(1)) {
+    const until = chunk.split('w:fldChar w:fldCharType="end"')[0]
+    const instr = /<w:instrText[^>]*>([\s\S]*?)<\/w:instrText>/.exec(until)?.[1] ?? ''
+    if (!instr.includes('ZOTERO_ITEM')) continue
+    const resultXml = until.split('w:fldChar w:fldCharType="separate"')[1] ?? ''
+    const text = [...resultXml.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g)].map(match => visible(match[1])).join('')
+    fields.push({ instr, text })
+  }
+  assert.equal(fields.length, 4, 'one citation field per marker (repeated id included)')
+  assert.ok(fields[0].instr.includes(keys[1]) && !fields[0].instr.includes(keys[0]),
+    'the first marker ([[2]]) carries the citation whose id is 2')
+  assert.ok(fields[1].instr.includes(keys[0]) && !fields[1].instr.includes(keys[1]),
+    'the second marker ([[1]]) carries the citation whose id is 1')
+  assert.deepEqual(fields.map(field => field.text), ['[1]', '[2]', '[3]', '[3]'],
+    'numbers follow reading order; a citation repeated in the text keeps one number')
+
   // Validation refusals.
   await assert.rejects(
     async () => report.generate({
@@ -1373,6 +1416,82 @@ assert.equal(ping.ok, true, 'connector ping')
   await assert.rejects(
     async () => report.generate({ title: 'x', open: false, outline: [{ text: 'a[[9]]', citations: [] }] }),
     /没有 id=9/, 'dangling markers are refused')
+}
+
+/* ------------------------------------------- test 16: Word agent bridge --- */
+{
+  // A fake pump heartbeats with two open documents and claims commands — the
+  // same /office/api/agent-* loop the real VBA pump (DshLibAgent.bas) runs.
+  const agent = wordAgent
+  const PID = 4242
+  const docs = ['C:/docs/thesis.docx', 'C:/docs/paper.docx']
+  async function pumpTick() {
+    const response = await post('/office/api/agent-poll', { pid: PID, docs })
+    const body = await response.json()
+    for (const command of body.commands ?? []) {
+      // Trivial executor: echo the command type back with its args.
+      await post('/office/api/agent-result', {
+        requestId: command.requestId,
+        ok: true,
+        value: { echo: command.type, args: command.args, pid: PID },
+      })
+    }
+    return body
+  }
+
+  // 16a: plain command round trip with docId routing.
+  const callPromise = agent.call({ type: 'read', docId: docs[0], args: { para: 3 }, timeoutMs: 4000 })
+  const first = await pumpTick()
+  assert.equal(first.commands?.length, 1, 'pump claims the queued command')
+  assert.equal(first.commands[0].type, 'read', 'claimed command carries its type')
+  assert.equal(first.commands[0].args.para, 3, 'claimed command carries its args')
+  const callResult = await callPromise
+  assert.equal(callResult.ok, true, 'command resolves after agent-result')
+  assert.equal(callResult.value.echo, 'read', 'result carries the echo')
+
+  // 16b: a command for an unknown document is NOT claimed by this pump.
+  const other = await agent.call({ type: 'read', docId: 'C:/elsewhere.docx', args: {}, timeoutMs: 300 })
+  const second = await pumpTick()
+  assert.equal(second.commands?.length ?? 0, 0, 'unmatched docId is not claimed')
+  assert.equal(other.ok, false, 'unclaimed command times out')
+  assert.match(other.error, /秒内没有执行/)
+
+  // 16c: heartbeat registration drives liveInstances / findPidForDoc.
+  assert.equal(agent.liveInstances().length, 1, 'one live instance')
+  assert.equal(agent.findPidForDoc(docs[1]), PID, 'docId resolves to its pid')
+  assert.equal(agent.findPidForDoc('C:/nope.docx'), 0, 'unknown docId has no pid')
+
+  // 16d: mask lifecycle — begin → tick delivers the op behind the mask →
+  // stop button fails everything and invokes the dsh cancel hook.
+  const maskPromise = agent.beginMask({ pid: PID, docId: docs[0], text: '正在测试', timeoutMs: 4000 })
+  let state = await (await post('/office/api/agent-mask-state', { pid: PID })).json()
+  assert.equal(state.close, false, 'mask is up')
+  assert.equal(state.text, '正在测试', 'mask shows the tool text')
+  const opPromise = agent.call({ type: 'write', docId: docs[0], args: { text: 'x' }, timeoutMs: 4000 })
+  state = await (await post('/office/api/agent-mask-state', { pid: PID })).json()
+  assert.equal(state.commands?.length, 1, 'the mask tick delivers queued ops')
+  await post('/office/api/agent-result', { requestId: state.commands[0].requestId, ok: true, value: { done: true } })
+  const opResult = await opPromise
+  assert.equal(opResult.ok, true, 'op behind the mask resolves')
+  await post('/office/api/agent-mask-stop', { pid: PID })
+  const maskResult = await maskPromise
+  // stop() marks stopRequested; the maskShow resolves via stop/close or result.
+  assert.ok(maskResult.ok === true || /终止/.test(maskResult.error ?? ''), `mask resolves after stop: ${JSON.stringify(maskResult)}`)
+  assert.equal(agentStopCount, 1, 'the stop hook fired once (dsh turn cancel)')
+  const stopped = await agent.call({ type: 'read', docId: docs[0], args: {}, timeoutMs: 300 })
+  assert.ok(stopped.ok === false, 'post-stop commands fail')
+  state = await (await post('/office/api/agent-mask-state', { pid: PID })).json()
+  assert.equal(state.close, true, 'mask state asks the form to close after stop')
+
+  // 16e: endMask withdraws an unclaimed maskShow (form never opens).
+  agent.setAgent({ cancel() { agentStopCount += 100 } })
+  const maskPromise2 = agent.beginMask({ pid: PID, docId: docs[0], text: 'x', timeoutMs: 3000 })
+  await agent.endMask({ pid: PID })
+  const mask2 = await maskPromise2
+  assert.equal(mask2.ok, true, 'withdrawn mask resolves cleanly')
+  assert.equal(mask2.value.stopped, false, 'withdrawn mask is not a stop')
+  assert.equal(agentStopCount, 1, 'endMask does not fire the stop hook')
+  agent.dispose()
 }
 
 server.stop()

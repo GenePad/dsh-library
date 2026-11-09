@@ -66,12 +66,83 @@ function textAttachment(db, paths, key) {
  * @param {{storageDir:string, dataDir:string}} deps.paths
  * @param {() => object} deps.getSettings
  * @param {() => object} [deps.wordAi] - the Word AI task service (runtime.office.ai).
+ * @param {() => object} [deps.wordAgent] - the Word agent bridge (runtime.office.wordAgent).
  * @param {() => object} [deps.wordReport] - the Word report generator (runtime.office.report).
  * @param {() => object} [deps.citeStyles] - the CSL style store (runtime.office.styles).
  * @param {object} [deps.logger]
  */
 export function createTools(deps) {
-  const { getDb, paths, getSettings, wordAi, wordReport, citeStyles, logger = console } = deps
+  const { getDb, paths, getSettings, wordAi, wordAgent, wordReport, citeStyles, logger = console } = deps
+
+  // ------------------------------------------- opened-Word document tools ---
+  // Shared plumbing for library_word_* : resolve the Word process holding the
+  // document, register the current dsh agent (the mask's 终止 button can then
+  // force-cancel the turn), optionally hold the blocking mask around the op.
+  const docNameOf = docId => String(docId ?? '').replaceAll('\\', '/').split('/').pop() || String(docId ?? '')
+
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+  /**
+   * Turn a failed reachability probe into an ACCURATE message: "no Word"
+   * must only be said when COM actually found no Word.Application; a live
+   * Word that did not report within the retry window gets its own wording
+   * (busy / service just restarted), which is actionable instead of
+   * misleading.
+   */
+  function wordUnreachable(probe, subject) {
+    const base = subject
+      ? `该文档当前没有在 Word 中打开（未收到它的心跳）：${subject}`
+      : '没有检测到正在运行的 Word。'
+    if (probe?.wordFound === false) {
+      return `${base}\n请先在 Word 中打开该文档；若 Word 未安装文库模板，请在文库设置的「写作插件」页一键安装，然后重新打开 Word。`
+    }
+    if (probe?.wordFound === true) {
+      return `${base}\n检测到 Word 正在运行，但文库插件在这几秒内没有收到它的心跳（Word 可能正忙或插件服务刚重载）。请稍等几秒重试；若持续出现，请在 Word 里点一下文档正文，或到文库设置「写作插件」页重装模板后完全重启 Word。`
+    }
+    return `${base}\n请确认文档已在 Word 中打开；若仍失败，请到文库设置「写作插件」页检查模板安装状态并重启 Word。`
+  }
+
+  async function wordTarget(args, exec) {
+    const agent = wordAgent?.()
+    if (!agent) throw new Error('写作插件服务不可用（Word 代理未启动）。')
+    const docId = String(args?.docId ?? '').trim()
+    if (docId === '') throw new Error('缺少 docId：先用 library_word_list 获取已打开文档的 docId（完整路径；未保存空白文档为文档名）。')
+    let pid = agent.findPidForDoc(docId)
+    let probe = null
+    if (!pid && agent.nudge) {
+      // No fresh heartbeat: push ticks into Word over COM (the pull channel's
+      // only real fault is a dead/delayed tick loop) and poll for the report.
+      for (let attempt = 0; attempt < 4 && !pid; attempt += 1) {
+        const info = await agent.nudge()
+        if (info?.wordFound !== null) probe = info
+        await sleep(3500) // > NUDGE_DEDUPE so every attempt really pushes
+        pid = agent.findPidForDoc(docId)
+      }
+    }
+    if (!pid) throw new Error(wordUnreachable(probe, docId))
+    agent.setAgent(exec?.agent ?? null)
+    return { agent, pid, docId }
+  }
+
+  async function wordOp(args, exec, { docId, pid, type, opArgs, timeoutMs, maskText, mask = true }) {
+    const { agent } = await wordTarget({ docId }, exec)
+    const signal = exec?.signal ?? null
+    const run = () => agent.call({ type, docId, pid, args: opArgs, timeoutMs, signal })
+    // Session-scoped blocking mask: the FIRST operation of a task opens it
+    // and it STAYS UP across every later operation (the user cannot edit
+    // between our reads and writes). It comes down only via
+    // library_word_busy(action:"end"), the 终止 button, or the idle safety
+    // net — so a whole multi-step task is protected by one mask.
+    if (mask) agent.ensureMask({ pid, docId, text: maskText, signal })
+    const result = await run()
+    if (result.ok !== true) throw new Error(result.error)
+    return result.value
+  }
+
+  const WORD_CITE_PARAMS = {
+    para: { type: 'number', description: '目标段号（1 起，来自 library_word_read 返回的 paras[].n 或 search 的 hit.para）' },
+    query: { type: 'string', description: '检索词：命中该文字的段落作为目标段' },
+  }
 
   return [
     {
@@ -680,7 +751,7 @@ export function createTools(deps) {
     },
     {
       name: 'library_word_report',
-      description: '不用打开 Word，直接生成一份带真实引文的 .docx 报告：引文按用户指定的 CSL 样式排版并带 Zotero 域代码（之后在 Word 里可继续用「文库引用」选项卡刷新/改样式），文末自动生成参考文献表，生成后自动用系统默认程序打开。用户说「写/生成一份关于 XX 的报告/综述/文档（Word）」时用这个工具；先用 library_search / library_read 收集资料，正文各段用 text 块，引注位置写 [[N]] 占位标记，citations 与标记一一对应。',
+      description: '不用打开 Word，直接生成一份带真实引文的 .docx 报告：引文按指定的 CSL 样式排版并带 Zotero 域代码（之后在 Word 里可用「文库引用」刷新/换样式），文末自动生成参考文献表，生成后自动用系统默认程序打开。用户说「写/生成一份关于 XX 的报告/综述/文档（Word）」时用这个工具；先 library_search / library_read 收集资料。写法：正文各段是一个 text 块，引注位置写 [[N]]，N 必须等于本段 citations 中某项的 id。要点：(1) 一个 [[N]] = 一处引文域，一段可以写多个，同一篇文献也可以在一段里出现多次（重复写同一个 id 即可）；(2) 引文的编号与参考文献顺序由 CSL 处理器按正文出现顺序自动计算，正文里不要自己写编号、citations 也无需按文献顺序排列——程序按 id 匹配，数组顺序无关；(3) 每条引文的 locator/prefix/suffix 都可选。',
       parameters: {
         type: 'object',
         properties: {
@@ -693,14 +764,14 @@ export function createTools(deps) {
               properties: {
                 heading: { type: 'string', description: '章节标题（给此块则为标题块）' },
                 level: { type: 'number', description: '标题级别 1-3，默认 1' },
-                text: { type: 'string', description: '正文段落（给此块则为正文块），引注位置写 [[N]] 占位标记' },
+                text: { type: 'string', description: '正文段落（给此块则为正文块）；引注处写 [[N]]，N 与该段 citations 的 id 对应，可与 citations 顺序无关地任意多次使用' },
                 citations: {
                   type: 'array',
-                  description: '本段引文列表，id 与 [[N]] 标记对应',
+                  description: '本段引文列表；每项的 id 对应 text 中的一个 [[N]]，keys 是文库条目 key（同一处引文可放多个 key = 一条引文簇）',
                   items: {
                     type: 'object',
                     properties: {
-                      id: { type: 'number', description: '与 text 中 [[N]] 标记对应的编号' },
+                      id: { type: 'number', description: '与 text 中 [[N]] 对应的编号（1-999，本段内唯一；同一个 id 可在正文出现多次表示多处引用同一处引文）' },
                       keys: { type: 'array', items: { type: 'string' }, description: '文库条目 key（8 位）' },
                       locator: { type: 'string', description: '定位符，如页码 "10"' },
                       prefix: { type: 'string', description: '引注前缀' },
@@ -744,10 +815,284 @@ export function createTools(deps) {
         }
       },
     },
+    {
+      name: 'library_word_list',
+      description: '列出当前已打开的 Microsoft Word 文档（需已安装文库 Word 写作插件且 Word 正在运行）：docId（完整路径）、页数、段落数、字符数、是否未保存/只读。要读取或编辑某个已打开的 Word 文档时，先用这个工具拿到 docId。',
+      parameters: {
+        type: 'object',
+        properties: {},
+      },
+      output: { schema: JSON_SCHEMA, render: renderJson },
+      timeoutMs: 45_000,
+      async execute(args = {}, exec = null) {
+        const agent = wordAgent?.()
+        if (!agent) throw new Error('写作插件服务不可用（Word 代理未启动）。')
+        agent.setAgent(exec?.agent ?? null)
+        let instances = agent.liveInstances()
+        let probe = null
+        if (instances.length === 0 && agent.nudge) {
+          // Push ticks into Word before reporting "no Word": covers the
+          // startup / plugin-reload window and a dropped timer chain.
+          for (let attempt = 0; attempt < 4 && instances.length === 0; attempt += 1) {
+            const info = await agent.nudge()
+            if (info?.wordFound !== null) probe = info
+            await sleep(3500) // > NUDGE_DEDUPE so every attempt really pushes
+            instances = agent.liveInstances()
+          }
+        }
+        if (instances.length === 0) throw new Error(wordUnreachable(probe))
+        const result = await agent.call({ type: 'list', timeoutMs: 20_000, signal: exec?.signal ?? null })
+        if (result.ok !== true) throw new Error(result.error)
+        return { docs: result.value.docs ?? [], instances: instances.length }
+      },
+    },
+    {
+      name: 'library_word_read',
+      description: '读取一个已打开的 Word 文档的指定位置（read-opened-word）：按页（page）、按段落（para 起连续 paras 段或 para..toPara）、或按检索词（query，返回命中段落及上下各 contextParas 段）。不传定位参数时从头读前 paras 段。返回带段号（n，全局 1 起）的段落列表，写回时用段号定位。操作期间 Word 会出现「DSH 正在阅读」遮罩（可用 mask=false 关闭）。',
+      parameters: {
+        type: 'object',
+        properties: {
+          docId: { type: 'string', description: '文档标识（来自 library_word_list；未保存的空白文档是文档名，如 文档1）' },
+          page: { type: 'number', description: '读第几页（1 起）' },
+          para: { type: 'number', description: '起始段号（1 起）' },
+          paras: { type: 'number', description: '读多少段（默认 30；不传 para 时=从头读的段数，默认 40）' },
+          toPara: { type: 'number', description: '结束段号（与 para 搭配）' },
+          query: { type: 'string', description: '检索词：返回命中段落及其上下 contextParas 段' },
+          contextParas: { type: 'number', description: 'query 命中时上下各带几段（默认 2，上限 10）' },
+          maxChars: { type: 'number', description: '返回正文最大字符数（默认 12000，上限 40000）' },
+          mask: { type: 'boolean', description: '是否弹出「正在阅读」遮罩（默认 true）' },
+        },
+        required: ['docId'],
+      },
+      output: { schema: JSON_SCHEMA, render: renderJson },
+      timeoutMs: 90_000,
+      async execute(args = {}, exec = null) {
+        const target = await wordTarget(args, exec)
+        return await wordOp(args, exec, {
+          ...target,
+          type: 'read',
+          opArgs: {
+            page: args.page, para: args.para, paras: args.paras, toPara: args.toPara,
+            query: args.query, contextParas: args.contextParas, maxChars: args.maxChars,
+          },
+          timeoutMs: 60_000,
+          maskText: `正在阅读：${docNameOf(args.docId)}`,
+          mask: args.mask !== false,
+        })
+      },
+    },
+    {
+      name: 'library_word_search',
+      description: '在一个（或全部）已打开的 Word 文档里检索文字并返回命中段落的上下文（search-context-in-opened-word）：每条命中带段号（para）与命中段前后 contextParas 段的正文。docId 省略时在所有已打开文档中检索。命中段号可直接用于 library_word_write / library_word_cite 定位。',
+      parameters: {
+        type: 'object',
+        properties: {
+          docId: { type: 'string', description: '文档标识；省略则在全部已打开文档中检索' },
+          query: { type: 'string', description: '检索词（在 Word 可见正文中查找）' },
+          maxHits: { type: 'number', description: '最多命中数（默认 20，上限 50）' },
+          contextParas: { type: 'number', description: '命中段上下各带几段（默认 1，上限 10）' },
+          mask: { type: 'boolean', description: '是否弹出「正在检索」遮罩（默认 true；多文档检索时每个文档一次）' },
+        },
+        required: ['query'],
+      },
+      output: { schema: JSON_SCHEMA, render: renderJson },
+      timeoutMs: 120_000,
+      async execute(args = {}, exec = null) {
+        const agent = wordAgent?.()
+        if (!agent) throw new Error('写作插件服务不可用（Word 代理未启动）。')
+        agent.setAgent(exec?.agent ?? null)
+        const query = String(args.query ?? '').trim()
+        if (query === '') throw new Error('缺少 query（检索词）。')
+        const targets = args.docId
+          ? [await wordTarget(args, exec)]
+          : agent.liveInstances().flatMap(instance => instance.docs.map(docId => ({ agent, pid: instance.pid, docId })))
+        if (targets.length === 0) throw new Error('没有检测到正在运行的 Word。')
+        const results = []
+        for (const target of targets) {
+          try {
+            const value = await wordOp(args, exec, {
+              ...target,
+              type: 'search',
+              opArgs: { query, maxHits: args.maxHits, contextParas: args.contextParas },
+              timeoutMs: 60_000,
+              maskText: `正在检索：${docNameOf(target.docId)}`,
+              mask: args.mask !== false && targets.length <= 3,
+            })
+            results.push(value)
+          } catch (error) {
+            results.push({ docId: target.docId, error: String(error?.message ?? error) })
+          }
+        }
+        return { query, docs: results }
+      },
+    },
+    {
+      name: 'library_word_write',
+      description: '编辑写入一个已打开的 Word 文档（write-opened-word）：mode=replaceParas 用 text 替换 para..toPara 段（toPara 省略时只替换一段）；mode=insertAfter 在 para 段之后插入新段；mode=append 在文档末尾追加。多段文本用 \\n 分行。写入前请先 library_word_read 确认段号与原文（段号在编辑后会变化）。返回新的总段数，随后应复读确认。操作期间 Word 会出现「正在编辑」遮罩。',
+      parameters: {
+        type: 'object',
+        properties: {
+          docId: { type: 'string', description: '文档标识（来自 library_word_list；未保存的空白文档是文档名，如 文档1）' },
+          mode: { type: 'string', enum: ['replaceParas', 'insertAfter', 'append'], description: '默认 replaceParas' },
+          para: { type: 'number', description: '目标段号（replaceParas 的起始段 / insertAfter 的锚点段）' },
+          toPara: { type: 'number', description: 'replaceParas 的结束段号（省略=只替换 para 一段）' },
+          text: { type: 'string', description: '写入文本，\\n 分段' },
+          mask: { type: 'boolean', description: '是否弹出「正在编辑」遮罩（默认 true）' },
+        },
+        required: ['docId', 'text'],
+      },
+      output: { schema: JSON_SCHEMA, render: renderJson },
+      timeoutMs: 90_000,
+      async execute(args = {}, exec = null) {
+        const target = await wordTarget(args, exec)
+        const text = String(args.text ?? '')
+        if (text.trim() === '') throw new Error('text 不能为空。')
+        if (text.length > 30000) throw new Error('text 超过 30000 字符，请分段写入。')
+        return await wordOp(args, exec, {
+          ...target,
+          type: 'write',
+          opArgs: { mode: args.mode, para: args.para, toPara: args.toPara, text },
+          timeoutMs: 60_000,
+          maskText: `正在编辑：${docNameOf(args.docId)}`,
+          mask: args.mask !== false,
+        })
+      },
+    },
+    {
+      name: 'library_word_cite',
+      description: '在已打开的 Word 文档的指定段落插入真实 Zotero 引注（带域代码，可用「文库引用」刷新/换样式）：先用 para 或 query 定位目标段，citations 每项的 after 填该段文字里一段独特片段（引注插到它后面），keys 为文库 8 位条目 key。文档需先设置过引文样式（「文库格式设置」）；未设置时会报错提示。需要引注位置写法与 library_word_apply 的 insert 模式一致。',
+      parameters: {
+        type: 'object',
+        properties: {
+          docId: { type: 'string', description: '文档标识（来自 library_word_list；未保存的空白文档是文档名，如 文档1。文档需先设置过引文样式）' },
+          para: { type: 'number', description: '目标段号（1 起）' },
+          query: { type: 'string', description: '检索词：命中段落作为目标段' },
+          citations: {
+            type: 'array',
+            description: '引文列表（本段内按数组顺序插入）',
+            items: {
+              type: 'object',
+              properties: {
+                after: { type: 'string', description: '目标段文字里一段足够独特的片段，引注插到它之后' },
+                keys: { type: 'array', items: { type: 'string' }, description: '文库条目 key（8 位，来自 library_search / library_add）' },
+                locator: { type: 'string', description: '定位符，如页码 "10"' },
+                prefix: { type: 'string', description: '引注前缀' },
+                suffix: { type: 'string', description: '引注后缀' },
+              },
+            },
+          },
+          mask: { type: 'boolean', description: '是否弹出「正在编辑」遮罩（默认 true）' },
+        },
+        required: ['docId', 'citations'],
+      },
+      output: { schema: JSON_SCHEMA, render: renderJson },
+      timeoutMs: 200_000,
+      async execute(args = {}, exec = null) {
+        const ai = wordAi?.()
+        if (!ai) throw new Error('写作插件服务不可用（无法插入引注）。')
+        const target = await wordTarget(args, exec)
+        const agent = wordAgent?.()
+        const citations = Array.isArray(args.citations) ? args.citations : []
+        if (citations.length === 0) throw new Error('citations 不能为空。')
+        if (citations.length > 20) throw new Error('citations 过多（一次最多 20 条）。')
+        if (!args.para && !args.query) throw new Error('需要 para（目标段号）或 query（检索词）定位目标段。')
+        // Whether this call is the one that opens the mask (→ release it on
+        // failure so a rejected plan never leaves Word locked).
+        const maskHeldBefore = Boolean(agent?.status?.().mask && Number(agent.status().mask.pid) === target.pid)
+        try {
+          // 1. Word resolves the located paragraph and captures it as the
+          //    apply anchor; the tool learns its exact visible text.
+          const prep = await wordOp(args, exec, {
+            ...target,
+            type: 'citePrepare',
+            opArgs: { para: args.para, query: args.query },
+            timeoutMs: 60_000,
+            maskText: `正在编辑：${docNameOf(args.docId)}`,
+            mask: args.mask !== false,
+          })
+          // 2. Register the plan as an AI insert task (validates `after`
+          //    anchors against the located text and the keys against the
+          //    library, both in the HOST) and wait for the Word-side apply.
+          const taskId = `WDC${Date.now().toString(36).toUpperCase()}`
+          const submitPromise = ai.submit(taskId, {
+            mode: 'insert',
+            reopen: true,
+            pid: target.pid,
+            docId: target.docId,
+            docName: docNameOf(target.docId),
+            selection: prep.text,
+            citations,
+          })
+          const applyResult = await wordOp({ mask: false }, exec, {
+            ...target,
+            type: 'citeApply',
+            opArgs: { taskId },
+            timeoutMs: 150_000,
+            maskText: '',
+            mask: false,
+          }).catch(error => {
+            // Fail the waiting submit immediately instead of letting it run
+            // out its own 150 s claim window.
+            ai.fail(taskId, error)
+            return { ok: false, error: error?.message ?? String(error) }
+          })
+          // The submit waiter carries the real outcome AND the real engine
+          // error (unknown item, missing style, transaction failure, ...).
+          // Note: on success citeApply returns the VBA value WITHOUT an `ok`
+          // field, so success must be judged by the submit result alone.
+          const result = await submitPromise.catch(error => ({ ok: false, error: error?.message ?? String(error) }))
+          if (result?.ok !== true) throw new Error(String(result?.error ?? applyResult.error ?? '插入引注失败'))
+          return {
+            ok: true,
+            docId: target.docId,
+            para: prep.para,
+            inserted: result.inserted ?? citations.length,
+            note: '已插入引注并自动刷新（带真实 Zotero 域代码，可在 Word 中继续编辑/换样式）。',
+          }
+        } catch (error) {
+          // A failed citation call must not keep Word locked when this call
+          // opened the mask (plans rejected in the host never reach Word).
+          if (!maskHeldBefore && agent) await agent.endMask({ pid: target.pid }).catch(() => {})
+          throw error
+        }
+      },
+    },
+    {
+      name: 'library_word_busy',
+      description: '在已打开的 Word 文档上弹出/关闭阻塞遮罩（msg box）：action=begin 时 Word 显示「DSH 正在工作 + 终止按钮」的模态窗体并锁住 Word 界面，防止用户在任务进行中改动文档；action=end 时关闭遮罩、恢复 Word 可用。注意：library_word_read/write/search/cite 等操作会自动开启并保持遮罩（整个任务期间 Word 一直被锁住），因此**完成全部 Word 操作后必须调用 action="end" 释放遮罩**，否则用户无法继续使用 Word。用户点击终止按钮会强制停止当前 dsh 任务；用户在对话中要求继续时，AI 需重新执行操作（遮罩会自动重新弹出）。文本用 text 自定义（如「正在整理参考文献」）。',
+      parameters: {
+        type: 'object',
+        properties: {
+          docId: { type: 'string', description: '文档标识（来自 library_word_list；未保存的空白文档是文档名，如 文档1）' },
+          action: { type: 'string', enum: ['begin', 'end'], description: '默认 begin' },
+          text: { type: 'string', description: '遮罩提示文字（begin 时）' },
+        },
+        required: ['docId'],
+      },
+      output: { schema: JSON_SCHEMA, render: renderJson },
+      timeoutMs: 60_000,
+      async execute(args = {}, exec = null) {
+        const { agent, pid, docId } = await wordTarget(args, exec)
+        const signal = exec?.signal ?? null
+        if (args.action === 'end') {
+          await agent.endMask({ pid, signal })
+          return { ok: true, closed: true, note: '遮罩已关闭，Word 恢复可用。' }
+        }
+        const maskText = String(args.text ?? '').trim() || 'DSH 正在工作中，请稍候。'
+        const held = agent.ensureMask({ pid, docId, text: maskText, signal })
+        return {
+          ok: true,
+          held: held.held === true,
+          note: held.held
+            ? '遮罩此前已开启，已保持（任务期间 Word 一直被锁住）。'
+            : '遮罩已开启；完成全部 Word 操作后请调用 action="end" 释放。',
+        }
+      },
+    },
   ].map(tool => ({
     ...tool,
-    async execute(args = {}) {
-      return lossless(await tool.execute(args))
+    async execute(args = {}, exec = null) {
+      return lossless(await tool.execute(args, exec))
     },
   }))
 }

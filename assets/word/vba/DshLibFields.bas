@@ -203,6 +203,30 @@ Public Sub DshLibAiSetTask(ByVal taskId As String, ByVal docId As String)
     gAiDocId = docId
 End Sub
 
+' Agent-initiated citation inserts anchor on a located Range (paragraph /
+' search hit) instead of a live selection: DshLibAgent resolves the position
+' and hands it over here so the regular applyAiEdit transaction can run.
+Public Function DshLibAiSetRange(rng As Object, ByVal docName As String) As Boolean
+    On Error GoTo Fail
+    If rng Is Nothing Then DshLibAiSetRange = False: Exit Function
+    Set gAiRange = rng.Duplicate
+    gAiDocName = docName
+    gAiTaskId = ""
+    gAiDocId = ""
+    Set gAiWorking = Nothing
+    DshLibAiSetRange = True
+    Exit Function
+Fail:
+    DshLibAiSetRange = False
+End Function
+
+Public Function DshLibAiRangeText() As String
+    On Error Resume Next
+    DshLibAiRangeText = ""
+    If Not gAiRange Is Nothing Then DshLibAiRangeText = gAiRange.Text
+    On Error GoTo 0
+End Function
+
 Public Function DshLibAiTaskId() As String
     DshLibAiTaskId = gAiTaskId
 End Function

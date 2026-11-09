@@ -57,11 +57,13 @@ function withTimeout(promise, ms, label) {
   ]).finally(() => clearTimeout(timer))
 }
 
-export function createOfficeServer({ integration, dialogs, styles, ai = null, logger = console, version = '0.2.1' }) {
+export function createOfficeServer({ integration, dialogs, styles, ai = null, wordAgent = null, logger = console, version = '0.2.1' }) {
   let server = null
   let port = 0
   let error = ''
   let active = null
+  // Debug / e2e: the outcome of the last externally driven mask (agent-mask-begin).
+  let maskOutcome = null
 
   function status() {
     return {
@@ -254,6 +256,95 @@ export function createOfficeServer({ integration, dialogs, styles, ai = null, lo
       case 'ai-cancel': {
         if (!ai) return json(response, 503, { ok: false })
         return json(response, 200, ai.cancel({ taskId: body?.taskId, pid: body?.pid }))
+      }
+      // ------------------------------------------- Word agent (doc ops) ---
+      // The installed template's always-on pump claims agent-initiated
+      // commands (read / write / search / mask). See word-agent.js.
+      case 'agent-poll': {
+        if (!wordAgent) return json(response, 503, { error: 'Word 代理服务不可用' })
+        return json(response, 200, wordAgent.poll({
+          pid: body?.pid ?? url.searchParams.get('pid') ?? 0,
+          docs: body?.docs,
+        }))
+      }
+      case 'agent-result': {
+        if (!wordAgent) return json(response, 503, { ok: false })
+        return json(response, 200, wordAgent.result({
+          requestId: body?.requestId,
+          ok: body?.ok !== false,
+          value: body?.value ?? null,
+          error: body?.error ?? null,
+        }))
+      }
+      case 'agent-mask-state': {
+        if (!wordAgent) return json(response, 503, { close: true })
+        return json(response, 200, wordAgent.maskState({ pid: body?.pid }))
+      }
+      case 'agent-mask-stop': {
+        if (!wordAgent) return json(response, 503, { ok: false })
+        return json(response, 200, wordAgent.stop({ pid: body?.pid }))
+      }
+      // Debug / e2e: drive the blocking mask exactly like the agent tools do
+      // (session-scoped: repeat calls keep it held, agent-mask-end releases).
+      case 'agent-mask-begin': {
+        if (!wordAgent) return json(response, 503, { ok: false })
+        const thePid = Number(body?.pid) || wordAgent.findPidForDoc(String(body?.docId ?? ''))
+        if (!thePid) return json(response, 400, { ok: false, error: 'no Word instance for that doc' })
+        const held = wordAgent.ensureMask({ pid: thePid, docId: String(body?.docId ?? ''), text: String(body?.text ?? '') })
+        return json(response, 200, { ok: true, pid: thePid, ...held })
+      }
+      case 'agent-mask-end': {
+        if (!wordAgent) return json(response, 503, { ok: false })
+        return json(response, 200, await wordAgent.endMask({ pid: Number(body?.pid) || 0 }) ?? { ok: true })
+      }
+      // Debug / e2e: the exact citation flow library_word_cite runs.
+      case 'agent-cite': {
+        if (!wordAgent || !ai) return json(response, 503, { ok: false, error: '服务不可用' })
+        const docId = String(body?.docId ?? '')
+        const pid = wordAgent.findPidForDoc(docId)
+        if (!pid) return json(response, 400, { ok: false, error: '该文档当前没有在 Word 中打开' })
+        const prep = await wordAgent.call({
+          type: 'citePrepare', docId, pid,
+          args: { para: body?.para, query: body?.query }, timeoutMs: 60_000,
+        })
+        if (prep.ok !== true) return json(response, 400, { ok: false, error: prep.error })
+        const taskId = `WDC${Date.now().toString(36).toUpperCase()}`
+        const submitPromise = ai.submit(taskId, {
+          mode: 'insert', reopen: true, pid, docId,
+          docName: docId.replaceAll('\\', '/').split('/').pop() || docId,
+          selection: prep.value.text,
+          citations: body?.citations ?? [],
+        })
+        const applyResult = await wordAgent.call({
+          type: 'citeApply', docId, pid, args: { taskId }, timeoutMs: 150_000,
+        })
+        if (applyResult.ok !== true) {
+          // Fail the waiting submit immediately instead of letting it run out
+          // its own 150 s window.
+          ai.fail(taskId, new Error(applyResult.error))
+          const submitResult = await submitPromise
+          return json(response, 400, { ok: false, error: applyResult.error, submit: submitResult?.error ?? null })
+        }
+        const result = await submitPromise
+        return json(response, result?.ok ? 200 : 400, result)
+      }
+      case 'agent-status': {
+        if (!wordAgent) return json(response, 200, { instances: [] })
+        return json(response, 200, wordAgent.status())
+      }
+      // Debug / e2e: the exact call path the library_word_* tools take,
+      // exposed over the local-only server so external scripts (and power
+      // users) can drive document operations without going through a chat.
+      case 'agent-call': {
+        if (!wordAgent) return json(response, 503, { ok: false, error: 'Word 代理服务不可用' })
+        const result = await wordAgent.call({
+          type: body?.type,
+          docId: body?.docId,
+          pid: body?.pid,
+          args: body?.args ?? {},
+          timeoutMs: Math.min(Number(body?.timeoutMs) || 30_000, 300_000),
+        })
+        return json(response, result.ok ? 200 : 400, result.ok ? result.value : { error: result.error })
       }
       default:
         return json(response, 404, { error: `Unknown office API endpoint: ${name}` })
