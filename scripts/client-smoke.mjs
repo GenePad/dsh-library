@@ -669,6 +669,27 @@ await act(async () => {
 })
 const orderAfterMenu = JSON.parse(localStorage.getItem('dsh-library:columns'))
 assert.ok(orderAfterMenu.indexOf('shortTitle') > orderAfterMenu.indexOf('creator'), 'dragging inside the picker reorders the header order')
+// Header drag advertises move (the container's file-import copy effect used to
+// clobber it → forbidden cursor everywhere) and hovering another cell pushes
+// the columns aside as a live preview; dropping commits the previewed slot.
+const pushTransfer = { setData() {}, effectAllowed: 'move', dropEffect: 'none' }
+let pushFrom, pushOver
+await act(async () => {
+  pushFrom = headerCells().find(node => node.textContent.includes('年份'))
+  pushOver = headerCells().find(node => node.textContent.includes('创建者'))
+  pushFrom.dispatchEvent(Object.defineProperty(new window.MouseEvent('dragstart', { bubbles: true }), 'dataTransfer', { value: { setData() {}, effectAllowed: 'move' } }))
+  pushOver.dispatchEvent(Object.defineProperty(new window.MouseEvent('dragover', { bubbles: true, cancelable: true }), 'dataTransfer', { value: pushTransfer }))
+  await tick()
+})
+assert.strictEqual(pushTransfer.dropEffect, 'move', 'header dragover advertises move (no forbidden cursor)')
+assert.ok(/translateX/.test(pushFrom.getAttribute('style') ?? ''), 'cells shift aside during the drag preview')
+await act(async () => {
+  pushFrom.dispatchEvent(Object.defineProperty(new window.MouseEvent('drop', { bubbles: true, cancelable: true }), 'dataTransfer', { value: { getData: () => 'year' } }))
+  await tick()
+})
+const orderAfterPush = JSON.parse(localStorage.getItem('dsh-library:columns'))
+assert.ok(orderAfterPush.indexOf('year') < orderAfterPush.indexOf('creator'), 'drop commits the previewed push-aside slot')
+assert.ok(!container.querySelector('.lib-table.lib-coldrag'), 'drag state clears after the drop')
 // Header and rows share the .lib-table width wrapper so their grid tracks
 // resolve identically (alignment).
 assert.ok(container.querySelector('.lib-items > .lib-table > .lib-table-head'), 'header and rows share the .lib-table width wrapper')

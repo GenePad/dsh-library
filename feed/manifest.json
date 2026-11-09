@@ -1,23 +1,23 @@
 {
-  "version": "0.3.11",
+  "version": "0.3.12",
   "base": "../",
-  "publishedAt": 1794184888401,
+  "publishedAt": 1794194905242,
   "notes": "",
   "files": [
     {
       "path": "package.json",
       "size": 1702,
-      "sha256": "3d374011d670dd0c9ceb697760dd9f8cd0fc05052dfd12f32b1dc41c5c211b53"
+      "sha256": "e014a868624a5f6534ed5d01b2302b1135490e7ff5af4f06953cbd29ee4d0d98"
     },
     {
       "path": "index.js",
       "size": 7180,
-      "sha256": "04cb316bd720ce81e668cbbc1ad430acfd2cdf35a3036bf3c5261b448b780625"
+      "sha256": "437472de69989e4bdcafd31d05673b3da93de3e8131c39a33ce9c1bc05a9ff60"
     },
     {
       "path": "client.js",
-      "size": 1866473,
-      "sha256": "4401604ba5481fcc7867af2082b0fb101bfff4c8fdf87778e1d7a186c5231178"
+      "size": 1868490,
+      "sha256": "eb66545f1d3309abb1c321b51d17bdb35cbfccb294e4d030d9ec7fcae8864890"
     },
     {
       "path": "cordis.patch.yml",
@@ -76,8 +76,8 @@
     },
     {
       "path": "src/client/items-pane.jsx",
-      "size": 25378,
-      "sha256": "195ccdd730a59bb7522fc4ec77a08e4f739581cfb3e756592a7c932d9de92e00"
+      "size": 30252,
+      "sha256": "c8b0cd79b23f28ba4b01d7117730c33d5c88ac92395fdd577485f50422a73e6a"
     },
     {
       "path": "src/client/labels.js",
@@ -111,8 +111,8 @@
     },
     {
       "path": "src/client/styles.js",
-      "size": 53849,
-      "sha256": "45b162e6252ecf91aacdfdc36d55d0bcf44e4c67237823974130316ecf656d51"
+      "size": 54203,
+      "sha256": "031a0f4748501a6fc3bc6c83170190d6b6259c4ce58eaaf3de0cb5f635ecef03"
     },
     {
       "path": "src/client/util.js",
@@ -456,8 +456,8 @@
     },
     {
       "path": "assets/word/DshLibrary.dotm",
-      "size": 126192,
-      "sha256": "251bbc4379226711658ba89dd7669051d48878da3d1d164b87d6b475eed26084"
+      "size": 126047,
+      "sha256": "ea4b524a146c0c6e527ef10138204ded8b4c98a1009cc754539a91e86ded3063"
     },
     {
       "path": "assets/word/icons/dshAiCitation.png",
@@ -511,8 +511,8 @@
     },
     {
       "path": "assets/word/vba/DshLibCore.bas",
-      "size": 29109,
-      "sha256": "53706b9f3b6ca3a6f9c78d0f40f3453a659ea4e842b2c3971edf4cda4a076dbb"
+      "size": 29288,
+      "sha256": "ffb06dbc1389ef872e9cb26a9e8c420b4f4f9fd58fc9c12814f1c8cf5279e05d"
     },
     {
       "path": "assets/word/vba/DshLibFields.bas",

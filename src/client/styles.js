@@ -191,6 +191,12 @@ const CSS = `
 .lib-colresize:hover { background: color-mix(in srgb, var(--lib-accent) 35%, transparent); }
 body.lib-col-resizing { cursor: col-resize; user-select: none; }
 body.lib-col-resizing .lib-colresize { background: color-mix(in srgb, var(--lib-accent) 45%, transparent); }
+/* Header drag reorder: while a drag is live every cell glides toward the
+   previewed slot (the push-aside effect); the dragged header itself dims. */
+.lib-coldrag .lib-table-head > button,
+.lib-coldrag .lib-table-head > span,
+.lib-coldrag .lib-itemrow > span { transition: transform 150ms ease; }
+.lib-coldrag .lib-coldrag-src { opacity: 0.45; }
 .lib-colbtn { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 18px; border-radius: 4px; color: var(--lib-text-3); background: var(--lib-bg); }
 .lib-colbtn:hover, .lib-colbtn.open { background: var(--lib-bg-hover); color: var(--lib-text); }
 .lib-itemrow {

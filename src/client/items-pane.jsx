@@ -108,6 +108,15 @@ export function reorderColumns(list, fromId, toId) {
   return next
 }
 
+/** Move one column to an explicit slot (the header drag's push-aside preview). */
+export function moveColumnToIndex(list, fromId, index) {
+  const from = list.indexOf(fromId)
+  if (from === -1) return list
+  const next = list.filter(id => id !== fromId)
+  next.splice(Math.max(0, Math.min(next.length, index)), 0, fromId)
+  return next
+}
+
 /** itemData field names the host should return for the visible columns. */
 export function columnFieldNames(columns) {
   return [...new Set((Array.isArray(columns) ? columns : [])
@@ -161,6 +170,12 @@ export function ItemsPane({
   }
   // Column drag state for header reordering (Zotero lets you drag headers).
   const dragColumnId = React.useRef(null)
+  // Live reorder preview: { from, p } while a header drag is in flight, p =
+  // the insertion slot in the source-removed order. Header and row cells
+  // translate toward the preview (the "push aside" effect); the real order is
+  // committed only on drop.
+  const [colDrag, setColDrag] = React.useState(null)
+  const colDragPos = React.useRef(null)
   const listRef = React.useRef(null)
   // While a width handle is dragged, native HTML5 reordering must stay off.
   const [resizing, setResizing] = React.useState(false)
@@ -228,6 +243,28 @@ export function ItemsPane({
   // blank at the right edge instead of stretching a column.
   const template = visible.map(column => `${Math.round(columnWidths?.[column.id] ?? column.width)}px`).join(' ')
 
+  // While a header drag is live, cells translate toward the previewed order.
+  // Rendering stays in the original order and only offsets move, so header
+  // and every row keep their tracks aligned during the push animation.
+  const dragSource = colDrag?.from ?? null
+  let colDelta = null
+  if (dragSource && colDrag.p != null) {
+    const preview = moveColumnToIndex(columns, dragSource, colDrag.p)
+    if (preview.some((id, index) => id !== columns[index])) {
+      const widthOf = id => Math.round(columnWidths?.[id] ?? COLUMN_BY_ID.get(id)?.width ?? 100)
+      const offsets = (ids) => {
+        let x = 0
+        const map = {}
+        for (const id of ids) { map[id] = x; x += widthOf(id) }
+        return map
+      }
+      const before = offsets(columns)
+      const after = offsets(preview)
+      colDelta = Object.fromEntries(columns.map(id => [id, after[id] - before[id]]))
+    }
+  }
+  const cellShift = id => (colDelta?.[id] ? { transform: `translateX(${colDelta[id]}px)` } : undefined)
+
   const toggleColumn = (id, fixed) => {
     if (fixed) return
     onSetColumns(previous => (previous.includes(id)
@@ -272,6 +309,8 @@ export function ItemsPane({
 
   const startColumnDrag = (id) => (event) => {
     dragColumnId.current = id
+    colDragPos.current = null
+    setColDrag({ from: id, p: null })
     try {
       event.dataTransfer.setData('text/plain', id)
       event.dataTransfer.effectAllowed = 'move'
@@ -279,11 +318,58 @@ export function ItemsPane({
       // jsdom dataTransfer is a stub; the drop handler passes the id through.
     }
   }
+  // Hovered cell decides the insertion slot: left half inserts before it,
+  // right half after it (empty rects → "before", which the smoke test relies
+  // on since it fires dragstart/drop without dragover).
+  const hoverColumn = (id, event) => {
+    const from = dragColumnId.current
+    const s = columns.indexOf(from)
+    const v = columns.indexOf(id)
+    if (!from || from === id || s === -1 || v === -1) return
+    let side = 'before'
+    const rect = event.currentTarget.getBoundingClientRect?.()
+    if (rect && rect.width > 0) side = event.clientX - rect.left > rect.width / 2 ? 'after' : 'before'
+    const p = v < s ? (side === 'before' ? v : v + 1) : (side === 'before' ? v - 1 : v)
+    if (colDragPos.current === p) return
+    colDragPos.current = p
+    setColDrag({ from, p })
+  }
+  const dragOverColumn = (id) => (event) => {
+    if (!dragColumnId.current) return // file drags keep the container's copy effect
+    // stopPropagation keeps .lib-middle's file-import dragover from clobbering
+    // our move effect with copy (effectAllowed=move + dropEffect=copy is the
+    // mismatch that makes Chromium show the forbidden cursor everywhere).
+    event.preventDefault()
+    event.stopPropagation()
+    try {
+      event.dataTransfer.dropEffect = 'move'
+    } catch { /* jsdom stub */ }
+    hoverColumn(id, event)
+  }
+  const clearColumnDrag = () => {
+    dragColumnId.current = null
+    colDragPos.current = null
+    setColDrag(null)
+  }
   const dropColumnOn = (id) => (event) => {
     event.preventDefault()
     const from = dragColumnId.current
-    dragColumnId.current = null
-    if (from && from !== id) onSetColumns(previous => reorderColumns(previous, from, id))
+    const p = colDragPos.current
+    clearColumnDrag()
+    if (!from) return
+    // A previewed slot wins: after the push-aside the "source" cell may sit
+    // under the cursor, and dropping on it lands at the previewed position.
+    if (p != null) onSetColumns(previous => moveColumnToIndex(previous, from, p))
+    else if (from !== id) onSetColumns(previous => reorderColumns(previous, from, id))
+  }
+  // Drop released outside the header (over the rows): commit the previewed slot.
+  const dropColumnPreview = (event) => {
+    if (!dragColumnId.current) return
+    event.preventDefault()
+    const from = dragColumnId.current
+    const p = colDragPos.current
+    clearColumnDrag()
+    if (from && p != null) onSetColumns(previous => moveColumnToIndex(previous, from, p))
   }
 
   // Reordering inside the column picker: the checked list's order IS the
@@ -309,14 +395,17 @@ export function ItemsPane({
     const label = column.icon
       ? (column.icon === 'attachment' ? <AttachmentIcon size={13} /> : <NoteIcon size={13} />)
       : column.label
+    const dragging = dragSource === column.id
     if (!column.sort) {
       return (
         <span
           key={column.id}
-          className={column.numeric ? 'num' : ''}
+          className={`${column.numeric ? 'num' : ''}${dragging ? ' lib-coldrag-src' : ''}`}
+          style={cellShift(column.id)}
           draggable={!resizing}
           onDragStart={startColumnDrag(column.id)}
-          onDragOver={event => event.preventDefault()}
+          onDragOver={dragOverColumn(column.id)}
+          onDragEnd={clearColumnDrag}
           onDrop={dropColumnOn(column.id)}
         >
           {label}
@@ -329,10 +418,11 @@ export function ItemsPane({
         key={column.id}
         draggable={!resizing}
         onDragStart={startColumnDrag(column.id)}
-        onDragOver={event => event.preventDefault()}
+        onDragOver={dragOverColumn(column.id)}
+        onDragEnd={clearColumnDrag}
         onDrop={dropColumnOn(column.id)}
-        className={`${sort === column.sort ? 'sorted' : ''}${column.numeric ? ' num' : ''}`}
-        style={column.numeric ? { textAlign: 'right' } : undefined}
+        className={`${sort === column.sort ? 'sorted' : ''}${column.numeric ? ' num' : ''}${dragging ? ' lib-coldrag-src' : ''}`}
+        style={{ ...(column.numeric ? { textAlign: 'right' } : null), ...cellShift(column.id) }}
         onClick={() => onSort(column.sort)}
         title={`${column.hint ? `${column.label}：${column.hint}\n` : ''}按${column.label}排序（拖动可调整列顺序，右缘可调列宽）`}
       >
@@ -343,7 +433,7 @@ export function ItemsPane({
   }
 
   const renderTitleCell = (item, key, indent = 0) => (
-    <span className="lib-cell strong" key={key} style={indent ? { paddingLeft: indent } : undefined}>
+    <span className="lib-cell strong" key={key} style={{ ...(indent ? { paddingLeft: indent } : null), ...cellShift(key) }}>
       <span className="lib-title">
         <span className="lib-type"><TypeIcon itemType={item.itemType} /></span>
         <span className="lib-title-text">{item.title}</span>
@@ -355,13 +445,13 @@ export function ItemsPane({
   const renderCell = (item, column) => {
     if (column.id === 'title') return renderTitleCell(item, column.id)
     if (column.id === 'hasAttachment') {
-      return <span className={`lib-cell${item.hasAttachment ? ' att' : ''}`} key={column.id}>{item.hasAttachment ? <AttachmentIcon size={12} /> : ''}</span>
+      return <span className={`lib-cell${item.hasAttachment ? ' att' : ''}`} key={column.id} style={cellShift(column.id)}>{item.hasAttachment ? <AttachmentIcon size={12} /> : ''}</span>
     }
     if (column.id === 'numNotes') {
-      return <span className={`lib-cell${column.numeric ? ' num' : ''}`} key={column.id}>{item.numNotes > 0 ? item.numNotes : ''}</span>
+      return <span className={`lib-cell${column.numeric ? ' num' : ''}`} key={column.id} style={cellShift(column.id)}>{item.numNotes > 0 ? item.numNotes : ''}</span>
     }
     return (
-      <span className={`lib-cell${column.numeric ? ' num' : ''}`} key={column.id}>{cellValue(item, column)}</span>
+      <span className={`lib-cell${column.numeric ? ' num' : ''}`} key={column.id} style={cellShift(column.id)}>{cellValue(item, column)}</span>
     )
   }
 
@@ -371,7 +461,11 @@ export function ItemsPane({
       onDragEnter={handleDragEnter}
       onDragOver={(event) => {
         event.preventDefault()
-        if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+        if (!event.dataTransfer) return
+        // copy is only for file imports; clobbering the header drag's move
+        // effect here is what showed the forbidden cursor during reordering.
+        if (event.dataTransfer.types?.includes('Files')) event.dataTransfer.dropEffect = 'copy'
+        else if (dragColumnId.current) event.dataTransfer.dropEffect = 'move'
       }}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -383,7 +477,7 @@ export function ItemsPane({
           (the widest content), so the grid tracks resolve the same everywhere
           and the columns line up exactly. */}
       <div className="lib-items" ref={listRef}>
-        <div className="lib-table">
+        <div className={`lib-table${dragSource ? ' lib-coldrag' : ''}`} onDrop={dropColumnPreview}>
           <div className="lib-table-head" style={{ gridTemplateColumns: `16px ${template} 24px` }}>
             <span />
             {visible.map(headerCell)}
@@ -437,7 +531,7 @@ export function ItemsPane({
                   <span className="lib-twisty-cell" />
                   {visible.map(column => (column.id === 'title'
                     ? (
-                        <span className="lib-cell strong" style={{ paddingLeft: 16 }} key={column.id}>
+                        <span className="lib-cell strong" style={{ paddingLeft: 16, ...cellShift(column.id) }} key={column.id}>
                           <span className="lib-title">
                             <span className="lib-type">
                               {child.kind === 'note' ? <NoteIcon size={12} /> : <PdfIcon size={12} />}
@@ -446,7 +540,7 @@ export function ItemsPane({
                           </span>
                         </span>
                       )
-                    : <span className="lib-cell" key={column.id} />
+                    : <span className="lib-cell" key={column.id} style={cellShift(column.id)} />
                   ))}
                   <span />
                 </div>
@@ -480,7 +574,16 @@ export function ItemsPane({
           <ChevronDown size={12} />
         </button>
         {menuOpen ? (
-          <div className="lib-colmenu" onDragOver={event => event.preventDefault()}>
+          <div
+            className="lib-colmenu"
+            onDragOver={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              try {
+                event.dataTransfer.dropEffect = 'move'
+              } catch { /* jsdom stub */ }
+            }}
+          >
             <div className="lib-colmenu-title">显示中的列（拖动可调顺序）</div>
             {columns.map((id) => {
               const column = COLUMN_BY_ID.get(id)
