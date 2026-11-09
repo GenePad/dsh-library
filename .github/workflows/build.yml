@@ -112,6 +112,7 @@ jobs:
     name: Build and pack npm bundle
     needs: cleanup
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
 
@@ -125,8 +126,20 @@ jobs:
       - name: Build client and vendor bundles
         run: npm run build
 
-      - name: Run smoke suites
-        run: npm run check
+      # Four separate steps so a failure or hang is attributed to one suite in
+      # the log. Each suite runs under `timeout` (exit 124 = it hung); the job
+      # timeout-minutes is the backstop.
+      - name: Smoke: host
+        run: timeout 480 node scripts/host-smoke.mjs
+
+      - name: Smoke: office
+        run: timeout 480 node scripts/office-smoke.mjs
+
+      - name: Smoke: webdav
+        run: timeout 480 node scripts/webdav-smoke.mjs
+
+      - name: Smoke: client
+        run: timeout 480 node scripts/client-smoke.mjs
 
       - name: Pack npm bundle
         run: |
