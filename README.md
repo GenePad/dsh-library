@@ -2,7 +2,12 @@
 
 ## 这是什么
 
-一个面向 [DeepSeek Harness (dsh)](https://www.deepseek.com/harness/) 的第三方文献管理插件：把 **Zotero 文库**搬进 dsh。左侧栏底部一键进入 Zotero 风格的整页图书馆，直接读写你现有的 `zotero.sqlite`（没有装 Zotero 也能用独立文库），并配一个具备完整 agent 能力的「文献助手」。
+一个面向 [DeepSeek Harness (dsh)](https://www.deepseek.com/harness/) 的第三方文献管理插件：
+
+1. **AI 帮你更新引用文献、修改论文**：Word 功能区一键「自动检索引文」「AI修改」，写回真实 Zotero 引文域并自动重算参考文献表。
+2. **把 Zotero 文库搬进 dsh**：不仅能管理你现有的 Zotero 数据库，还能从左侧栏底部一键进入 Zotero 风格的整页图书馆，直接读写 `zotero.sqlite`。
+3. **「文献助手」**：具备完整 agent 能力，自动跟随你正在浏览 / 阅读的文献，检索、整理、总结文库。
+4. **AI 帮你保持 Zotero 数据库常新**：导入自动联网检索元数据，条目一键交给 AI 补全 / 重新获取；开启 WebDAV「每 30 分钟自动同步」后，附件定时与 Zotero 互通。
 
 ## 能做什么
 
