@@ -273,4 +273,8 @@ jobs:
           test -f "$TARBALL"
           # ./-prefix is required: a bare relative path parses as a GitHub
           # `owner/repo` shorthand and npm tries to git ls-remote it instead.
-          npm publish "./$TARBALL" --access public --provenance
+          # No --provenance: a trusted publish attests automatically. Trusted
+          # publishing also cannot create a package — a bare ENEEDAUTH here
+          # means this name has no published version yet (approve the staged
+          # first release on npmjs.com → Staged Packages).
+          npm publish "./$TARBALL" --access public
