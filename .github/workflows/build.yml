@@ -3,7 +3,7 @@
 # days, rolling prerelease on the default branch).
 #
 # The npm bundle (.tgz) installs into a dsh profile:
-#   dsh plugin --profile desktop add dsh-zotero-library-<version>.tgz
+#   dsh plugin --profile desktop add dsh-zlibrary-<version>.tgz
 # The in-app updater is NOT served from Releases — it reads feed/manifest.json
 # at the repository root (files are committed), so this workflow never pushes
 # to main.
@@ -209,7 +209,7 @@ jobs:
             printf 'This is a prerelease rebuilt on every manual run of the Build workflow, replacing the previous one.\n\n'
             printf '## Install\n\n'
             printf '```sh\n'
-            printf 'dsh plugin --profile desktop add dsh-zotero-library-%s.tgz\n' "$VERSION"
+            printf 'dsh plugin --profile desktop add dsh-zlibrary-%s.tgz\n' "$VERSION"
             printf '```\n\n'
             printf 'After installing, restart dsh to load the new code.\n\n'
             printf '## SHA256 checksums\n\n```text\n'

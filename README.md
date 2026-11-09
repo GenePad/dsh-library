@@ -18,7 +18,7 @@
 
 在 dsh 里安装（三选一），安装后**重启 dsh** 生效：
 
-1. **npm 包名**：在 dsh 的插件安装入口填包名 `dsh-zotero-library`。
+1. **npm 包名**：在 dsh 的插件安装入口填包名 `dsh-zlibrary`。
 2. **GitHub 地址**：填 `https://github.com/GenePad/dsh-library`。
 3. **让 agent 装**：在 dsh 对话里直接说——「用 plugin manager 从 https://github.com/GenePad/dsh-library 安装 dsh-library 插件」。
 
