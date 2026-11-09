@@ -13,6 +13,11 @@ import { build } from 'esbuild'
 
 const PLUGIN = dirname(dirname(fileURLToPath(import.meta.url)))
 const OUTPUT = join(PLUGIN, 'client.js')
+// The module-system registration id must equal the package name: the shell
+// keys its boot graph rows by package.json's `name`, and a bundle that
+// registers under any other id is never materialized (silent disappearing
+// entry). Deriving it here keeps the two in lockstep across renames.
+const PACKAGE = JSON.parse(readFileSync(join(PLUGIN, 'package.json'), 'utf8'))
 export const PLATFORM_MODULES = [
   'react',
   'react/jsx-runtime',
@@ -51,7 +56,7 @@ export async function bundleClient() {
   return [
     '// Generated from src/client by `npm run build` (tools/build-client.mjs). Do not edit by hand.',
     'window.__ModuleLoader__.load({',
-    "  id: 'dsh-library',",
+    '  id: ' + JSON.stringify(PACKAGE.name) + ',',
     '  factory: (require) => {',
     'const module = { exports: {} }',
     result.outputFiles[0].text.trimEnd(),

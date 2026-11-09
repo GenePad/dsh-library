@@ -1,9 +1,12 @@
-# dsh-library bundle patch.
+# dsh-zlibrary bundle patch.
 #
 # One insert row mounts the Host half; the browser half is attached by the
 # package.json `dsh.client` declaration and binds to this row because its
-# `name` is the bare package name.
+# `name` is the bare package name. Keep this in lockstep with package.json's
+# `name`: the shell resolves the row name to that manifest and only accepts a
+# package.json whose own `name` matches — a stale name silently drops the
+# browser half (the sidebar entry disappears with no error).
 - insert:
     - id: library
-      name: dsh-library
+      name: dsh-zlibrary
       config: {}

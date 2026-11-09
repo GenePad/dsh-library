@@ -5,7 +5,7 @@ import { LibraryChatArea } from './chat-dock.jsx'
 import { LibrarySettingsSection } from './settings-section.jsx'
 import { installStyles } from './styles.js'
 
-export const name = 'dsh-library'
+export const name = 'dsh-zlibrary'
 export const inject = ['slots', 'layout']
 
 /**

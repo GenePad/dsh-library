@@ -1,7 +1,7 @@
 {
   "version": "0.3.16",
   "base": "../",
-  "publishedAt": 1794207048955,
+  "publishedAt": 1794207583940,
   "notes": "",
   "files": [
     {
@@ -16,13 +16,13 @@
     },
     {
       "path": "client.js",
-      "size": 1869445,
-      "sha256": "8e7e82926800a7fd07b8c310726e5643b629d9318a265f4103068ec24327509a"
+      "size": 1869448,
+      "sha256": "38f3998e814ab34253fe4180b747cf7d1ae8f06cd3a9aacec8ceae0d643e3024"
     },
     {
       "path": "cordis.patch.yml",
-      "size": 283,
-      "sha256": "4ff7189c52a22a5b5ee8e7b5d33a4ba673767dad4d701355d5138cc4ba2bec7e"
+      "size": 542,
+      "sha256": "e068b17157f1563fe208ccf20abc5e81c6ec190ab4b6ba0d953c257348627012"
     },
     {
       "path": "icon.svg",
@@ -66,8 +66,8 @@
     },
     {
       "path": "src/client/index.js",
-      "size": 6733,
-      "sha256": "af168b3569be682575b0c756aaa292bb716e25ada7ad09fccbc05a98eb882811"
+      "size": 6734,
+      "sha256": "06d43d76a286e15bfff198ff3bc34ad2917ed9d3afb81ff02d213d7ebfd5b07f"
     },
     {
       "path": "src/client/item-menu.jsx",
@@ -106,8 +106,8 @@
     },
     {
       "path": "src/client/settings-section.jsx",
-      "size": 25789,
-      "sha256": "1403e694bc85777016d639253d6bc1422c71c1c8d7694474b2c79ede0bcdd096"
+      "size": 25790,
+      "sha256": "1d64ba00408a1744f23b6f9296b2c00029a039e620247acae70a06dff8ae58bb"
     },
     {
       "path": "src/client/styles.js",
@@ -286,8 +286,8 @@
     },
     {
       "path": "src/host/settings.js",
-      "size": 4894,
-      "sha256": "349126f39ffe2b6950d2ab2fec86be38db44f6d5cef8684f4a5ef70843719663"
+      "size": 4895,
+      "sha256": "ffd2adbaed89d0c2bd1b145fabf0a6d12382e86641e61c8b6cee080f0d9147b4"
     },
     {
       "path": "src/host/standalone.js",
@@ -541,8 +541,8 @@
     },
     {
       "path": "README.md",
-      "size": 6356,
-      "sha256": "a12609c507bb6d1931a7de35e6dd4661dc6fecdb311a6e34223a04966b838e10"
+      "size": 6359,
+      "sha256": "2bc346b1c6c478bacda6de4591ce28cb8d05a7b5fb2452f2389cc5d81663ed91"
     },
     {
       "path": "LICENSE",

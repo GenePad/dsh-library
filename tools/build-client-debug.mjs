@@ -1,6 +1,8 @@
 // Debug helper: unminified client bundle for readable smoke stacks (not shipped).
-import { writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { build } from 'esbuild'
+
+const PACKAGE = JSON.parse(readFileSync('package.json', 'utf8'))
 
 const result = await build({
   absWorkingDir: process.cwd(),
@@ -17,7 +19,7 @@ const result = await build({
   logLevel: 'silent',
 })
 const worker = globalThis.__W__ ?? "''"
-writeFileSync('client.debug.js', 'window.__ModuleLoader__.load({id:"dsh-library",factory:(require)=>{const module={exports:{}};\n'
+writeFileSync('client.debug.js', 'window.__ModuleLoader__.load({id:' + JSON.stringify(PACKAGE.name) + ',factory:(require)=>{const module={exports:{}};\n'
   + 'window.__DSH_LIBRARY_PDF_WORKER__=' + JSON.stringify(worker) + ';\n'
   + result.outputFiles[0].text + '\nreturn Object.defineProperty({...module.exports},Symbol.toStringTag,{value:"Module"})}})')
 console.log('client.debug.js written')

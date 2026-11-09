@@ -327,7 +327,13 @@ const injectFns = new Map()
 window.__ModuleLoader__ = { load(value) { registration = value } }
 // eslint-disable-next-line no-eval
 ;(0, eval)(source)
-assert.equal(registration?.id, 'dsh-library')
+// The shell keys its boot graph by package.json's `name` and resolves the
+// bundle row named there to that same manifest; a mismatch silently drops the
+// whole browser half (the sidebar entry vanishes with no console error).
+const packageJson = JSON.parse(fs.readFileSync(path.join(PLUGIN, 'package.json'), 'utf8'))
+const patchName = fs.readFileSync(path.join(PLUGIN, 'cordis.patch.yml'), 'utf8').match(/^\s*name:\s*(\S+)\s*$/m)?.[1]
+assert.equal(patchName, packageJson.name, 'cordis.patch.yml bundle row name must equal the package name')
+assert.equal(registration?.id, packageJson.name, 'client module registration id must equal the package name')
 const clientModule = registration.factory((specifier) => {
   if (specifier === 'react') return React
   if (specifier === 'react/jsx-runtime') return JsxRuntime
@@ -383,7 +389,7 @@ const clientModule = registration.factory((specifier) => {
   }
   throw new Error(`unexpected require(${specifier})`)
 })
-assert.equal(clientModule.name, 'dsh-library')
+assert.equal(clientModule.name, packageJson.name)
 assert.deepEqual(clientModule.inject, ['slots', 'layout'])
 
 // --- mount with a mock ctx ------------------------------------------------
