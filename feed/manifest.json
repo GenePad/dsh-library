@@ -1,13 +1,13 @@
 {
   "version": "0.3.16",
   "base": "../",
-  "publishedAt": 1794204372198,
+  "publishedAt": 1794205227903,
   "notes": "",
   "files": [
     {
       "path": "package.json",
-      "size": 1702,
-      "sha256": "6ea217ea4241d56caadc0ce6f2ff291970e000765d67926b58197c3c69459b2e"
+      "size": 1709,
+      "sha256": "6fd1510589ea5b652ca9a46385ad35e09fb4718008c197e068ac88ea8e91bbad"
     },
     {
       "path": "index.js",
@@ -161,8 +161,8 @@
     },
     {
       "path": "src/host/office/ai-tasks.js",
-      "size": 16923,
-      "sha256": "52022f6dce56ff05f94fa1276a36c6ee8fec195421992a211ec60ecbe08db409"
+      "size": 20124,
+      "sha256": "4612aa84a39889f70d8bbc04b25779788923c2e617b0dc5cbd3ad4093e8888e1"
     },
     {
       "path": "src/host/office/citation.js",
@@ -301,8 +301,8 @@
     },
     {
       "path": "src/host/tools.js",
-      "size": 40103,
-      "sha256": "9588c68133088a8f2ec6815ce771e34550fe5fdaf717f47f74434bbe97c4e5ae"
+      "size": 41119,
+      "sha256": "0f1e0ca1442337e28744be1d9956da240767ebe72e8fba7bf86ae386f9483292"
     },
     {
       "path": "src/host/translate.js",
@@ -516,8 +516,8 @@
     },
     {
       "path": "assets/word/vba/DshLibCore.bas",
-      "size": 29288,
-      "sha256": "ffb06dbc1389ef872e9cb26a9e8c420b4f4f9fd58fc9c12814f1c8cf5279e05d"
+      "size": 30546,
+      "sha256": "53b173d5d11ee401191d08b7a9a69b495454e3bf57b43cf5f461408447758985"
     },
     {
       "path": "assets/word/vba/DshLibFields.bas",
@@ -536,13 +536,13 @@
     },
     {
       "path": "assets/word/vba/ThisDocument.cls",
-      "size": 1889,
-      "sha256": "b9dba672184d010993fe4b4c9c3650c21939d01bf3e6337488b24ab385832f20"
+      "size": 2134,
+      "sha256": "a97ec31059daa64c4d5b2579f6d4be5eb6c89dee4e4bde09554d364a887580c1"
     },
     {
       "path": "README.md",
-      "size": 6355,
-      "sha256": "1d6392cd4335753ad97834106ae07ed7e075f0cdd890326edfff7395078c21a8"
+      "size": 6362,
+      "sha256": "9fa96bede845953268ec66d2807cf4036fec90f9ff9b9250a7d0b466a73108e2"
     },
     {
       "path": "LICENSE",
