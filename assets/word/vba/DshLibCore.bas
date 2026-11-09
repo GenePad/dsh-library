@@ -216,11 +216,11 @@ Public Sub DshLibAiStart(kindCmd As String)
     docId = ActiveDocument.FullName
     If Len(docId) = 0 Then docId = ActiveDocument.Name
     docName = ActiveDocument.Name
+    ' Word's Application object has no HWnd member (that is Excel): reading it
+    ' here would be a COMPILE error, and On Error Resume Next cannot rescue
+    ' compilation. The host only uses this pid to find the right Word process,
+    ' so the window handle stays 0.
     hwnd = 0
-    On Error Resume Next
-    hwnd = Application.hWnd
-    Err.Clear
-    On Error GoTo Fatal
 
     If Not DshLibFields.DshLibAiCapture(docName) Then Exit Sub
 

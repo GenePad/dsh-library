@@ -7,6 +7,24 @@ export function dataDir() {
   return path.join(dshHome(), 'library')
 }
 
+/** Official release manifest (GitHub raw); used when no custom feed is set. */
+export const DEFAULT_UPDATE_FEED = 'https://raw.githubusercontent.com/GenePad/dsh-library/main/feed/manifest.json'
+
+const FEED_OFF = /^(off|none|disabled|关闭|停用)$/i
+
+/**
+ * Effective update feed: the user's settings value wins; `off` (关闭) switches
+ * updates off entirely; an empty value falls back to the bundle config and
+ * then to the official GitHub source.
+ */
+export function resolveUpdateFeed(userValue, configValue) {
+  const user = String(userValue ?? '').trim()
+  if (user !== '') return FEED_OFF.test(user) ? '' : user
+  const config = String(configValue ?? '').trim()
+  if (config !== '') return FEED_OFF.test(config) ? '' : config
+  return DEFAULT_UPDATE_FEED
+}
+
 export function settingsFile() {
   return path.join(dataDir(), 'settings.json')
 }

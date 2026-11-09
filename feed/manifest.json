@@ -1,23 +1,23 @@
 {
-  "version": "0.3.13",
+  "version": "0.3.14",
   "base": "../",
-  "publishedAt": 1794195041106,
+  "publishedAt": 1794196517266,
   "notes": "",
   "files": [
     {
       "path": "package.json",
       "size": 1702,
-      "sha256": "373245e50fd47fa40af7af27b668de3dd6eb083b388d796c87b8b23842fe54b2"
+      "sha256": "be1cceaa3ee81a70c4d7a5c2e37e00c576ac5792fd210c51adcd0f47d01cad67"
     },
     {
       "path": "index.js",
       "size": 7180,
-      "sha256": "6a6e30139556114df6088f525e56e5a6fab4e9eb1cd35f6f8add0c5d6c954637"
+      "sha256": "aee413b8994c76755cd461f2a0efda9389ee70e26c81d5c64ece1101a9600f55"
     },
     {
       "path": "client.js",
-      "size": 1868646,
-      "sha256": "715ae8d923e74150089f970e1b6187fde30a6febd611dc498d940d257bcb650f"
+      "size": 1868816,
+      "sha256": "37f6ec84692075a49b1ad8bf0c9b334e66d7dc50349a8d31ec8393b1ae8fcd16"
     },
     {
       "path": "cordis.patch.yml",
@@ -106,8 +106,8 @@
     },
     {
       "path": "src/client/settings-section.jsx",
-      "size": 25593,
-      "sha256": "2c93e66070346bd1be5dab995208bd8e0398e1f115470ff4e1a9699808f8ee4b"
+      "size": 25789,
+      "sha256": "1403e694bc85777016d639253d6bc1422c71c1c8d7694474b2c79ede0bcdd096"
     },
     {
       "path": "src/client/styles.js",
@@ -246,8 +246,8 @@
     },
     {
       "path": "src/host/office/window.js",
-      "size": 17983,
-      "sha256": "40409d2cc503a8b362e45dfbb575f69bf91b58b70c08d91d4940d16a4b5b3e4d"
+      "size": 22522,
+      "sha256": "24c6b831e2ca4a4263b1d21849f36799e7092a00684402e9b6bec99f83aa91ad"
     },
     {
       "path": "src/host/open.js",
@@ -266,8 +266,8 @@
     },
     {
       "path": "src/host/runtime.js",
-      "size": 24585,
-      "sha256": "ab63d78af4e3b5c51e06a3b4cd1b9204bbdff5a749dec0f7e2962cd469fc225d"
+      "size": 24701,
+      "sha256": "2fac2e568998824dbf8874e72a4204a9aa625e7805117981cf985d458ba4f025"
     },
     {
       "path": "src/host/schema-data.js",
@@ -281,8 +281,8 @@
     },
     {
       "path": "src/host/settings.js",
-      "size": 4126,
-      "sha256": "974413f27238f385778018e5e5a54bfafc9facfcbfc1bc4e1d7f31025de7751e"
+      "size": 4894,
+      "sha256": "349126f39ffe2b6950d2ab2fec86be38db44f6d5cef8684f4a5ef70843719663"
     },
     {
       "path": "src/host/standalone.js",
@@ -536,8 +536,8 @@
     },
     {
       "path": "README.md",
-      "size": 11237,
-      "sha256": "dc92d5b3934ae6fe67eec8a3fce7295b9248413401e51606eb6c0ad138308799"
+      "size": 11497,
+      "sha256": "a4c417a4f6db0d794be11dc90345a64f5722faeccefe3c6bbe3bba7ed2ef0033"
     },
     {
       "path": "LICENSE",
@@ -546,8 +546,8 @@
     },
     {
       "path": "AGENTS.md",
-      "size": 85442,
-      "sha256": "c8bec2fb7b163d51812ff94b35fb4604898391b4f20bae62f7ea898ca534803d"
+      "size": 86950,
+      "sha256": "e755613009e7abc7972397725d2d359a16467a7372bb9b463d084e47e77c26b3"
     }
   ]
 }

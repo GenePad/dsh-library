@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { ZoteroDb } from './db.js'
 import { locateZotero } from './locate.js'
-import { dataDir, loadSettings, loadState, publicSettings, saveSettings, saveState } from './settings.js'
+import { dataDir, loadSettings, loadState, publicSettings, resolveUpdateFeed, saveSettings, saveState } from './settings.js'
 import { attachmentTarget, readAnnotations, readCollections, readItem, readItems, readStats, readTags } from './read.js'
 import { createItem, updateItem, trashItems, deleteForever, createCollection, renameCollection, trashCollection, createAnnotationRecord, updateAnnotationRecord, removeAnnotationRecord, changeItemType, createNoteItem, updateNoteItem, createUrlAttachment, duplicateItem, createParentAttachment, detachAttachment, mergeItems, noteFromAnnotations } from './write.js'
 import { typeList, typeSchema, planTypeChange } from './schema.js'
@@ -333,7 +333,8 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
     packageDir,
     dataDir: home,
     currentVersion: config.version,
-    feedUrl: () => getSettings().updateFeed || config.updateFeed || '',
+    // User feed → bundle config → official GitHub source; `off`/关闭 disables.
+    feedUrl: () => resolveUpdateFeed(getSettings().updateFeed, config.updateFeed),
     logger,
   })
 

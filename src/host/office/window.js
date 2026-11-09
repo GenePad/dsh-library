@@ -199,6 +199,7 @@ function runWindowScript(script, logger, label) {
         const err = Buffer.isBuffer(stderr) ? stderr.toString('utf8') : String(stderr ?? '')
         if (error) logger.warn?.(`library: ${label} failed: ${error.message}`)
         else if (out.trim() === '0') logger.warn?.(`library: ${label}: window not found`)
+        else if (out.trim() === '2') logger.warn?.(`library: ${label}: window restored but Windows kept the foreground (taskbar button is flashing)`)
         else if (err && /error|exception/i.test(err)) logger.warn?.(`library: ${label}: ${err.slice(0, 200)}`)
       })
     child.unref?.()
@@ -218,11 +219,13 @@ export function raiseDialogWindow(id, logger = console) {
 }
 
 /**
- * Win32 script that brings a visible window of OUR OWN process (the dsh
- * desktop shell — this plugin's host half runs inside it, so process.pid is
- * dsh's pid) to the foreground. Used when a Word AI task is dispatched: the
- * user must see dsh take over and work, instead of everything happening
- * behind Word's maximised window.
+ * Win32 script that brings a window of OUR OWN process (the dsh desktop shell
+ * — this plugin's host half runs inside it, so process.pid is dsh's pid) to
+ * the foreground. Used when a Word AI task is dispatched: the user must see
+ * dsh take over and work, instead of everything happening behind Word's
+ * maximised window. dsh may be anywhere when that happens: on screen,
+ * minimised to the taskbar, or hidden in the tray (window hidden — the old
+ * version filtered on IsWindowVisible and silently gave up exactly then).
  */
 export function buildFocusSelfScript(pid) {
   return `Add-Type -TypeDefinition @'
@@ -233,49 +236,122 @@ public class DshSelfFocus {
   public delegate bool EP(IntPtr h, IntPtr l);
   [DllImport("user32.dll")] public static extern bool EnumWindows(EP cb, IntPtr l);
   [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr h);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, IntPtr pid);
-  [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr h);
-
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int i);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern int GetSystemMetrics(int i);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, UIntPtr i);
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
   [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
   [DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr h, bool altTab);
+  [DllImport("user32.dll")] public static extern bool FlashWindowEx(ref FLASHWINFO info);
+  [StructLayout(LayoutKind.Sequential)] public struct FLASHWINFO { public uint cbSize; public IntPtr hwnd; public uint dwFlags; public uint uCount; public uint dwTimeout; }
+  public struct RECT { public int L, T, R, B; }
+
+  // Deterministic foreground kicker (same trick as the citation dialogs): a
+  // synthetic input event on the caption bar grants the foreground right, so
+  // even when AttachThreadInput fails the switch goes through. Neighbouring
+  // events with no sleep in between cannot be redirected by a user hand
+  // movement; a caption click has no client-area effect.
+  static void Nudge(IntPtr h) {
+    RECT r;
+    if (!GetWindowRect(h, out r)) return;
+    int vx = GetSystemMetrics(76), vy = GetSystemMetrics(77);
+    int vw = GetSystemMetrics(78), vh = GetSystemMetrics(79);
+    int tx = (r.L + r.R) / 2, ty = r.T + 14;
+    uint ax = (uint)((tx - vx) * 65535 / Math.Max(vw - 1, 1));
+    uint ay = (uint)((ty - vy) * 65535 / Math.Max(vh - 1, 1));
+    mouse_event(0x8000 | 0x4000 | 0x0001, ax, ay, 0, UIntPtr.Zero);  // MOVE|VIRTUALDESK|ABSOLUTE
+    mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);                      // LEFTDOWN
+    mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);                      // LEFTUP
+  }
 
   // Windows refuses plain SetForegroundWindow from a background process; the
   // documented workaround is attaching to the current foreground thread first.
   static void ForceForeground(IntPtr h) {
     IntPtr fg = GetForegroundWindow();
     if (fg == h) return;
-    uint fgThread = GetWindowThreadProcessId(fg, IntPtr.Zero);
+    uint ignored;
+    uint fgThread = GetWindowThreadProcessId(fg, out ignored);
     uint myThread = GetCurrentThreadId();
     bool attached = false;
     if (fgThread != 0 && fgThread != myThread) attached = AttachThreadInput(myThread, fgThread, true);
-    SetForegroundWindow(h);
     BringWindowToTop(h);
+    SetForegroundWindow(h);
     SwitchToThisWindow(h, true);
     if (attached) AttachThreadInput(myThread, fgThread, false);
   }
 
+  // Top-level windows worth showing: the real main window has a caption;
+  // helper/message windows are WS_EX_TOOLWINDOW or captionless.
+  static bool IsMainWindow(IntPtr h) {
+    if ((GetWindowLong(h, -16) & 0x00C00000) == 0) return false;   // GWL_STYLE, WS_CAPTION
+    if ((GetWindowLong(h, -20) & 0x00000080) != 0) return false;   // GWL_EXSTYLE, WS_EX_TOOLWINDOW
+    return true;
+  }
+
+  // Returns 1 when a window of the pid took the foreground, 2 when it was
+  // brought back (taskbar flashing) but Windows kept the foreground with the
+  // other app, 0 when no window of the pid was found at all.
   public static int Focus(uint pid) {
-    IntPtr best = IntPtr.Zero;
-    int bestLen = -1;
+    IntPtr[] found = new IntPtr[16];
+    long[] score = new long[16];
+    int n = 0;
     EnumWindows((h, l) => {
-      if (!IsWindowVisible(h)) return true;
       uint owner;
       GetWindowThreadProcessId(h, out owner);
-      if (owner != pid) return true;
-      int len = GetWindowTextLength(h);
-      if (len > bestLen) { bestLen = len; best = h; }
+      if (owner != pid || !IsMainWindow(h)) return true;
+      long s = GetWindowTextLength(h);
+      if (n < 16) { found[n] = h; score[n] = s; n++; return true; }
+      int worst = 0;
+      for (int i = 1; i < n; i++) if (score[i] < score[worst]) worst = i;
+      if (s > score[worst]) { found[worst] = h; score[worst] = s; }
       return true;
     }, IntPtr.Zero);
-    if (best == IntPtr.Zero) return 0;
-    ShowWindow(best, 9);                                  // SW_RESTORE (no-op when normal)
-    ForceForeground(best);
-    return 1;
+    if (n == 0) return 0;
+    // Try longest title first, until one window actually holds the foreground.
+    for (int i = 0; i < n; i++) {
+      int w = i;
+      for (int j = i + 1; j < n; j++) if (score[j] > score[w]) w = j;
+      IntPtr t = found[i]; found[i] = found[w]; found[w] = t;
+      long ts = score[i]; score[i] = score[w]; score[w] = ts;
+    }
+    IntPtr primary = found[0];
+    foreach (IntPtr h in found) {
+      if (h == IntPtr.Zero) continue;
+      if (!IsWindowVisible(h)) ShowWindow(h, 5);    // SW_SHOW — back out of the tray
+      if (IsIconic(h)) ShowWindow(h, 9);            // SW_RESTORE — un-minimise
+      ForceForeground(h);
+      System.Threading.Thread.Sleep(120);
+      if (GetForegroundWindow() == h) return 1;
+    }
+    if (primary != IntPtr.Zero) {
+      if (!IsWindowVisible(primary)) ShowWindow(primary, 5);
+      if (IsIconic(primary)) ShowWindow(primary, 9);
+      // Foreground-lock fallback: a synthetic caption click grants the
+      // foreground right (proven on the citation dialog windows).
+      Nudge(primary);
+      ForceForeground(primary);
+      System.Threading.Thread.Sleep(200);
+      if (GetForegroundWindow() == primary) return 1;
+      // Still refused: flash the taskbar button until the user brings dsh up,
+      // so a denied switch is still noticed.
+      FLASHWINFO fw;
+      fw.cbSize = (uint)Marshal.SizeOf(typeof(FLASHWINFO));
+      fw.hwnd = primary;
+      fw.dwFlags = 0x3 | 0xC;                       // FLASHW_ALL | FLASHW_TIMERNOFG
+      fw.uCount = 10;
+      fw.dwTimeout = 0;
+      FlashWindowEx(ref fw);
+    }
+    return 2;
   }
 }
 '@
@@ -285,7 +361,10 @@ public class DshSelfFocus {
 
 /**
  * Bring the dsh main window to the front so the user watches the assistant
- * work on a Word AI task. Fire-and-forget; never blocks the caller.
+ * work on a Word AI task. The window may be minimised or hidden in the tray —
+ * the script restores/shows it first. If Windows' foreground lock refuses the
+ * switch, the taskbar button flashes until the user clicks it. Fire-and-forget;
+ * never blocks the caller.
  */
 export function focusMainWindow(logger = console) {
   if (process.platform !== 'win32') return

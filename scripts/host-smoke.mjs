@@ -749,7 +749,25 @@ const syncStatus = await call('sync-status', {})
 assert.equal(syncStatus.ok, true)
 const updateStatus = await call('update-status', {})
 assert.equal(updateStatus.ok, true)
-assert.equal(updateStatus.value.feed, false)
+// No custom feed configured: the official GitHub source is the default.
+assert.equal(updateStatus.value.feed, true)
+// `off` disables online updates entirely; a custom URL wins; empty restores
+// the official source.
+const offSettings = await call('settings-set', { patch: { updateFeed: 'off' } })
+assert.equal(offSettings.ok, true)
+const offStatus = await call('update-status', {})
+assert.equal(offStatus.ok, true)
+assert.equal(offStatus.value.feed, false, 'updateFeed=off must disable the feed')
+const customSettings = await call('settings-set', { patch: { updateFeed: 'https://example.com/feed/manifest.json' } })
+assert.equal(customSettings.ok, true)
+const customStatus = await call('update-status', {})
+assert.equal(customStatus.ok, true)
+assert.equal(customStatus.value.feed, true)
+const resetSettings = await call('settings-set', { patch: { updateFeed: '' } })
+assert.equal(resetSettings.ok, true)
+const resetStatus = await call('update-status', {})
+assert.equal(resetStatus.ok, true)
+assert.equal(resetStatus.value.feed, true, 'empty updateFeed must fall back to the official feed')
 
 // Standalone library: switching away from Zotero creates a fresh schema-130
 // database under $DSH_HOME/library/data that the same engine can write.

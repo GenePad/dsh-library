@@ -525,10 +525,13 @@ export function LibrarySettingsSection() {
           <div id="lib-set-panel-misc" role="tabpanel" aria-labelledby="lib-set-tab-misc">
             <div className="lib-settings-row">
               <div className="lib-settings-label">插件更新源（manifest.json 地址）</div>
-              <Input value={form.updateFeed} placeholder="https://…/feed/manifest.json（留空关闭在线更新）" onChange={set('updateFeed')} />
+              <Input value={form.updateFeed} placeholder="https://…/feed/manifest.json（留空使用官方源）" onChange={set('updateFeed')} />
               <div className="lib-settings-actions">
                 <Button variant="outline" size="sm" disabled={busy !== ''} onClick={checkUpdate}>{busy === 'update' ? '检查中…' : '检查更新'}</Button>
                 <Button variant="outline" size="sm" disabled={busy !== ''} onClick={applyUpdate}>{busy === 'apply' ? '安装中…' : '安装更新'}</Button>
+              </div>
+              <div className="lib-settings-hint">
+                留空使用官方源（GitHub GenePad/dsh-library 的 feed/manifest.json）；填写 off 关闭在线更新。
               </div>
             </div>
           </div>
