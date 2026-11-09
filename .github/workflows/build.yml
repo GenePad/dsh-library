@@ -1,0 +1,218 @@
+# Manual npm-bundle build for dsh-library (configuration follows GenePad/GenePad's
+# build.yml: manual trigger, previous runs cleaned up, artifacts kept for two
+# days, rolling prerelease on the default branch).
+#
+# The npm bundle (.tgz) installs into a dsh profile:
+#   dsh plugin --profile desktop add dsh-library-<version>.tgz
+# The in-app updater is NOT served from Releases — it reads feed/manifest.json
+# at the repository root (files are committed), so this workflow never pushes
+# to main.
+name: Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: build-${{ github.repository }}
+  cancel-in-progress: true
+
+jobs:
+  cleanup:
+    name: Stop and delete previous Actions runs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove previous workflow runs and artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="repos/${GITHUB_REPOSITORY}"
+          mapfile -t old_run_ids < <(
+            gh api --paginate "$repo/actions/runs?per_page=100" \
+              --jq '.workflow_runs[].id' | grep -vx "$CURRENT_RUN_ID" || true
+          )
+
+          if ((${#old_run_ids[@]} == 0)); then
+            echo "No previous Actions runs to remove."
+            exit 0
+          fi
+
+          echo "Stopping ${#old_run_ids[@]} previous Actions run(s)."
+          for run_id in "${old_run_ids[@]}"; do
+            status="$(gh api "$repo/actions/runs/$run_id" --jq '.status' 2>/dev/null || echo deleted)"
+            if [[ "$status" != "completed" && "$status" != "deleted" ]]; then
+              gh api --method POST "$repo/actions/runs/$run_id/cancel" >/dev/null || true
+            fi
+          done
+
+          wait_for_runs() {
+            local attempts="$1"
+            local attempt active status run_id
+            for ((attempt = 1; attempt <= attempts; attempt++)); do
+              active=0
+              for run_id in "${old_run_ids[@]}"; do
+                status="$(gh api "$repo/actions/runs/$run_id" --jq '.status' 2>/dev/null || echo deleted)"
+                if [[ "$status" != "completed" && "$status" != "deleted" ]]; then
+                  active=$((active + 1))
+                fi
+              done
+              ((active == 0)) && return 0
+              sleep 2
+            done
+            return 1
+          }
+
+          if ! wait_for_runs 30; then
+            echo "Some runs did not stop normally; force-cancelling them."
+            for run_id in "${old_run_ids[@]}"; do
+              status="$(gh api "$repo/actions/runs/$run_id" --jq '.status' 2>/dev/null || echo deleted)"
+              if [[ "$status" != "completed" && "$status" != "deleted" ]]; then
+                gh api --method POST "$repo/actions/runs/$run_id/force-cancel" >/dev/null || true
+              fi
+            done
+            wait_for_runs 15 || {
+              echo "Failed to stop every previous Build run."
+              exit 1
+            }
+          fi
+
+          echo "Deleting artifacts and run records."
+          for run_id in "${old_run_ids[@]}"; do
+            mapfile -t artifact_ids < <(
+              gh api --paginate "$repo/actions/runs/$run_id/artifacts?per_page=100" \
+                --jq '.artifacts[].id' 2>/dev/null || true
+            )
+            for artifact_id in "${artifact_ids[@]}"; do
+              gh api --method DELETE "$repo/actions/artifacts/$artifact_id" >/dev/null
+            done
+
+            deleted=false
+            for attempt in {1..5}; do
+              if gh api --method DELETE "$repo/actions/runs/$run_id" >/dev/null 2>&1; then
+                deleted=true
+                break
+              fi
+              sleep 2
+            done
+            if [[ "$deleted" != true ]]; then
+              echo "Failed to delete workflow run $run_id."
+              exit 1
+            fi
+          done
+
+          echo "Previous Actions runs and artifacts have been removed."
+
+  pack:
+    name: Build and pack npm bundle
+    needs: cleanup
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build client and vendor bundles
+        run: npm run build
+
+      - name: Run smoke suites
+        run: npm run check
+
+      - name: Pack npm bundle
+        run: |
+          mkdir dist
+          npm pack --pack-destination dist
+
+      - name: Generate SHA256 checksums
+        run: |
+          (cd dist && sha256sum * | sort -k2 > checksums.txt)
+          echo "Checksums:"
+          cat dist/checksums.txt
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: npm-package
+          path: dist/*
+          retention-days: 2
+          if-no-files-found: error
+
+  release:
+    name: Publish rolling prerelease
+    runs-on: ubuntu-latest
+    needs: [pack]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download the npm bundle artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: npm-package
+          path: dist
+
+      - name: Resolve release metadata
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          {
+            echo "BUILD_TIME=$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            echo "VERSION=${VERSION}"
+            echo "RELEASE_TAG=prerelease"
+            echo "RELEASE_TITLE=dsh-library v${VERSION} (prerelease)"
+          } >> "$GITHUB_ENV"
+
+      - name: Delete existing prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Deleting existing prerelease: $RELEASE_TAG"
+            gh release delete "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --cleanup-tag \
+              --yes
+          else
+            echo "No existing prerelease to delete."
+          fi
+
+      - name: Create prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            printf 'Rolling %s build from commit [%s](https://github.com/%s/commit/%s).\n\n' \
+              "$RELEASE_TITLE" "${GITHUB_SHA:0:7}" "$GITHUB_REPOSITORY" "$GITHUB_SHA"
+            printf 'Build time: %s\n\n' "$BUILD_TIME"
+            printf 'This is a prerelease rebuilt on every manual run of the Build workflow, replacing the previous one.\n\n'
+            printf '## Install\n\n'
+            printf '```sh\n'
+            printf 'dsh plugin --profile desktop add dsh-library-%s.tgz\n' "$VERSION"
+            printf '```\n\n'
+            printf 'After installing, restart dsh to load the new code.\n\n'
+            printf '## SHA256 checksums\n\n```text\n'
+            cat dist/checksums.txt
+            printf '```\n'
+          } > release-notes.md
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$RELEASE_TITLE" \
+            --notes-file release-notes.md \
+            --prerelease
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$RELEASE_TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY"
