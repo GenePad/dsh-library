@@ -129,6 +129,7 @@ Public Sub DispatchInto(ByVal command As String, ByRef args As Variant, ByVal do
         Case "aiText": CmdAiText args, result
         Case "aiField": CmdAiField args, result
         Case "aiFieldAt": CmdAiFieldAt args, result
+        Case "aiFieldAfter": CmdAiFieldAfter args, result
         Case "aiEnd": CmdAiEnd args, result
         Case Else
             ' Unknown command: answer null rather than hanging the transaction.
@@ -387,6 +388,69 @@ Private Sub CmdAiFieldAt(args As Variant, ByRef result As Variant)
 Failed:
     Set result = MakeError(Err.Number, Err.Description, "Document.aiFieldAt")
 End Sub
+
+' Insert-mode (robust): create the citation field right after a unique text
+' anchor found in the LIVE selection. Character offsets must never be used
+' here: Word positions count the invisible characters of every field code
+' (thousands per citation field), so an offset computed from Range.Text lands
+' inside an earlier field's code and corrupts it. Searching the visible text
+' makes the insertion independent of any offset math.
+Private Sub CmdAiFieldAfter(args As Variant, ByRef result As Variant)
+    Dim anchor As String
+    Dim fieldType As String
+    Dim noteType As Integer
+    Dim rng As Object
+    Dim info As Object
+    On Error GoTo Failed
+    If gAiRange Is Nothing Then Err.Raise vbObjectError + 213, , "aiFieldAfter: no captured range"
+    anchor = ArgStr(args, 2, "")
+    fieldType = NormalizeFieldType(ArgStr(args, 3, "Field"))
+    noteType = CInt(ArgNum(args, 4, 0))
+    Set rng = DshLibAiFindAnchor(anchor)
+    If rng Is Nothing Then
+        Set result = MakeError(0, "anchor not found", "Document.aiFieldAfter")
+        Exit Sub
+    End If
+    Set info = CreateFieldAt(rng, fieldType, noteType)
+    If info Is Nothing Then
+        result = Null
+        Exit Sub
+    End If
+    RegisterNewField info, result
+    Exit Sub
+Failed:
+    Set result = MakeError(Err.Number, Err.Description, "Document.aiFieldAfter")
+End Sub
+
+' Locate `anchor` in the live captured range and return a collapsed range at
+' its end (Nothing when absent). Find searches visible text, so field codes and
+' their invisible characters are skipped naturally.
+Private Function DshLibAiFindAnchor(ByVal anchor As String) As Object
+    Dim rng As Object
+    Dim found As Boolean
+    Set DshLibAiFindAnchor = Nothing
+    If Len(anchor) = 0 Then Exit Function
+    On Error GoTo Failed
+    Set rng = gAiRange.Duplicate
+    With rng.Find
+        .ClearFormatting
+        .Text = anchor
+        .Forward = True
+        .Wrap = wdFindStop
+        .MatchCase = True
+        .MatchWildcards = False
+        .MatchSoundsLike = False
+        .MatchAllWordForms = False
+        .Format = False
+        found = .Execute
+    End With
+    If Not found Then Exit Function
+    rng.Collapse wdCollapseEnd
+    Set DshLibAiFindAnchor = rng
+    Exit Function
+Failed:
+    Set DshLibAiFindAnchor = Nothing
+End Function
 
 Private Sub CmdAiEnd(args As Variant, ByRef result As Variant)
     Set gAiWorking = Nothing

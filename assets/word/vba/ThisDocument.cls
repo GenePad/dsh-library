@@ -31,6 +31,9 @@ Private Sub App_WindowSelectionChange(ByVal Sel As Selection)
     Dim hasSel As Long
     hasSel = 0
     If Sel.Start <> Sel.End Then hasSel = 1
+    ' A selection change proves the user is back in Word: revive a poll loop
+    ' Word may have dropped (see DshLibCore.DshLibAiKeepAlive).
+    DshLibCore.DshLibAiKeepAlive
     If hasSel <> AiLastHasSel Then
         AiLastHasSel = hasSel
         DshLibCore.DshLibAiEventsReady
@@ -42,6 +45,7 @@ End Sub
 Private Sub App_WindowActivate(ByVal Doc As Document, ByVal Wn As Window)
     On Error Resume Next
     AiLastHasSel = -1
+    DshLibCore.DshLibAiKeepAlive
     DshLibCore.DshLibAiEventsReady
     DshLibRibbon.DshLibRibbonInvalidateAi
     On Error GoTo 0
@@ -50,6 +54,7 @@ End Sub
 Private Sub App_DocumentChange()
     On Error Resume Next
     AiLastHasSel = -1
+    DshLibCore.DshLibAiKeepAlive
     DshLibRibbon.DshLibRibbonInvalidateAi
     On Error GoTo 0
 End Sub

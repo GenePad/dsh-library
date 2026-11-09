@@ -27,6 +27,10 @@ function sourceFixHint() {
 const TASK_TTL = 30 * 60_000
 const KEEP_TTL = 2 * 60 * 60_000
 const APPLY_WAIT = 150_000
+// An apply that has not reported back for this long is treated as dead: Word
+// lost the transaction (its instruction loop died, the window was closed), so
+// the task must become re-armable instead of staying "applying" forever.
+const APPLY_STUCK_AFTER = 2 * 60_000
 const MAX_SELECTION = 30_000
 const ANNOUNCE_TTL = 90_000
 const KEY_PATTERN = /^[23456789ABCDEFGHIJKLMNPQRSTUVWXYZ]{8}$/
@@ -151,6 +155,13 @@ function editMessage(task) {
 export function createAiTasks({ chat, focus, logger = console }) {
   const tasks = new Map()
   let announcement = null
+  // Last time ANY Word instance polled us. Word polls every 2 s while a task is
+  // armed; a long gap means the Word-side OnTime chain died (Word was busy,
+  // the template got unloaded, ...) and the write-back will never be claimed
+  // until the user touches Word again (the VBA watchdog re-arms on the next
+  // WindowActivate / selection change). Logging the gap makes that diagnosable
+  // instead of looking like a silent 150 s timeout.
+  let lastPollAt = 0
 
   function expireStale() {
     const now = Date.now()
@@ -224,9 +235,18 @@ export function createAiTasks({ chat, focus, logger = console }) {
   /** Poll from the Word template. */
   function poll({ taskId, pid, docId }) {
     expireStale()
+    const now = Date.now()
+    const gap = lastPollAt ? now - lastPollAt : 0
+    lastPollAt = now
     const task = tasks.get(String(taskId ?? ''))
     if (!task) return { status: 'missing' }
     if (Number(pid) !== task.pid || String(docId ?? '') !== task.docId) return { status: 'mismatch' }
+    if (gap > 15_000 && !task.stallLogged) {
+      task.stallLogged = true
+      logger.warn?.(`library: word ai task ${task.id} poll stalled for ${Math.round(gap / 1000)}s`
+        + ' (Word-side OnTime loop stopped; it re-arms when the user touches Word)')
+    }
+    if (task.status === 'ready' || task.status === 'pending') task.stallLogged = false
     return { status: task.status }
   }
 
@@ -248,10 +268,64 @@ export function createAiTasks({ chat, focus, logger = console }) {
    */
   function submit(taskId, plan) {
     expireStale()
-    const task = tasks.get(String(taskId ?? ''))
-    if (!task) throw new Error(`任务 ${taskId} 不存在（可能已过期或写错 taskId）`)
-    if (task.status === 'applied' || task.status === 'applying') {
-      throw new Error(`任务 ${task.id} 已被 Word 端成功写回，不能再重复写回`)
+    const id = String(taskId ?? '')
+    const reopen = plan?.reopen === true
+    let task = tasks.get(id)
+    if (!task) {
+      if (!reopen) throw new Error(`任务 ${id} 不存在（可能已过期或写错 taskId）`)
+      // The host restarted (plugin reload / dsh restart) while Word kept
+      // waiting on this task: its registry entry is gone but the Word side is
+      // still polling with its own (pid, docId). Rebuild the entry from the
+      // values the caller read out of Word, so the SAME Word dialog claims it.
+      const pid = Number(plan?.pid) || 0
+      const docId = String(plan?.docId ?? '')
+      if (!pid || docId === '') {
+        throw new Error('任务已随插件重载丢失；要接管它需要提供 pid（Word 进程号）与 docId（文档完整路径）')
+      }
+      task = {
+        id,
+        kind: plan?.kind === 'edit' ? 'edit' : 'cite',
+        docId,
+        pid,
+        hwnd: 0,
+        docName: String(plan?.docName ?? docId).slice(0, 200),
+        selection: '',
+        status: 'pending',
+        plan: null,
+        result: null,
+        createdAt: Date.now(),
+        waiter: null,
+      }
+      tasks.set(id, task)
+      logger.info?.(`library: word ai task ${id} adopted for reopen (pid ${pid})`)
+    }
+    if (task.status === 'applied' && !reopen) {
+      throw new Error(`任务 ${task.id} 已被 Word 端成功写回，不能再重复写回（需要继续补插时传 reopen=true 并提供当前选区文本）`)
+    }
+    if (task.status === 'applying') {
+      const runningFor = Date.now() - (task.applyingAt ?? task.createdAt)
+      if (runningFor < APPLY_STUCK_AFTER) {
+        throw new Error(`任务 ${task.id} 正在由 Word 端写回（已 ${Math.round(runningFor / 1000)} 秒），请等它结束再重试`)
+      }
+      task.status = 'failed'
+      task.result = { ok: false, error: 'Word 端写回没有回报结果（Word 可能已失去响应）' }
+      logger.warn?.(`library: word ai task ${task.id} stuck in applying for ${Math.round(runningFor / 1000)}s; re-arming`)
+    }
+    if (reopen) {
+      const nextSelection = String(plan?.selection ?? '')
+      if (nextSelection.trim() === '') {
+        throw new Error('reopen 需要提供 selection：Word 中这段文字当前的完整内容（已含上一轮插入的引文）')
+      }
+      if (nextSelection.length > MAX_SELECTION) {
+        throw new Error(`selection 过长（${nextSelection.length} 字符，上限 ${MAX_SELECTION}）`)
+      }
+      task.selection = nextSelection
+      // The user may have restarted Word between rounds: the task must follow
+      // the NEW process id, otherwise the Word side's polls no longer match.
+      const nextPid = Number(plan?.pid) || 0
+      if (nextPid) task.pid = nextPid
+      const nextDocId = String(plan?.docId ?? '')
+      if (nextDocId) task.docId = nextDocId
     }
     // failed / cancelled tasks are re-armable: the agent may retry after a
     // transient claim timeout (Word window closed, poll hiccup, ...). Each
@@ -260,6 +334,7 @@ export function createAiTasks({ chat, focus, logger = console }) {
       task.status = 'pending'
       task.plan = null
       task.createdAt = Date.now()
+      task.stallLogged = false
       logger.info?.(`library: word ai task ${task.id} re-armed from ${task.status} for retry`)
     }
     task.plan = normalizePlan(task, plan)
@@ -272,12 +347,35 @@ export function createAiTasks({ chat, focus, logger = console }) {
         settled = true
         clearTimeout(timer)
         task.waiter = null
-        resolve(value ?? { ok: false, error: '任务已取消' })
+        resolve(value ?? { ok: false, error: '写回结果未知（Word 端没有回报状态，请查看文档内容后重试）' })
       }
       const timer = setTimeout(() => {
         if (task.status === 'ready' || task.status === 'pending') {
+          // Stay armed on 'pending' instead of failing: the Word poll loop is
+          // still waiting for this task, so a plain retry flips it back to
+          // 'ready' and the SAME Word dialog applies it — no need to make the
+          // user click the ribbon button again. 'failed' would make Word treat
+          // the task as over (DshLibAiPoll clears its state) and retries would
+          // then be claimed by nobody.
+          task.status = 'pending'
+          task.plan = null
+          task.result = {
+            ok: false,
+            error: 'Word 端 150 秒内没有领取写回任务（任务仍在等待，可直接重试，无需在 Word 重新发起）。'
+              + `若连续两次超时，多半是 Word 的轮询定时器停了：把焦点切回 ${task.docName}（或点一下文档正文）即可让 Word 重新接管。`,
+          }
+        } else if (task.status === 'applying') {
+          // Word claimed the task but never reported an outcome: its apply
+          // transaction died (a VBA dispatch error, the document was closed).
+          // Never resolve with `undefined` (that surfaced as the useless
+          // "任务已取消"); fail it with an actionable message and let the agent
+          // re-arm the task, which also revalidates the selection.
           task.status = 'failed'
-          task.result = { ok: false, error: 'Word 端 150 秒内没有领取写回任务——请确认 Word 中该文档仍处于打开状态；文档打开时可直接重试写回（任务会自动重置，无需在 Word 里重新发起）。' }
+          task.result = {
+            ok: false,
+            error: `Word 端已开始写回，但 ${Math.round(APPLY_WAIT / 1000)} 秒内没有回报结果（Word 可能在执行中失去响应）。`
+              + '请检查文档里是否已有部分写入（例如出现 {Citation} 占位符）；确认后可直接重试写回，写入前会重新校验选区。',
+          }
         }
         finish(task.result)
       }, APPLY_WAIT)
@@ -304,6 +402,7 @@ export function createAiTasks({ chat, focus, logger = console }) {
       throw Object.assign(new Error(`AI 任务 ${task.id} 状态是 ${task.status}，无法写回`), { name: 'AlertError' })
     }
     task.status = 'applying'
+    task.applyingAt = Date.now()
     return task
   }
 

@@ -276,31 +276,59 @@ export class IntegrationInterface {
     const inserted = []
     try {
       if (plan.mode === 'replace') {
-        const pieces = String(plan.text).split(/(\[\[\d{1,2}\]\])/g)
+        // Replace mode: clear the range, write the whole plain text in ONE go,
+        // then drop each citation field after the text that precedes its
+        // marker. Never drive this with a moving Word "insertion cursor":
+        // CmdAiField's cursor advance proved unreliable in real Word (each
+        // field's code is thousands of invisible characters), which piled every
+        // field at the end of the passage. Anchors keep it deterministic.
+        const pieces = String(plan.text).split(/(\[\[\d{1,2}\]\]\s*)/g)
+        let plain = ''
+        const spots = []
         for (const piece of pieces) {
           if (piece === '') continue
-          const marker = /^\[\[(\d{1,2})\]\]$/.exec(piece)
+          const marker = /^\[\[(\d{1,2})\]\]\s*$/.exec(piece)
           if (marker) {
             const spec = plan.citations.find(entry => entry.id === Number(marker[1]))
-            const field = await this._doc.aiField(this._session.data.prefs.fieldType)
-            if (!field) throw new AlertError('Word 拒绝在当前位置插入引注域。')
-            inserted.push(await this._aiCitation(field, spec))
+            if (!spec) throw new AlertError(`text 中的标记 [[${marker[1]}]] 没有对应的引文。`)
+            spots.push({ spec, at: plain.length })
           } else {
-            await this._doc.aiText(piece)
+            plain += piece
           }
         }
+        if (plain.trim() === '') throw new AlertError('替换后的文本为空，写回已取消。')
+        await this._doc.aiText(plain)
+        // Insert BACKWARDS (last marker first). Word finds each anchor in the
+        // visible text, and a field inserted for a marker sits between the
+        // preceding text and whatever follows it: with two adjacent markers
+        // ("…表达[[1]][[2]]") a forward pass makes the second anchor
+        // unreachable the moment the first field exists ("…表达{Citation}," no
+        // longer contains "…表达,"). Walking from the end keeps every anchor
+        // still intact, because a later insertion never touches earlier text.
+        for (const spot of [...spots].sort((a, b) => b.at - a.at)) {
+          const anchor = pickAnchor(plain, spot.at)
+          if (!anchor) {
+            throw new AlertError('这段文字以引注开头，无法确定插入位置；请把引注放到文字之后。')
+          }
+          const field = await this._doc.aiFieldAfter(anchor, this._session.data.prefs.fieldType, 0)
+          if (!field) throw new AlertError('Word 未能定位引文插入点，写回已取消。')
+          inserted.push(await this._aiCitation(field, spot.spec))
+        }
       } else {
-        // Insert mode: keep the original text, drop citation fields at the
-        // computed offsets (descending so earlier insertions never shift the
-        // remaining ones).
-        const insertions = plan.citations.map(spec => ({
-          offset: task.selection.indexOf(spec.after) + spec.after.length,
-          spec,
-        })).sort((a, b) => b.offset - a.offset)
-        for (const { offset, spec } of insertions) {
-          if (offset < 1) throw new AlertError('引文插入位置无效，已中止写回。')
-          const field = await this._doc.aiFieldAt(offset, this._session.data.prefs.fieldType, 0)
-          if (!field) throw new AlertError('Word 拒绝在当前位置插入引注域。')
+        // Insert mode: ANCHOR-based insertion. Word finds each `after` fragment
+        // in the live selection text and drops the citation field right after
+        // it. Character offsets must not be used here: Word positions count
+        // the invisible characters of every field code (thousands per citation
+        // field), so a plain-text offset computed from Range.Text lands inside
+        // an earlier field's code as soon as one field exists and corrupts it.
+        // Same backwards rule as replace mode: an anchor that ends where an
+        // already inserted field begins would no longer match.
+        const anchors = plan.citations
+          .map(spec => ({ spec, at: task.selection.indexOf(spec.after) }))
+          .sort((a, b) => b.at - a.at)
+        for (const { spec } of anchors) {
+          const field = await this._doc.aiFieldAfter(spec.after, this._session.data.prefs.fieldType, 0)
+          if (!field) throw new AlertError('Word 未能定位引文插入点（原文可能已被修改），写回已取消。')
           inserted.push(await this._aiCitation(field, spec))
         }
       }
@@ -318,6 +346,29 @@ export class IntegrationInterface {
     await this._session.updateDocument(FORCE_CITATIONS_REGENERATE, true, false)
     return { inserted: inserted.length }
   }
+}
+
+/**
+ * Pick a unique text anchor ENDING at `at` (the characters right before a
+ * [[N]] marker). Replace-mode write-back inserts each citation field after that
+ * anchor, so the position is derived from the text itself instead of a
+ * character offset. Whitespace at the edges is trimmed because Word's Find
+ * compares visible text and paragraph marks would break the match.
+ * @param {string} text full replacement text (markers already stripped)
+ * @param {number} at offset of the marker in `text`
+ * @returns {string} anchor, or '' when the marker starts the text
+ */
+function pickAnchor(text, at) {
+  let end = at
+  while (end > 0 && /\s/.test(text[end - 1])) end -= 1
+  if (end === 0) return ''
+  for (const size of [16, 24, 36, 48]) {
+    const start = Math.max(0, end - size)
+    const candidate = text.slice(start, end)
+    if (start === 0) return candidate
+    if (text.split(candidate).length - 1 === 1) return candidate
+  }
+  return text.slice(Math.max(0, end - 48), end)
 }
 
 /** Create the integration engine singleton (session cache + command runner). */

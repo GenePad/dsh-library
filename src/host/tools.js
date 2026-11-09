@@ -581,13 +581,18 @@ export function createTools(deps) {
     },
     {
       name: 'library_word_apply',
-      description: '把修改结果写回 Microsoft Word 中发起 AI 任务的选中文本（自动检索引文 / AI 修改任务专用）。只在任务消息给出 taskId 时使用；会同步等待 Word 端应用并自动刷新引注与参考文献表。replace=整段替换：text 为完整新文本，引注位置用 [[1]]、[[2]] 占位标记；insert=原文定点插入：citations 每项的 after 填选中文本里的一段独特原文片段。',
+      description: '把修改结果写回 Microsoft Word 中发起 AI 任务的选中文本（自动检索引文 / AI 修改任务专用）。只在任务消息给出 taskId 时使用；会同步等待 Word 端应用并自动刷新引注与参考文献表。replace=整段替换：text 为完整新文本，引注位置用 [[1]]、[[2]] 占位标记；insert=原文定点插入：citations 每项的 after 填选中文本里的一段独特原文片段。任务已写回成功后发现还缺引文，可传 reopen=true 并提供 Word 中该段当前的 selection 文本，做第二轮补插（同一文档、同一选区）。',
       parameters: {
         type: 'object',
         properties: {
           taskId: { type: 'string', description: '任务消息中的 taskId（形如 AIXXXXXXXXXX）' },
           mode: { type: 'string', enum: ['replace', 'insert'], description: 'replace=整段替换选中文本；insert=保留原文只在指定位置插入引文' },
           text: { type: 'string', description: 'replace 模式：替换后的完整文本，引注位置写 [[N]] 占位标记' },
+          reopen: { type: 'boolean', description: '任务已写回后继续补插时置 true（此时必须同时给出 selection）' },
+          selection: { type: 'string', description: 'reopen 用：Word 中该段当前的完整文本（含上一轮插入的引文），after 片段需在其中存在' },
+          pid: { type: 'number', description: 'reopen 接管已丢失任务时用：Word 进程号（可从 Word 侧读取）' },
+          docId: { type: 'string', description: 'reopen 接管已丢失任务时用：文档完整路径（与 Word 侧一致）' },
+          docName: { type: 'string', description: 'reopen 接管时用：文档名（可选）' },
           citations: {
             type: 'array',
             description: '引文列表，replace 模式按 id 与 [[N]] 标记对应，insert 模式按 after 定位',
@@ -617,6 +622,11 @@ export function createTools(deps) {
           mode: args.mode,
           text: args.text,
           citations: args.citations,
+          reopen: args.reopen === true,
+          selection: args.selection,
+          pid: args.pid,
+          docId: args.docId,
+          docName: args.docName,
         })
         if (result?.ok !== true) throw new Error(String(result?.error ?? '写回失败'))
         return {

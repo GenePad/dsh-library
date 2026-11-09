@@ -231,6 +231,13 @@ class FakeWord {
         const marker = this.insertMarkerAt(pos)
         return this.fieldJSON(this.fields.find(field => marker.includes(field.id)))
       }
+      case 'Document.aiFieldAfter': {
+        const anchor = String(a[1] ?? '')
+        const at = anchor === '' ? -1 : this.body.indexOf(anchor)
+        if (at < 0) return { ok: false, error: 'aiFieldAfter: anchor not found' }
+        const marker = this.insertMarkerAt(at + anchor.length)
+        return this.fieldJSON(this.fields.find(field => marker.includes(field.id)))
+      }
       case 'Document.aiEnd': {
         this.aiWorking = -1
         return null
@@ -1058,7 +1065,12 @@ assert.equal(ping.ok, true, 'connector ping')
   assert.ok(!/\[\[\d\]\]/.test(word2.body), 'all [[N]] markers were consumed')
   const aiFields = word2.fields.slice(fieldsBefore).filter(field => field.code.startsWith('ITEM CSL_CITATION'))
   assert.equal(aiFields.length, 2, 'two citation fields were written')
-  const cluster = JSON.parse(aiFields[1].code.slice('ITEM CSL_CITATION '.length))
+  // Fields are written BACKWARDS (last marker first) so that inserting one
+  // citation can never hide the anchor of the next, so the two-item cluster is
+  // not necessarily the second field created.
+  const clusters = aiFields.map(field => JSON.parse(field.code.slice('ITEM CSL_CITATION '.length)))
+  const cluster = clusters.find(entry => entry.citationItems.length === 2)
+  assert.ok(cluster, 'the two-item cluster was written')
   assert.deepEqual(cluster.citationItems.map(item => item.id), [keys[1], keys[2]], 'multi-item cluster order')
   assert.equal(cluster.citationItems[0].locator, '5', 'locator stored in the field code')
   assert.ok(aiFields.every(field => field.text !== '{Citation}' && /\d{4}/.test(field.text)),
@@ -1067,6 +1079,35 @@ assert.equal(ping.ok, true, 'connector ping')
   await assert.rejects(
     async () => ai.submit(taskA, { mode: 'insert', citations: [{ keys: [keys[0]], after: 'genome editing' }] }),
     /已被 Word 端成功写回/, 'an applied task can never be written again')
+
+  // 14c2. Two ADJACENT markers ("…DNA[[1]],[[2]]") must both be written. The
+  // anchors are "…DNA" and "…DNA,"; once the first field exists the second
+  // anchor is split ("…DNA‹field›,") and a forward pass can no longer find it,
+  // which used to abort the whole write-back half way and leave "{Citation}"
+  // placeholders in the document. Fields are therefore written backwards.
+  {
+    const docC = 'C:/docs/adjacent.docx'
+    const selectionC = 'Base editing edits DNA.'
+    const word3 = new FakeWord()
+    word3.body = selectionC
+    word3.aiSelect(selectionC)
+    const startC = await post('/office/api/ai-start', {
+      kind: 'edit', docId: docC, pid: pidA, hwnd: 111, docName: 'adjacent.docx', text: selectionC,
+    })
+    const taskC = (await startC.json()).taskId
+    const applyC = ai.submit(taskC, {
+      mode: 'replace',
+      text: 'Base editing edits DNA[[1]],[[2]].',
+      citations: [{ id: 1, keys: [keys[0]] }, { id: 2, keys: [keys[1]] }],
+    })
+    assert.equal((await poll(taskC, pidA, docC)).status, 'ready')
+    await word3.transact('applyAiEdit', docC, { taskId: taskC, pid: pidA })
+    const appliedC = await applyC
+    assert.equal(appliedC.ok, true, `adjacent markers apply ok: ${appliedC.error}`)
+    assert.equal(appliedC.inserted, 2, 'both adjacent citations were inserted')
+    assert.ok(!word3.body.includes('{Citation}') && word3.body.includes('[[1]]') === false,
+      'adjacent markers were consumed and re-rendered')
+  }
 
   // 14d. AI 修改 (edit kind): the brief waits for the user, insert mode keeps
   // the original text and drops the citation right after the snippet.

@@ -8,6 +8,11 @@ import { raiseDialogWindow } from './window.js'
 const DEFAULT_PORT = 23119
 const PORT_ATTEMPTS = 12
 const IDLE_TIMEOUT = 10 * 60_000
+// A transaction whose Word side stopped answering (window closed mid command,
+// a VBA error left the instruction loop, ...) must never block the next
+// command: every later execCommand would get a 503 and the ribbon would report
+// "无法连接文库插件服务". After this much silence a new command takes over.
+const STALE_AFTER = 45_000
 
 function json(response, status, value, extraHeaders = {}) {
   const body = JSON.stringify(value ?? null)
@@ -78,11 +83,16 @@ export function createOfficeServer({ integration, dialogs, styles, ai = null, lo
 
   function touch(txn) {
     if (txn.timer) clearTimeout(txn.timer)
+    txn.lastActivity = Date.now()
     txn.timer = setTimeout(() => {
       logger.warn?.('library: integration transaction timed out')
       txn.transport.abort(new Error('集成事务超时'))
       clearTransaction(txn)
     }, IDLE_TIMEOUT)
+  }
+
+  function isStale(txn) {
+    return Date.now() - (txn.lastActivity ?? txn.startedAt) > STALE_AFTER
   }
 
   async function handleConnector(request, response, url, body) {
@@ -96,14 +106,25 @@ export function createOfficeServer({ integration, dialogs, styles, ai = null, lo
     if (path === '/connector/sendToBack') return json(response, 200, { ok: true })
     if (path === '/connector/document/execCommand') {
       if (active) {
-        return json(response, 503, { error: 'Integration transaction is already in progress' })
+        if (!isStale(active)) {
+          return json(response, 503, {
+            error: 'Integration transaction is already in progress',
+            retryAfterMs: Math.max(0, STALE_AFTER - (Date.now() - (active.lastActivity ?? active.startedAt))),
+          })
+        }
+        // The previous transaction never finished: Word stopped answering it
+        // (apply aborted half way, document closed, ...). End it now instead of
+        // refusing every later command behind a permanent 503.
+        logger.warn?.(`library: aborting stale ${active.command} transaction (idle ${Math.round((Date.now() - (active.lastActivity ?? active.startedAt)) / 1000)}s)`)
+        try { active.transport.abort(new Error('上一个集成事务已停止响应，已被新命令接管')) } catch { /* no waiter */ }
+        clearTransaction(active)
       }
       const command = String(body?.command ?? '')
       const docId = String(body?.docId ?? body?.documentID ?? '')
       const taskId = String(body?.taskId ?? '')
       const pid = Number(body?.pid) || 0
       const transport = createTransport()
-      const txn = { transport, docId, command, startedAt: Date.now(), timer: null, engine: null }
+      const txn = { transport, docId, command, startedAt: Date.now(), lastActivity: Date.now(), timer: null, engine: null }
       active = txn
       touch(txn)
       txn.engine = integration.execCommand({ agent: 'Word', command, docId, transport, taskId, pid })
@@ -111,7 +132,19 @@ export function createOfficeServer({ integration, dialogs, styles, ai = null, lo
           logger.warn?.(`library: integration engine crashed: ${failure?.message ?? failure}`)
           transport.abort(failure)
         })
-        .finally(() => { clearTimeout(txn.timer); txn.timer = null })
+        .finally(() => {
+          clearTimeout(txn.timer)
+          txn.timer = null
+          // The engine ended without Document.complete (Word vanished mid
+          // transaction, a dispatch error broke its instruction loop, ...).
+          // Release the slot here, otherwise `active` stays set forever and
+          // every following command is refused with a 503 until dsh restarts.
+          if (active === txn) {
+            logger.warn?.(`library: integration transaction ${txn.command} ended without completion; releasing it`)
+            try { txn.transport.abort(new Error('集成事务已结束')) } catch { /* no waiter */ }
+            clearTransaction(txn)
+          }
+        })
       try {
         const next = await withTimeout(transport.nextCommand(), 30_000, '等待首条文档指令超时')
         if (next.command === 'Document.complete') clearTransaction(txn)

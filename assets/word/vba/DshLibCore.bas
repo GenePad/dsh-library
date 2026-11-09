@@ -31,6 +31,12 @@ Private gScreenUpdating As Boolean
 Private gAiPollCount As Long
 Private gAiHttpFailures As Long
 Private gAiEventsReady As Boolean
+' Last moment the poll loop was known to be alive (scheduled or ticked). Word
+' can drop pending OnTime callbacks (busy modal state, template reload, long
+' modal transaction) and the loop then dies silently while the task state is
+' still set, so every Word-side event that proves the user is back in Word
+' calls DshLibAiKeepAlive to restart a stale loop.
+Private gAiLastPollAt As Date
 
 ' ---------------------------------------------------------------- helpers
 
@@ -161,6 +167,7 @@ End Function
 ' unusable, while an extra click guard below handles the no-selection case.
 Public Function DshLibAiGetEnabled() As Boolean
     On Error Resume Next
+    Call DshLibAiKeepAlive
     If gAiEventsReady Then
         DshLibAiGetEnabled = DshLibAiHasSelection()
     Else
@@ -264,6 +271,7 @@ Public Sub DshLibAiStart(kindCmd As String)
     DshLibFields.DshLibAiSetTask taskId, docId
     gAiPollCount = 0
     gAiHttpFailures = 0
+    gAiLastPollAt = Now
     Call DshLibAiSchedulePoll
     ' No Word-side success dialog on purpose: the host focuses the dsh window
     ' so the user watches the assistant work there.
@@ -277,7 +285,27 @@ End Sub
 
 Private Sub DshLibAiSchedulePoll()
     On Error Resume Next
+    gAiLastPollAt = Now
     Application.OnTime Now + TimeSerial(0, 0, 2), "DshLibAiPoll"
+    On Error GoTo 0
+End Sub
+
+' Restart a poll loop that Word silently dropped. Called from the Application
+' event sink (window activate / document change / selection change) and from
+' the ribbon's getEnabled callback: any of them proves Word is alive and the
+' user is back, which is exactly when a dead loop must be revived. A healthy
+' loop re-arms itself every 2 s, so a 20 s gap can only mean it is gone.
+Public Sub DshLibAiKeepAlive()
+    On Error Resume Next
+    If Not DshLibFields.DshLibAiActive() Then Exit Sub
+    If gAiLastPollAt = 0 Then
+        gAiLastPollAt = Now
+        Call DshLibAiSchedulePoll
+        Exit Sub
+    End If
+    If Now - gAiLastPollAt > TimeSerial(0, 0, 20) Then
+        Call DshLibAiSchedulePoll
+    End If
     On Error GoTo 0
 End Sub
 
@@ -298,6 +326,7 @@ Public Sub DshLibAiPoll()
 
     On Error GoTo GiveUp
     If Not DshLibFields.DshLibAiActive() Then Exit Sub
+    gAiLastPollAt = Now
     gAiPollCount = gAiPollCount + 1
     If gAiPollCount > 900 Then
         DshLibFields.DshLibAiClear

@@ -171,6 +171,15 @@ export class HttpDocument {
     return value && typeof value === 'object' ? new HttpField(this.transport, this.documentID, value) : null
   }
 
+  async aiFieldAfter(anchor, fieldType = 'Field', noteType = 0) {
+    const value = await this.transport.sendCommand('Document.aiFieldAfter',
+      [this.documentID, String(anchor ?? ''), fieldType, Number.parseInt(noteType, 10) || 0])
+    if (value && typeof value === 'object' && value.error) {
+      throw new Error(String(value.error))
+    }
+    return value && typeof value === 'object' ? new HttpField(this.transport, this.documentID, value) : null
+  }
+
   async aiEnd() {
     return this.transport.sendCommand('Document.aiEnd', [this.documentID])
   }

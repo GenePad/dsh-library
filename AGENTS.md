@@ -4,11 +4,11 @@
 
 插件规范与关键机制（研读 dsh 源码与 DS-Bot/dsh-mol-structure 的结论，勿重新摸索）：
 
-- 包声明：`package.json` 的 `dsh.bundle.patch` → `cordis.patch.yml`（一行 `insert`，`id: library`、`name: dsh-library`）；`dsh.client: { platform: 'web', immediately: true }` 声明浏览器半身，`exports['./client']` 指向 `client.js`。
+- 包声明：`package.json` 的 `dsh.bundle.patch` → `cordis.patch.yml`（一行 `insert`，`id: library`、`name: dsh-zlibrary`——**必须等于 package.json 的 `name`**）；`dsh.client: { platform: 'web', immediately: true }` 声明浏览器半身，`exports['./client']` 指向 `client.js`。
 - 宿主半身导出 `name = 'library'`、`version`、`inject`、`apply(ctx, config)`。`inject` 必须含 `connection`（鉴权 API 通道）、`sessionController`/`sessionTitle`/`workspaceRegistry`（对话与工作区）。`tools` 用嵌套 `ctx.inject` 可选挂载。
 - API 通道：`ctx.connection.fetch.register({ path: '/api/library', methods: ['POST'], requestBody: 'buffered', fetch })`。浏览器用同源 cookie 鉴权，**不要**改用 `webServer` + 自建信任围栏。单端点 `{endpoint, payload}` 信封，返回 `{ok, value|error}`。
 - 会话/工作区（对话 dock）：`ctx.workspaceRegistry.resolveByPath/create` → `ctx.sessionController.create({workspaceId, agentPreset:'standard'?})` → `ctx.sessionTitle.rename`；发消息 `ctx.sessionController.prompt({requestId, sessionId, mode:'queue', content})`；读转录 `ctx.sessionController.page({address:{kind:'session',sessionId}, throughSeq, beforeSeq, maxMessages})`；停止 `resolveAgent(...).agent.cancel({kind:'user'})`。
-- 浏览器半身：`window.__ModuleLoader__.load({ id: 'dsh-library', factory: (require) => … })`；平台模块表仅这些可 require：`react`、`react/jsx-runtime`、`react-dom`、`react-dom/client`、`@deepseek-ai/cordis`、`zod`、`@tanstack/react-virtual`、`@deepseek-ai/dsh-client-store`、`@deepseek-ai/dsh-client-ui-slots`、`@deepseek-ai/dsh-client-ui-primitives`、`@deepseek-ai/dsh-client-ui-dockkit`。esbuild 必须把上述模块设为 external。
+- 浏览器半身：`window.__ModuleLoader__.load({ id: 'dsh-zlibrary', factory: (require) => … })`（**id 必须等于 package.json 的 `name`**，构建脚本从 package.json 读取）；平台模块表仅这些可 require：`react`、`react/jsx-runtime`、`react-dom`、`react-dom/client`、`@deepseek-ai/cordis`、`zod`、`@tanstack/react-virtual`、`@deepseek-ai/dsh-client-store`、`@deepseek-ai/dsh-client-ui-slots`、`@deepseek-ai/dsh-client-ui-primitives`、`@deepseek-ai/dsh-client-ui-dockkit`。esbuild 必须把上述模块设为 external。
 - 入口与整页视图：左侧栏底部 = `ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({ name:'sidebar.footer.action', id:'dsh-library', order:-50, inject: () => ({ layout: ctx.layout }) }, Entry))`；整页 = keyed slot `main`，`ctx.slots.register({ name:'main', key:'library' }, Page)`，切换 `ctx.layout.selectPanel('library')` / `selectPanel(null)`。
 - 客户端 UI 文案为中文，直接写在组件里（第三方插件，不走 locale 词典）。
 
@@ -197,6 +197,8 @@ dsh-library/
 43. **嵌入 PowerShell 的 C# P/Invoke 签名改过必须实际跑一遍**：`runWindowScript` 是 fire-and-forget，Add-Type **编译失败只落在 logger.warn 里**（"…failed: …"），功能看起来"没生效"而已——`focusMainWindow` 曾因此静默失效半年（`GetWindowThreadProcessId(IntPtr, IntPtr)` 声明与 `out uint` 调用不匹配，编译错误，置前从未执行过）。用 Node `execFile('powershell.exe', ['-EncodedCommand', …])`（产品同款路径）实际编译运行验证；注意本仓库的 harness 会话**不在交互桌面上**（`GetForegroundWindow()` 恒返回 0），前台切换只能真机验证。`DshSelfFocus.Focus` 返回值：1=已到前台、2=已还原但被前台锁拒绝（Nudge 标题栏合成点击重试后仍失败，任务栏闪烁 `FLASHW_ALL|FLASHW_TIMERNOFG` 兜底）、0=没找到窗口。
 
 44. **office 服务的监听句柄绝不能吊住宿主进程 / bind 必须会结算**：CI（GitHub runner）上 23119 端口状态异常时，`listenOn` 的 bind **既不成功也不报错**——office-smoke 卡死在 `await server.start(0)`（零输出挂死）；host-smoke 则是 `void start()` 尚未落定、disposer 里 `stop()` 看到的 `server` 还是 null（空操作），迟到绑定落在一个没人能停的实例上 → 进程永不退出（`timeout` 杀掉后 exit 124 才暴露）。三重修复（server.js）：① listen 成功后 `instance.unref()`（嵌入服务永不阻止宿主退出）；② 每个 bind 候选 3s 超时兜底；③ `start/stop` 走 generation 代数守卫，stop 之后才落定的绑定立即 close+closeAllConnections 归还端口。WSL 里复现该问题注意：**WSL mirrored 网络会把 Windows 侧监听的 23119（正在运行的 dsh！）映射进来**，表现为间歇性 EADDRINUSE；CI 上 office-smoke 必须跑在带 `timeout` 看门狗的步骤里，超时 kill 才能拿到 exit 124 的证据。
+
+45. **包名重命名必须同时改三处，否则浏览器半身静默消失**：dsh 的 client-modules 用 Loader 行（`cordis.patch.yml` 的 insert `name`）解析 package.json，并且**只接受自身 `name` 等于该行名的 manifest**（`nearestPackage`）；浏览器 bundle 又必须用 `__ModuleLoader__.load({ id })` 注册成**同一个 id**（boot graph row 的 id 就是包名）。包名从 `dsh-library` 改成 `dsh-zlibrary` 时若只改 package.json：`name: dsh-library` 解析不到 manifest → 整个浏览器半身（左侧栏「文库」入口、主面板、设置页、dock）全部不挂载，**控制台没有任何错误**（宿主半身照常工作，agent 工具也还在）。三处必须同步：`package.json.name`、`cordis.patch.yml` insert 的 `name`、`client.js` 的 `__ModuleLoader__.load` id（`tools/build-client.mjs` 已从 package.json 派生）；`scripts/client-smoke.mjs` 断言三者一致。改完 `npm run build`；已在运行的 dsh 可在插件管理器里把 bundle 关掉再启用（Loader 行变化会触发客户端模块图重建并经 HMR 推到页面，实测入口即时回来），不放心就重启 dsh。
 
 ## 发版
 
