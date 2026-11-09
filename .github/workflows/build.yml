@@ -270,4 +270,6 @@ jobs:
             exit 0
           fi
           test -f "$TARBALL"
-          npm publish "$TARBALL" --access public
+          # ./-prefix is required: a bare relative path parses as a GitHub
+          # `owner/repo` shorthand and npm tries to git ls-remote it instead.
+          npm publish "./$TARBALL" --access public
