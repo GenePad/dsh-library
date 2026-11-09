@@ -50,7 +50,10 @@ export const COLUMN_DEFS = [
   { id: 'hasAttachment', label: '附件', width: 36, icon: 'attachment', sort: 'hasAttachment' },
   { id: 'numNotes', label: '笔记', width: 36, icon: 'note', sort: 'numNotes', numeric: true },
 ]
-const DEFAULT_COLUMNS = ['shortTitle', 'title', 'creator', 'year', 'hasAttachment']
+const DEFAULT_COLUMNS = ['shortTitle', 'title', 'creator', 'year', 'publicationTitle', 'dateModified', 'dateAdded', 'itemType']
+// The previous default set: a saved preference that matches it was never
+// actually customized, so it migrates to the new default below.
+const LEGACY_DEFAULT_COLUMNS = ['shortTitle', 'title', 'creator', 'year', 'hasAttachment']
 const KNOWN = new Set(COLUMN_DEFS.map(column => column.id))
 const COLUMN_BY_ID = new Map(COLUMN_DEFS.map(column => [column.id, column]))
 const COLUMN_WIDTH_STORAGE = 'dsh-library:column-widths'
@@ -89,7 +92,13 @@ export function restoreColumns() {
       const kept = saved.filter(id => KNOWN.has(id))
       if (!kept.includes('title')) kept.unshift('title')
       if (!kept.includes('shortTitle')) kept.unshift('shortTitle')
-      if (kept.length > 0) return kept
+      if (kept.length > 0) {
+        // The old default order was never customized → adopt the new default.
+        if (kept.length === LEGACY_DEFAULT_COLUMNS.length && kept.every((id, index) => id === LEGACY_DEFAULT_COLUMNS[index])) {
+          return [...DEFAULT_COLUMNS]
+        }
+        return kept
+      }
     }
   } catch {
     // A malformed preference falls back to the default columns.
