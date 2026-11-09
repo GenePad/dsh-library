@@ -1,13 +1,13 @@
 {
   "version": "0.5.0",
   "base": "../",
-  "publishedAt": 1794236999744,
+  "publishedAt": 1794240805331,
   "notes": "",
   "files": [
     {
       "path": "package.json",
-      "size": 1705,
-      "sha256": "4ffb02deb87a8cf600840f2f61775943fc59df67496c6cecdd27a7cffb174ab3"
+      "size": 1871,
+      "sha256": "a40bd1825320f572717bd4cbe545656f9c25301f87b898b586210dd51260667d"
     },
     {
       "path": "index.js",

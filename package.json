@@ -12,6 +12,11 @@
     "reference-manager"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GenePad/dsh-zot-library.git"
+  },
+  "homepage": "https://github.com/GenePad/dsh-zot-library",
   "main": "./index.js",
   "exports": {
     ".": "./index.js",

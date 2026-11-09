@@ -4,8 +4,9 @@
 #
 # The npm bundle (.tgz) installs into a dsh profile:
 #   dsh plugin --profile desktop add dsh-zot-library-<version>.tgz
-# The same tarball is published to npm when the version is new (requires the
-# NPM_TOKEN repo secret; skipped with a notice when absent or already published).
+# The same tarball is published to npm when the version is new, using npm
+# trusted publishing (GitHub OIDC — no token secret); a version already on npm
+# is skipped with a notice.
 # The in-app updater is NOT served from Releases — it reads feed/manifest.json
 # at the repository root (files are committed), so this workflow never pushes
 # to main.
@@ -237,13 +238,19 @@ jobs:
     runs-on: ubuntu-latest
     needs: [pack]
     if: github.ref == 'refs/heads/main'
+    # Trusted publishing (OIDC): no long-lived npm token. npm exchanges the
+    # workflow's GitHub OIDC identity for a short-lived publish credential, so
+    # the package's Trusted Publisher on npmjs.com must list this repo and
+    # workflow file (build.yml).
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v5
 
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
 
       - name: Download the npm bundle artifact
         uses: actions/download-artifact@v5
@@ -255,16 +262,10 @@ jobs:
       # npm forbids republishing a version, so a re-run of the rolling Build
       # without a version bump is skipped with a notice instead of failing.
       - name: Publish the tarball when this version is new on npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           VERSION="$(node -p "require('./package.json').version")"
           TARBALL="dist/dsh-zot-library-${VERSION}.tgz"
-          if [ -z "${NODE_AUTH_TOKEN}" ]; then
-            echo "::notice::NPM_TOKEN secret is not configured; skipping npm publish."
-            exit 0
-          fi
           if npm view "dsh-zot-library@${VERSION}" version >/dev/null 2>&1; then
             echo "::notice::dsh-zot-library@${VERSION} is already on npm; skipping."
             exit 0
@@ -272,4 +273,4 @@ jobs:
           test -f "$TARBALL"
           # ./-prefix is required: a bare relative path parses as a GitHub
           # `owner/repo` shorthand and npm tries to git ls-remote it instead.
-          npm publish "./$TARBALL" --access public
+          npm publish "./$TARBALL" --access public --provenance
