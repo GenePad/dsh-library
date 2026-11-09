@@ -346,8 +346,23 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
     // resolveAttachment handles both shapes: a top-level attachment key
     // resolves to itself (its self row carries no `key` — feeding it into
     // attachmentTarget made path.join receive `undefined`), anything else
-    // prefers its PDF child, then any child attachment.
-    const { target } = resolveAttachment(key)
+    // prefers its PDF child, then any child attachment. Web links open in the
+    // browser; a record with no attachment at all falls back to its url field
+    // / DOI (Zotero's double-click behaviour for records without files).
+    let resolved
+    try {
+      resolved = resolveAttachment(key, { allowUrl: true })
+    } catch (error) {
+      if (error?.code === 'library/no-attachment') {
+        const url = webAddressOf(key)
+        if (url) {
+          openExternal(url)
+          return { opened: url }
+        }
+      }
+      throw error
+    }
+    const { target } = resolved
     if (target.kind === 'url') {
       openExternal(target.url)
       return { opened: target.url }
@@ -378,8 +393,10 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
   }
 
   // Resolve one attachment to its on-disk file for the built-in reader. Accepts
-  // either an attachment key or a parent item key (like openRecord).
-  function resolveAttachment(key) {
+  // either an attachment key or a parent item key (like openRecord). With
+  // `allowUrl` a web-link attachment (linkMode 3) resolves to `{kind:'url'}`
+  // instead of failing — openRecord opens it in the browser.
+  function resolveAttachment(key, { allowUrl = false } = {}) {
     const detail = withDb(instance => readItem(instance, String(key ?? ''), paths()))
     // A top-level attachment resolves to itself; anything else prefers its PDF child.
     let attachment
@@ -395,8 +412,14 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
       const pdf = (detail.attachments ?? []).find(entry => entry.contentType === 'application/pdf')
       attachment = pdf ?? (detail.attachments ?? [])[0]
     }
-    if (!attachment) throw Object.assign(new Error('该条目没有可打开的附件'), { code: 'library/not-found' })
+    if (!attachment) throw Object.assign(new Error('该条目没有可打开的附件'), { code: 'library/no-attachment' })
     const target = attachmentTarget(paths().storageDir, attachment.key, attachment.rawPath, attachment.linkMode)
+    if (target.kind === 'url') {
+      if (allowUrl) {
+        return { detailKey: detail.key, detailTitle: detail.title ?? '', attachment, target }
+      }
+      throw Object.assign(new Error('网页链接附件只能在浏览器中打开'), { code: 'library/not-found' })
+    }
     if (target.kind !== 'file' || !fs.existsSync(target.path)) {
       throw Object.assign(new Error(`附件文件不存在：${target.path}`), { code: 'library/not-found' })
     }
@@ -406,6 +429,24 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
       attachment,
       target,
     }
+  }
+
+  // Best web address of a record: the url field when it is http(s), else the
+  // DOI resolved through doi.org (strips pasted "https://doi.org/" / "doi:"
+  // prefixes so either form works).
+  function itemWebAddress(detail) {
+    const stored = new Map((detail.fields ?? []).map(entry => [entry.field, entry.value]))
+    const url = String(stored.get('url') ?? '').trim()
+    if (/^https?:\/\//i.test(url)) return url
+    const bare = String(stored.get('DOI') ?? '').trim()
+      .replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, '')
+      .replace(/^doi:\s*/i, '')
+    if (/^10\./.test(bare)) return `https://doi.org/${bare}`
+    return undefined
+  }
+
+  function webAddressOf(key) {
+    return itemWebAddress(withDb(instance => readItem(instance, String(key ?? ''), paths())))
   }
 
   // 「打开方式」数据源：当前附件的注册应用（含默认标记与图标 data URL）。
@@ -420,9 +461,27 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
     return openWithApplication(target.path, application)
   }
 
-  // Metadata for the binary reader route (no base64 round trip).
+  // Metadata for the binary reader route (no base64 round trip). Records the
+  // in-app viewer cannot render (no attachment, or a web-link attachment) are
+  // reported as {code:'library/open-url', url} so the client opens the browser
+  // instead of showing an error toast.
   function attachmentFileInfo(key) {
-    const { detailKey, attachment, target } = resolveAttachment(key)
+    let resolved
+    try {
+      resolved = resolveAttachment(key, { allowUrl: true })
+    } catch (error) {
+      if (error?.code === 'library/no-attachment') {
+        const url = webAddressOf(key)
+        if (url) {
+          throw Object.assign(new Error(`该条目没有附件，可以在浏览器打开：${url}`), { code: 'library/open-url', url })
+        }
+      }
+      throw error
+    }
+    const { detailKey, attachment, target } = resolved
+    if (target.kind === 'url') {
+      throw Object.assign(new Error(`网页链接附件请在浏览器打开：${target.url}`), { code: 'library/open-url', url: target.url })
+    }
     return {
       key: attachment.key,
       parentKey: detailKey,

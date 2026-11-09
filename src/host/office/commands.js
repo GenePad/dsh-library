@@ -238,9 +238,29 @@ export class IntegrationInterface {
    */
   async applyAiEdit(task) {
     const plan = task.plan
-    await this._session.init(false, true)
-    if (!this._session.data?.prefs?.fieldType) {
-      throw new AlertError('该文档还没有设置引文样式。请先在 Word 功能区「文库引用 → 文档设置」中选择样式，再重新发起 AI 任务。')
+    const session = this._session
+    await session.init(false, true)
+    if (!session.data?.prefs?.fieldType) {
+      // The document has no citation format yet: silently default to APA
+      // (bundled fallback) instead of blocking the AI write-back with an alert.
+      const data = DocumentData.fresh(session.version)
+      data.sessionID = session.sessionID
+      data.style = {
+        styleID: 'http://www.zotero.org/styles/apa',
+        locale: '',
+        hasBibliography: true,
+        bibliographyStyleHasBeenSet: false,
+      }
+      data.prefs = {
+        fieldType: session.primaryFieldType,
+        automaticJournalAbbreviations: false,
+        delayCitationUpdates: false,
+        dontAskDelayCitationUpdates: false,
+      }
+      data.prefs.noteType = 0
+      await session.setData(data)
+      session.forceUpdateAllCitations = true
+      session.rebuildCiteprocState = true
     }
     // Validate every key BEFORE touching the document.
     for (const spec of plan.citations) {

@@ -11,7 +11,7 @@ import { createTools } from './src/host/tools.js'
 import { chatGuidance } from './src/host/chat.js'
 
 export const name = 'library'
-export const version = '0.3.15'
+export const version = '0.3.16'
 
 // The plugin cannot do anything useful without the authenticated connection
 // (the API route) or a session controller (the chat dock).
@@ -139,7 +139,17 @@ export function apply(ctx, config = {}) {
           },
         })
       } catch (error) {
-        return new Response(JSON.stringify({ ok: false, error: { message: String(error?.message ?? error) } }), {
+        // `code`/`url` drive the client's browser fallback: records without an
+        // openable file arrive as {code:'library/open-url', url} and the client
+        // opens that web address instead of showing an error.
+        return new Response(JSON.stringify({
+          ok: false,
+          error: {
+            message: String(error?.message ?? error),
+            ...(typeof error?.code === 'string' ? { code: error.code } : {}),
+            ...(typeof error?.url === 'string' ? { url: error.url } : {}),
+          },
+        }), {
           status: 404,
           headers: { 'content-type': 'application/json; charset=utf-8' },
         })

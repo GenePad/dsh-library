@@ -61,10 +61,14 @@ export function ItemContextMenu({ menu, rows, collections, view, onAction, onClo
     push({ label: '还原到文库中', action: 'restore', disabled: keys.length === 0 })
     push({ label: '永久删除…', action: 'delete', danger: true, disabled: keys.length === 0 })
   } else {
-    const openTarget = info.find(row => row.itemType === 'attachment' || row.hasAttachment || row.hasFile)
-    push({ label: '打开附件', action: 'open', disabled: !openTarget })
-    push({ label: '显示文件', action: 'open-native', disabled: !openTarget })
-    push({ label: '显示文件所在文件夹', action: 'reveal', disabled: !openTarget })
+    // 「打开」targets a file when one exists; DOI-only records open the online
+    // page instead (the host resolves url / doi.org). 显示文件 keeps requiring
+    // a real file.
+    const fileTarget = info.find(row => row.itemType === 'attachment' || row.hasAttachment || row.hasFile)
+    const openTarget = fileTarget ?? info.find(row => String(row.doi ?? '').trim() !== '')
+    push({ label: fileTarget || !openTarget ? '打开附件' : '打开在线页面', action: 'open', disabled: !openTarget })
+    push({ label: '显示文件', action: 'open-native', disabled: !fileTarget })
+    push({ label: '显示文件所在文件夹', action: 'reveal', disabled: !fileTarget })
     if (view.kind !== 'all' && keys.length === 1) {
       push({ sep: true })
       push({ label: '在文献库中显示', action: 'show-in-library' })

@@ -61,6 +61,61 @@ function cleanAbstract(value) {
     .trim()
 }
 
+/**
+ * Rebuild the abstract text from OpenAlex's inverted index
+ * ({word: [positions]} — positions are zero-based word slots). Exported for
+ * the smoke suite; Crossref leaves the abstract empty for most publishers,
+ * so this is the standard fallback.
+ */
+export function abstractFromInvertedIndex(index) {
+  if (!index || typeof index !== 'object') return ''
+  let size = 0
+  for (const positions of Object.values(index)) {
+    if (!Array.isArray(positions) || positions.length === 0) continue
+    for (const position of positions) {
+      if (Number.isInteger(position) && position >= size) size = position + 1
+    }
+  }
+  if (size === 0) return ''
+  const slots = new Array(size)
+  for (const [word, positions] of Object.entries(index)) {
+    for (const position of positions) slots[position] = word
+  }
+  return slots.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim()
+}
+
+/** Fetch one work's abstract from OpenAlex (undefined on any failure). */
+async function openAlexAbstract(doi) {
+  try {
+    const data = await fetchJson(`https://api.openalex.org/works/doi:https://doi.org/${encodeURIComponent(doi)}?select=abstract_inverted_index`)
+    return abstractFromInvertedIndex(data?.abstract_inverted_index) || undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Parse the `<AbstractText>` sections out of a PubMed efetch XML reply.
+ * Labeled sections (BACKGROUND / METHODS / …) keep their label as a prefix.
+ * Exported for the smoke suite.
+ */
+export function abstractFromPubmedXml(xml) {
+  const text = String(xml ?? '')
+  const abstract = /<Abstract\b[^>]*>([\s\S]*?)<\/Abstract>/.exec(text)?.[1]
+  if (!abstract) return ''
+  const sections = []
+  const pattern = /<AbstractText(?:\s+Label="([^"]*)")?[^>]*>([\s\S]*?)<\/AbstractText>/g
+  let match
+  while ((match = pattern.exec(abstract)) !== null) {
+    // Inline markup (i/b/sub/sup) vanishes without adding a space — replacing
+    // it with ' ' would leave stray gaps like "something .".
+    const body = match[2].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
+    if (body === '') continue
+    sections.push(match[1] ? `${match[1].replace(/\s+/g, ' ')}: ${body}` : body)
+  }
+  return sections.join(' ').trim()
+}
+
 function dateParts(message) {
   for (const key of ['issued', 'published-print', 'published-online', 'published', 'created']) {
     const parts = message?.[key]?.['date-parts']?.[0]
@@ -140,42 +195,49 @@ export function fromCrossref(message) {
   }
 }
 
-/** Resolve one DOI through Crossref. */
+/** Resolve one DOI through Crossref, with an OpenAlex abstract fallback. */
 export async function lookupDoi(doi) {
+  let draft
   try {
     const data = await fetchJson(`https://api.crossref.org/works/${encodeURIComponent(doi)}`)
-    const draft = fromCrossref(data?.message)
-    if (draft) return draft
+    draft = fromCrossref(data?.message)
   } catch {
     // Crossref miss falls through to doi.org content negotiation.
   }
-  try {
-    const response = await fetch(`https://doi.org/${encodeURIComponent(doi)}`, {
-      headers: { accept: 'application/vnd.citationstyles.csl+json' },
-      signal: AbortSignal.timeout(20_000),
-    })
-    if (response.ok) {
-      const csl = await response.json()
-      const message = {
-        title: csl.title ? [csl.title] : undefined,
-        'container-title': csl['container-title'] ? [csl['container-title']] : undefined,
-        volume: csl.volume,
-        issue: csl.issue,
-        page: csl.page,
-        publisher: csl.publisher,
-        DOI: csl.DOI ?? doi,
-        URL: csl.URL,
-        type: csl.type === 'article-journal' ? 'journal-article' : csl.type,
-        issued: { 'date-parts': csl.issued?.['date-parts'] },
-        author: Array.isArray(csl.author) ? csl.author.map(author => ({ family: author.family, given: author.given, name: author.literal })) : [],
+  if (!draft) {
+    try {
+      const response = await fetch(`https://doi.org/${encodeURIComponent(doi)}`, {
+        headers: { accept: 'application/vnd.citationstyles.csl+json' },
+        signal: AbortSignal.timeout(20_000),
+      })
+      if (response.ok) {
+        const csl = await response.json()
+        const message = {
+          title: csl.title ? [csl.title] : undefined,
+          'container-title': csl['container-title'] ? [csl['container-title']] : undefined,
+          volume: csl.volume,
+          issue: csl.issue,
+          page: csl.page,
+          publisher: csl.publisher,
+          DOI: csl.DOI ?? doi,
+          URL: csl.URL,
+          type: csl.type === 'article-journal' ? 'journal-article' : csl.type,
+          issued: { 'date-parts': csl.issued?.['date-parts'] },
+          author: Array.isArray(csl.author) ? csl.author.map(author => ({ family: author.family, given: author.given, name: author.literal })) : [],
+        }
+        draft = fromCrossref(message)
       }
-      const draft = fromCrossref(message)
-      if (draft) return draft
+    } catch {
+      // No answer from the DOI resolver either.
     }
-  } catch {
-    // No answer from the DOI resolver either.
   }
-  return undefined
+  // Most publishers never deposit an abstract with Crossref; OpenAlex
+  // reconstructs one for the overwhelming majority of DOIs.
+  if (draft && !draft.fields.abstractNote) {
+    const abstract = await openAlexAbstract(doi)
+    if (abstract) draft.fields.abstractNote = abstract
+  }
+  return draft
 }
 
 /** Resolve an ISBN through Open Library. */
@@ -258,6 +320,18 @@ export async function lookupPmid(pmid) {
     if (Array.isArray(result.articleids)) {
       const doi = result.articleids.find(entry => entry.idtype === 'doi')?.value
       if (doi) fields.DOI = String(doi)
+    }
+    // esummary carries no abstract; pull it from efetch (XML).
+    try {
+      const xmlResponse = await fetch(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${encodeURIComponent(pmid)}&rettype=abstract&retmode=xml`, {
+        signal: AbortSignal.timeout(20_000),
+      })
+      if (xmlResponse.ok) {
+        const abstract = abstractFromPubmedXml(await xmlResponse.text())
+        if (abstract) fields.abstractNote = abstract
+      }
+    } catch {
+      // The summary is still usable without the abstract.
     }
     const creators = (Array.isArray(result.authors) ? result.authors : []).map(author => {
       const name = String(author.name ?? '')
@@ -369,6 +443,9 @@ export async function resolveMetadata(input = {}) {
       bestScore = score
     }
   }
-  if (best && bestScore >= 0.45) return { ...best, confidence: bestScore }
+  if (best && !best.fields.abstractNote && best.fields.DOI) {
+    const abstract = await openAlexAbstract(best.fields.DOI)
+    if (abstract) best.fields.abstractNote = abstract
+  }
   return best ? { ...best, confidence: bestScore } : undefined
 }

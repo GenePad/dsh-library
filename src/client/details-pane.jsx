@@ -3,7 +3,7 @@ import * as api from './api.js'
 import { Button } from './platform.jsx'
 import {
   ArrowDownIcon, ArrowUpIcon, CloseIcon, ExternalIcon, LinkIcon, MinusIcon, NoteIcon, PdfIcon, PlusIcon,
-  SwitchFieldIcon,
+  SwitchFieldIcon, WandIcon,
 } from './icons.jsx'
 import {
   ANNOTATION_TYPE_LABELS, FIELD_LABELS, PANE_LABELS, creatorTypeLabel, fieldLabel, formatDate, formatDateTime,
@@ -617,7 +617,7 @@ function NotesSection({ detail, onUpdateNote, onRefresh, onNotify }) {
 }
 
 /** Right pane: the selected item's record, as Zotero's scrolling item pane. */
-export function DetailsPane({ detail, loading, collections, schema, onUpdate, onOpen, onReveal, onOpenUrl, onAddFile, onAddUrl, onTrashAttachment, onUpdateNote, onRefresh, onNotify }) {
+export function DetailsPane({ detail, loading, collections, schema, onUpdate, onOpen, onReveal, onOpenUrl, onAddFile, onAddUrl, onTrashAttachment, onUpdateNote, onRefresh, onNotify, onRefetch }) {
   const [sections, setSections] = React.useState(restoreSections)
   React.useEffect(() => {
     try {
@@ -677,6 +677,14 @@ export function DetailsPane({ detail, loading, collections, schema, onUpdate, on
           label="信息"
           open={sections.info}
           onToggle={() => toggle('info')}
+          actions={(
+            <button
+              type="button"
+              className="lib-iconbtn"
+              title="联网补全：在线检索并补齐该条目的元数据（作者 / 年份 / 期刊 / 摘要等）"
+              onClick={() => onRefetch?.()}
+            ><WandIcon size={12} /></button>
+          )}
         >
           <InfoSection
             detail={detail}

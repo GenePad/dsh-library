@@ -8,6 +8,11 @@ import { safeRemoveTree } from '../src/host/util.js'
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-library-smoke-'))
 process.env.DSH_HOME = path.join(tempRoot, 'dsh-home')
+// Every "open" lands in this JSONL file instead of spawning a real browser /
+// Explorer (open.js reads the env at import time — set it before index.js).
+const openSinkPath = path.join(tempRoot, 'open-sink.jsonl')
+process.env.DSH_LIBRARY_OPEN_SINK = openSinkPath
+fs.writeFileSync(openSinkPath, '')
 const dataDir = path.join(process.env.DSH_HOME, 'library', 'zotero-data')
 const storageDir = path.join(dataDir, 'storage')
 fs.mkdirSync(storageDir, { recursive: true })
@@ -123,8 +128,8 @@ assert.deepEqual(routes[2].methods, ['POST'])
 assert.deepEqual([...toolDefs.keys()].sort(), [
   'library_add', 'library_annotations', 'library_attach', 'library_cite', 'library_cite_styles',
   'library_collection', 'library_collections', 'library_import', 'library_item', 'library_lookup',
-  'library_open', 'library_read', 'library_search', 'library_status', 'library_sync', 'library_trash',
-  'library_update', 'library_word_apply', 'library_word_report',
+  'library_note', 'library_open', 'library_read', 'library_search', 'library_status', 'library_sync',
+  'library_trash', 'library_update', 'library_word_apply', 'library_word_report',
 ])
 
 const call = async (endpoint, payload) => {
@@ -300,6 +305,18 @@ if (hasRealLibrary) {
   await toolDefs.get('library_collection').execute({ action: 'rename', id: made.collectionID, name: 'Tool 分类 2' })
   const trashedCol = await toolDefs.get('library_collection').execute({ action: 'trash', id: made.collectionID })
   assert.equal(trashedCol.changed, 1, 'library_collection trashes a collection')
+
+  // library_note: the agent can create and edit note bodies (notes live in
+  // itemNotes, outside the field map library_update covers).
+  const noteToolMade = await toolDefs.get('library_note').execute({ parentKey: key, text: 'AI 写的笔记\n第二段' })
+  assert.ok(/^[23456789ABCDEFGHIJKLMNPQRSTUVWXYZ]{8}$/.test(noteToolMade?.key ?? ''), 'library_note creates a child note')
+  const noteToolUpdated = await toolDefs.get('library_note').execute({ action: 'update', key: noteToolMade.key, text: 'AI 改过的笔记' })
+  assert.equal(noteToolUpdated.updated, true, 'library_note replaces the note body')
+  const noteToolRead = await call('item', { key })
+  assert.ok(
+    (noteToolRead.value.notes ?? []).some(entry => entry.key === noteToolMade.key && String(entry.html).includes('AI 改过的笔记')),
+    'the edited note body is readable through the item endpoint',
+  )
 
   const updated = await call('update', { key, patch: { fields: { abstractNote: 'abstract text' } } })
   assert.equal(updated.ok, true, JSON.stringify(updated))
@@ -607,6 +624,98 @@ if (hasRealLibrary) {
     assert.equal(badScheme.ok, false, 'non-http(s) links are rejected')
     const malformed = await call('open-url', { url: 'not a url' })
     assert.equal(malformed.ok, false, 'malformed links are rejected')
+
+    // Records without a file open their web address instead (double-click on a
+    // DOI-only journal article): url field wins over DOI, pasted doi.org /
+    // doi: prefixes are stripped, and the binary route reports
+    // {code:'library/open-url', url} so the client opens the browser. The sink
+    // (DSH_LIBRARY_OPEN_SINK) proves exactly what would have been opened.
+    const sinkLines = () => fs.readFileSync(openSinkPath, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line))
+    const clearSink = () => fs.writeFileSync(openSinkPath, '')
+
+    const doiOnly = await call('create', { itemType: 'journalArticle', fields: { title: 'doi only record', DOI: 'https://doi.org/10.2222/link-only' } })
+    assert.equal(doiOnly.ok, true, JSON.stringify(doiOnly))
+    clearSink()
+    const openDoiOnly = await call('open', { key: doiOnly.value.key })
+    assert.equal(openDoiOnly.ok, true, `doi-only record opens in the browser (${openDoiOnly.error?.message ?? ''})`)
+    assert.deepEqual(sinkLines(), [{ kind: 'open', target: 'https://doi.org/10.2222/link-only' }], 'the DOI resolves through doi.org (prefix stripped)')
+    const doiRoute = await routes[1].fetch(new Request(`http://localhost/api/library/file?key=${doiOnly.value.key}`, { method: 'GET' }))
+    assert.equal(doiRoute.status, 404, 'the binary route has no file for a doi-only record')
+    const doiRouteBody = await doiRoute.json()
+    assert.equal(doiRouteBody.error?.code, 'library/open-url', 'the route reports the browser-open signal')
+    assert.equal(doiRouteBody.error?.url, 'https://doi.org/10.2222/link-only', 'the route carries the web address')
+
+    const urlFirst = await call('create', { itemType: 'journalArticle', fields: { title: 'url first', DOI: '10.2222/doi', url: 'https://example.org/landing' } })
+    clearSink()
+    assert.equal((await call('open', { key: urlFirst.value.key })).ok, true, 'records with a url field open the url')
+    assert.deepEqual(sinkLines(), [{ kind: 'open', target: 'https://example.org/landing' }], 'the url field wins over the DOI')
+
+    // Web-link child attachment (linkMode 3): the record has no file, so open
+    // follows the link and the binary route reports it the same way.
+    const webLink = await call('attachment-url', { parentKey: urlFirst.value.key, url: 'https://example.org/weblink', title: 'landing page' })
+    assert.equal(webLink.ok, true, JSON.stringify(webLink))
+    clearSink()
+    assert.equal((await call('open', { key: urlFirst.value.key })).ok, true, 'a web-link child opens in the browser')
+    assert.deepEqual(sinkLines(), [{ kind: 'open', target: 'https://example.org/weblink' }], 'the link attachment url is what opens')
+    const linkRoute = await routes[1].fetch(new Request(`http://localhost/api/library/file?key=${webLink.value.key}`, { method: 'GET' }))
+    assert.equal((await linkRoute.json()).error?.code, 'library/open-url', 'web-link attachments report the browser-open signal too')
+
+    // Nothing openable at all: the old clear error, and no spawn.
+    const bareItem = await call('create', { itemType: 'document', fields: { title: 'bare record' } })
+    clearSink()
+    const openBare = await call('open', { key: bareItem.value.key })
+    assert.equal(openBare.ok, false, 'records without address and attachment still report an error')
+    assert.match(openBare.error.message, /没有可打开的附件/, `clear error text (${openBare.error.message})`)
+    assert.equal(sinkLines().length, 0, 'no spawn happened for the bare record')
+
+    // 重新获取元数据 on a record with nothing to read: the lookup now runs
+    // against the record's own identifiers (DOI here), and the abstract is
+    // topped up from OpenAlex when Crossref ships none. fetch is stubbed so
+    // the chain is deterministic offline.
+    const recognizeTarget = await call('create', {
+      itemType: 'journalArticle',
+      fields: { title: 'stub target', DOI: '10.5555/no-abs', extra: 'user note' },
+    })
+    const realFetch = globalThis.fetch
+    const hits = []
+    const jsonResponse = body => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
+    globalThis.fetch = async (input) => {
+      const url = String(input)
+      hits.push(url)
+      if (url.includes('api.crossref.org')) {
+        return jsonResponse({ message: { DOI: '10.5555/no-abs', title: ['Crossref record without abstract'], type: 'journal-article', issued: { 'date-parts': [[2024, 5]] }, author: [{ family: 'Roe', given: 'Jane' }] } })
+      }
+      if (url.includes('api.openalex.org')) {
+        return jsonResponse({ abstract_inverted_index: { Reconstructed: [0], abstract: [1], via: [2], OpenAlex: [3] } })
+      }
+      return new Response(`unexpected fetch: ${url}`, { status: 404 })
+    }
+    try {
+      const recognizeOnline = await call('recognize-item', { key: recognizeTarget.value.key })
+      assert.equal(recognizeOnline.ok, true, JSON.stringify(recognizeOnline))
+      assert.equal(recognizeOnline.value.updated, true, 'attachment-less recognize fetches from the record DOI')
+      const crossrefHits = hits.filter(url => url.includes('api.crossref.org')).length
+      const openAlexHits = hits.filter(url => url.includes('api.openalex.org')).length
+      assert.equal(crossrefHits, 1, 'exactly one Crossref call')
+      assert.equal(openAlexHits, 1, 'OpenAlex is consulted exactly once for the missing abstract')
+      const recognized = await call('item', { key: recognizeTarget.value.key })
+      assert.equal(recognized.value.title, 'Crossref record without abstract', 'fetched title wins')
+      assert.ok(recognized.value.fields.some(field => field.field === 'abstractNote' && field.value === 'Reconstructed abstract via OpenAlex'), 'the abstract is reconstructed from OpenAlex')
+      assert.ok(recognized.value.fields.some(field => field.field === 'extra' && field.value === 'user note'), "the user's own fields survive")
+
+      // Parsing helpers behind the abstract fallbacks (pure, no network).
+      const { abstractFromInvertedIndex, abstractFromPubmedXml } = await import('../src/host/metadata.js')
+      assert.equal(abstractFromInvertedIndex({ Hello: [0], World: [1], again: [2] }), 'Hello World again', 'inverted index rebuilds in position order')
+      assert.equal(abstractFromInvertedIndex({ spaced: [0, 3], out: [1, 2] }), 'spaced out out spaced', 'gaps and repeats keep their slots')
+      assert.equal(abstractFromInvertedIndex({}), '', 'an empty index yields no abstract')
+      const pubmedXml = '<PubmedArticle><MedlineCitation><Article><Abstract>'
+        + '<AbstractText Label="BACKGROUND">About <i>something</i>.</AbstractText>'
+        + '<AbstractText>Methods were used.</AbstractText>'
+        + '</Abstract></Article></MedlineCitation></PubmedArticle>'
+      assert.equal(abstractFromPubmedXml(pubmedXml), 'BACKGROUND: About something. Methods were used.', 'PubMed sections keep labels, inner markup is stripped')
+    } finally {
+      globalThis.fetch = realFetch
+    }
 
     // needsMetadataHelp flags a lookup that produced nothing usable.
     assert.equal(imported.value.needsMetadataHelp, true, 'lookup:false import asks for agent help')

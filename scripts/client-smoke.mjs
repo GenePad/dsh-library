@@ -65,7 +65,7 @@ const items = [
   },
   {
     key: 'BBBBBBBB', itemType: 'book', title: 'Another item',
-    date: '2020', year: 2020, doi: '', creators: 'Li', creatorList: [],
+    date: '2020', year: 2020, doi: '10.2/book', creators: 'Li', creatorList: [],
     publicationTitle: '', publisher: 'Springer', tags: [], firstCreator: 'Li',
     hasAttachment: false, numNotes: 0, fields: {},
     dateAdded: '2026-01-01 00:00:00', dateModified: '2026-01-01 00:00:00',
@@ -128,8 +128,17 @@ const stateSettings = {
 }
 globalThis.fetch = async (url, options) => {
   if (String(url).includes('api/library/file')) {
-    // Binary reader route: headers + arrayBuffer, no JSON envelope.
     fileRouteHits += 1
+    if (String(url).includes('key=BBBBBBBB')) {
+      // DOI-only record: the host reports the web address for the browser
+      // fallback instead of a file body.
+      return {
+        ok: false,
+        status: 404,
+        json: async () => ({ ok: false, error: { code: 'library/open-url', url: 'https://doi.org/10.2/book' } }),
+      }
+    }
+    // Binary reader route: headers + arrayBuffer, no JSON envelope.
     const bytes = Buffer.from(fs.readFileSync(path.join(PLUGIN, 'scripts', 'fixtures-smoke.pdf')))
     return {
       ok: true,
@@ -214,6 +223,9 @@ globalThis.fetch = async (url, options) => {
       break
     case 'attachment-url':
       value = { key: 'URLATTAC' }
+      break
+    case 'open-url':
+      value = { opened: body.payload?.url, ok: true }
       break
     case 'annotations-list':
       value = {
@@ -555,6 +567,26 @@ assert.ok(fieldLabels.includes('添加日期') && fieldLabels.includes('修改�
 // hint explaining its purpose (the mock schema lists it late on purpose).
 assert.ok(fieldLabels.indexOf('短标题') === fieldLabels.indexOf('标题') + 1, '短标题 sits right under the title in the info pane')
 assert.ok(container.querySelector('.lib-sectionpane[data-section="info"]').textContent.includes('自己标记这篇文章需要关注的要点'), 'the short-title hint notes its key-points purpose')
+
+// 联网补全 (info-section wand button): one click re-runs the online metadata
+// fetch for the selected item, with the same progress dialog feedback as the
+// right-click menu path.
+const refetchBtn = container.querySelector('.lib-sectionpane[data-section="info"] .lib-iconbtn[title^="联网补全"]')
+assert.ok(refetchBtn, 'the info section offers the online-refetch wand button')
+await act(async () => {
+  refetchBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  for (let i = 0; i < 6; i += 1) await tick()
+})
+const wandBody = bodies.find(body => body.endpoint === 'recognize-item')
+assert.ok(wandBody?.payload?.key === 'AAAAAAAA', 'the wand refetches the selected item online')
+const wandDialog = container.querySelector('.lib-recognize')
+assert.ok(wandDialog?.textContent.includes('已检索成功'), 'the wand reports the recognition outcome')
+await act(async () => {
+  ;[...wandDialog.querySelectorAll('button')].find(node => node.textContent.includes('好'))
+    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  await tick()
+})
+assert.ok(!container.querySelector('.lib-recognize'), 'the wand dialog closes')
 
 // The type menu changes the item type: a Zotero-style change-type plan runs
 // first (listing dropped fields), then the applied write re-renders.
@@ -978,6 +1010,18 @@ await act(async () => {
   container.querySelector('[data-key="AAAAAAAA"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
   for (let i = 0; i < 4; i += 1) await tick()
 })
+
+// Double-click on a DOI-only record (no attachment): the host answers the
+// binary route with {code:'library/open-url', url} and the client hands the
+// address to the system browser instead of showing an error toast.
+await act(async () => {
+  container.querySelector('[data-key="BBBBBBBB"]')
+    .dispatchEvent(new window.MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+  for (let i = 0; i < 6; i += 1) await tick()
+})
+const browserOpenBody = bodies.filter(body => body.endpoint === 'open-url').at(-1)
+assert.ok(browserOpenBody?.payload?.url === 'https://doi.org/10.2/book', 'double-click on a doi-only record opens its web page via open-url')
+assert.ok(!container.querySelector('.lib-reader'), 'no viewer tab opened for the doi-only record')
 
 // The in-app viewer ("dsh 内建查看器"): "打开 PDF" opens a pdf.js viewer tab.
 // jsdom cannot paint canvases, but pdf.js (main-thread mode via the bundled

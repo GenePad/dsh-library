@@ -291,14 +291,36 @@ export async function recognizeItemMetadata(db, paths, input) {
       itemID,
     )
     const source = attachments.find(entry => entry.contentType === 'application/pdf') ?? attachments[0]
-    if (!source) throw Object.assign(new Error('该条目没有可识别的附件文件'), { code: 'library/invalid' })
-    const target = attachmentTarget(paths.storageDir, source.key, source.path, source.linkMode)
-    if (target.kind !== 'file' || !fs.existsSync(target.path)) {
-      throw Object.assign(new Error('附件文件不存在'), { code: 'library/not-found' })
+    const target = source ? attachmentTarget(paths.storageDir, source.key, source.path, source.linkMode) : null
+    // Records with nothing to read (no attachment, or only a web link):
+    // resolve from the record itself — DOI / arXiv archiveID / landing URL,
+    // falling back to a title search — so records added by identifier only
+    // can fetch (or top up) their metadata too.
+    const lookupFromRecord = async () => {
+      if (input.lookup === false) return null
+      const stored = new Map(db.all(
+        `SELECT f.fieldName, v.value FROM itemData d
+         JOIN fieldsCombined f ON f.fieldID = d.fieldID
+         JOIN itemDataValues v ON v.valueID = d.valueID WHERE d.itemID = ?`, itemID,
+      ).map(entry => [entry.fieldName, entry.value]))
+      return resolveMetadata({
+        identifier: [stored.get('DOI'), stored.get('archiveID'), stored.get('url')].filter(Boolean).join('\n'),
+        fileName: String(stored.get('title') ?? ''),
+      })
     }
-    const fileName = path.basename(target.path)
-    const isPdf = fileName.toLowerCase().endsWith('.pdf')
-    ;({ metadata } = await extractAndResolve(target.path, fileName, isPdf, { lookup: input.lookup !== false }, logger))
+    if (!target || target.kind !== 'file') {
+      try {
+        metadata = await lookupFromRecord()
+      } catch (error) {
+        logger.warn?.(`library: metadata lookup failed for ${key}: ${error?.message ?? error}`)
+      }
+    } else if (!fs.existsSync(target.path)) {
+      throw Object.assign(new Error('附件文件不存在'), { code: 'library/not-found' })
+    } else {
+      const fileName = path.basename(target.path)
+      const isPdf = fileName.toLowerCase().endsWith('.pdf')
+      ;({ metadata } = await extractAndResolve(target.path, fileName, isPdf, { lookup: input.lookup !== false }, logger))
+    }
   }
   if (!metadata?.fields?.title) {
     return { key, updated: false, needsMetadataHelp: true }

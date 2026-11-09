@@ -1066,7 +1066,7 @@ assert.equal(ping.ok, true, 'connector ping')
   assert.equal((await poll(taskA, pidA, docA)).status, 'applied')
   await assert.rejects(
     async () => ai.submit(taskA, { mode: 'insert', citations: [{ keys: [keys[0]], after: 'genome editing' }] }),
-    /写回一次|状态是/, 'a task can only be applied once')
+    /已被 Word 端成功写回/, 'an applied task can never be written again')
 
   // 14d. AI 修改 (edit kind): the brief waits for the user, insert mode keeps
   // the original text and drops the citation right after the snippet.
@@ -1112,6 +1112,19 @@ assert.equal(ping.ok, true, 'connector ping')
   assert.equal(failedC.ok, false, 'a foreign pid cannot apply the task')
   assert.ok(word2.alerts.some(text => text.includes('不匹配')), 'the refusal is surfaced in Word')
 
+  // 14e'. A failed task is re-armable: the agent may retry the same taskId
+  // without a fresh Word-side task; the plan is revalidated and re-applied.
+  const retryC = ai.submit(taskC, {
+    mode: 'replace',
+    text: 'Prime editing expands scope[[1]].',
+    citations: [{ id: 1, keys: [keys[0]] }],
+  })
+  assert.equal((await poll(taskC, pidA, docA)).status, 'ready', 'the failed task was re-armed to ready')
+  await word2.transact('applyAiEdit', docA, { taskId: taskC, pid: pidA })
+  const retriedC = await retryC
+  assert.equal(retriedC.ok, true, `retry after failure succeeds: ${retriedC.error}`)
+  assert.equal(retriedC.inserted, 1)
+
   // 14f. The document was edited after the task started: aiBegin refuses
   // without mutating anything.
   const selectionD = 'This passage will be edited while the agent works.'
@@ -1148,6 +1161,28 @@ assert.equal(ping.ok, true, 'connector ping')
   const cancelled = await applyE
   assert.equal(cancelled.ok, false, 'cancel resolves the waiting tool')
   assert.equal((await poll(taskE, pidA, docA)).status, 'cancelled')
+
+  // 14h. A document with NO citation format configured: the AI write-back
+  // silently defaults to APA instead of alerting the user.
+  const word4 = new FakeWord()
+  const selectionF = 'Auto style: no document preferences were ever set.'
+  const startF = await post('/office/api/ai-start', {
+    kind: 'cite', docId: 'C:/docs/fresh.docx', pid: pidA, hwnd: 111, docName: 'fresh.docx', text: selectionF,
+  })
+  const taskF = (await startF.json()).taskId
+  word4.body = `Plain ${selectionF} text.`
+  word4.aiSelect(selectionF)
+  const applyF = ai.submit(taskF, {
+    mode: 'replace',
+    text: 'Auto style: APA was chosen[[1]].',
+    citations: [{ id: 1, keys: [keys[0]] }],
+  })
+  await word4.transact('applyAiEdit', 'C:/docs/fresh.docx', { taskId: taskF, pid: pidA })
+  const appliedF = await applyF
+  assert.equal(appliedF.ok, true, `auto-APA apply ok: ${appliedF.error}`)
+  const freshData = new DocumentData(word4.docData)
+  assert.equal(freshData.style.styleID, 'http://www.zotero.org/styles/apa', 'missing doc prefs default to APA')
+  assert.equal(freshData.prefs.fieldType, 'Field', 'missing doc prefs default to Word fields')
 }
 
 // 15. Word reports generated WITHOUT Word: real citation fields, a bibliography

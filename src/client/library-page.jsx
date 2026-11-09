@@ -492,10 +492,24 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
       const response = await fetch(`api/library/file?key=${encodeURIComponent(key)}`, { credentials: 'same-origin' })
       if (!response.ok) {
         let message = `HTTP ${response.status}`
+        let code = ''
+        let url = ''
         try {
           const body = await response.json()
           message = body?.error?.message ?? message
+          code = String(body?.error?.code ?? '')
+          url = String(body?.error?.url ?? '')
         } catch { /* non-JSON error body */ }
+        // No openable file, but the record points at the web (url field / DOI):
+        // open the browser instead of showing an error (Zotero's behaviour).
+        if (code === 'library/open-url' && /^https?:\/\//i.test(url)) {
+          try {
+            await api.call('open-url', { url })
+          } catch (openError) {
+            notify(openError?.message ?? String(openError))
+          }
+          return
+        }
         throw new Error(message)
       }
       const contentType = response.headers.get('content-type') ?? 'application/pdf'
@@ -710,7 +724,9 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
     try {
       switch (action) {
         case 'open': {
-          const target = keys.find(key => itemsRef.current.some(row => row.key === key && (row.hasAttachment || row.itemType === 'attachment')))
+          // Attachment rows open their file; DOI-only rows let the host resolve
+          // a web address (url field / doi.org) and open the browser.
+          const target = keys.find(key => itemsRef.current.some(row => row.key === key && (row.hasAttachment || row.itemType === 'attachment' || String(row.doi ?? '').trim() !== '')))
           await openItem(target ?? first)
           break
         }
@@ -1406,6 +1422,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
                   onTrashAttachment={trashAttachment}
                   onUpdateNote={updateNote}
                   onNotify={notify}
+                  onRefetch={() => { if (detail) void runRecognition('item', [detail.key]) }}
                 />
               </div>
             ) : (

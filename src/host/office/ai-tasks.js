@@ -18,6 +18,11 @@
 //   4. The agent tool blocks until the apply outcome arrives (or times out),
 //   so the model sees the result and can retry / explain.
 import { randomString } from './constants.js'
+import { PLUGIN_SOURCE_ROOT } from '../plugin-root.js'
+
+function sourceFixHint() {
+  return `遇到暂时无法解决的报错（如写回通道、插件服务本身的问题）：先向用户说明原因，并询问是否允许你直接修改 dsh-library 插件源码（${PLUGIN_SOURCE_ROOT}）来修复；用户允许后即可自行查看、修改源码并重载插件（禁用→启用 dsh-library bundle）后重试。`
+}
 
 const TASK_TTL = 30 * 60_000
 const KEEP_TTL = 2 * 60 * 60_000
@@ -119,6 +124,7 @@ function citeMessage(task) {
     '   - 整段替换：mode="replace"，text 为整理/改写后的完整文本，在需要引注的位置写占位标记 [[1]]、[[2]]…，citations 数组每项 {id, keys, locator?, prefix?, suffix?} 与标记编号一一对应；',
     '   - 或只在原文定点插入：mode="insert"，citations 每项的 after 填选中文本里一段足够独特的原文片段，引文将插到该片段之后，其余文字与格式原样保留。',
     '4. 写回成功后，用一两句话告诉用户引用了哪些文献、插在了什么位置；若工具报错，向用户说明原因并按错误提示修正后重试。',
+    `5. ${sourceFixHint()}`,
   ].join('\n')
 }
 
@@ -132,7 +138,7 @@ function editMessage(task) {
     '第一步：先回复用户一句话——已收到选中文本，请用户直接在下方输入框写下修改要求（例如：更学术化、压缩到一半、改成英文、补充过渡句…）。在用户给出要求之前不要动笔修改。',
     '第二步：用户给出要求后，按其要求改写这段文本（只改这段；保持语言与学术风格；如需引用文献，先用 library_search 确认条目存在）。',
     `第三步：调用 library_word_apply 写回：taskId=${task.id}，mode="replace"，text 为改写后的完整文本，需要引注的位置用 [[1]]、[[2]] 占位，citations 每项 {id, keys, locator?, prefix?, suffix?}。`,
-    '写回成功后向用户简述改动；工具报错则说明原因并修正重试。',
+    `写回成功后向用户简述改动；工具报错则说明原因并修正重试。另外，${sourceFixHint()}`,
   ].join('\n')
 }
 
@@ -244,8 +250,17 @@ export function createAiTasks({ chat, focus, logger = console }) {
     expireStale()
     const task = tasks.get(String(taskId ?? ''))
     if (!task) throw new Error(`任务 ${taskId} 不存在（可能已过期或写错 taskId）`)
-    if (task.status !== 'pending') {
-      throw new Error(`任务 ${task.id} 当前状态是 ${task.status}，不能再写回（每个任务只能写回一次）`)
+    if (task.status === 'applied' || task.status === 'applying') {
+      throw new Error(`任务 ${task.id} 已被 Word 端成功写回，不能再重复写回`)
+    }
+    // failed / cancelled tasks are re-armable: the agent may retry after a
+    // transient claim timeout (Word window closed, poll hiccup, ...). Each
+    // re-submit revalidates the plan and restarts the 150 s claim window.
+    if (task.status !== 'pending' && task.status !== 'ready') {
+      task.status = 'pending'
+      task.plan = null
+      task.createdAt = Date.now()
+      logger.info?.(`library: word ai task ${task.id} re-armed from ${task.status} for retry`)
     }
     task.plan = normalizePlan(task, plan)
     task.status = 'ready'
@@ -262,7 +277,7 @@ export function createAiTasks({ chat, focus, logger = console }) {
       const timer = setTimeout(() => {
         if (task.status === 'ready' || task.status === 'pending') {
           task.status = 'failed'
-          task.result = { ok: false, error: 'Word 端 150 秒内没有领取写回任务——请确认 Word 中该文档仍处于打开状态，然后让用户在 Word 里重新发起。' }
+          task.result = { ok: false, error: 'Word 端 150 秒内没有领取写回任务——请确认 Word 中该文档仍处于打开状态；文档打开时可直接重试写回（任务会自动重置，无需在 Word 里重新发起）。' }
         }
         finish(task.result)
       }, APPLY_WAIT)

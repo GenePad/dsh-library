@@ -229,7 +229,9 @@ export function ItemsPane({
   }
 
   const openItem = (item) => {
-    if (item.hasAttachment || item.itemType === 'attachment') {
+    // No attachment but a DOI: the host resolves the web address (url field /
+    // doi.org) and opens the browser instead of failing.
+    if (item.hasAttachment || item.itemType === 'attachment' || String(item.doi ?? '').trim() !== '') {
       onOpen(item.key)
     } else {
       onNotify?.('该条目没有可打开的附件')

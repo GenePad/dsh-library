@@ -1,5 +1,18 @@
 // Opening library files with the system's default application.
+import fs from 'node:fs'
 import { spawn } from 'node:child_process'
+
+// Smoke-suite hook: when DSH_LIBRARY_OPEN_SINK names a file, "opens" are
+// appended there as JSON lines instead of spawning a real browser/Explorer.
+const openSink = process.env.DSH_LIBRARY_OPEN_SINK ?? ''
+
+function recordSink(kind, target) {
+  try {
+    fs.appendFileSync(openSink, `${JSON.stringify({ kind, target })}\n`)
+  } catch {
+    // A broken sink must not break opening itself.
+  }
+}
 
 /**
  * Open a file or URL with the operating system's default application.
@@ -9,6 +22,10 @@ import { spawn } from 'node:child_process'
 export function openExternal(target) {
   const value = String(target ?? '')
   if (value === '') return false
+  if (openSink !== '') {
+    recordSink('open', value)
+    return true
+  }
   try {
     if (process.platform === 'win32') {
       if (/^https?:\/\//i.test(value)) {
@@ -36,6 +53,10 @@ export function openExternal(target) {
 export function revealInFolder(target) {
   const value = String(target ?? '')
   if (value === '') return false
+  if (openSink !== '') {
+    recordSink('reveal', value)
+    return true
+  }
   try {
     if (process.platform === 'win32') {
       // The flag and the path must be SEPARATE arguments. Node quotes an

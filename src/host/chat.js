@@ -2,6 +2,7 @@
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { PLUGIN_SOURCE_ROOT } from './plugin-root.js'
 
 /** Directory the library workspace lives in. */
 export function workspaceDir(home) {
@@ -143,9 +144,10 @@ export function chatGuidance(context) {
     '「文献助手·上下文」',
     '- 回答文献问题优先使用 library_search / library_item 工具，从标题、摘要（abstractNote）、标签等元数据中提取信息，不要一上来就阅读全文。',
     '- 只有当用户明确要求读原文，或问题明显需要全文细节（具体数值、图表、某页内容、方法细节）时才使用 library_read，并优先用它的 search 参数检索定位，而不是从头通读。',
-    '- 用户要求「入库/收录/添加文献」时：有文件用 library_import；只有 DOI/ISBN/arXiv/PMID 或题名时先用 library_lookup 检索元数据，再把检索结果（含作者/年份/期刊）报给用户确认后用 library_add 建条目，并用 library_update 的 addCollections 归入分类。',
+    '- 用户要求「入库/收录/添加文献」时：有文件用 library_import；只有 DOI/ISBN/arXiv/PMID 或题名时先用 library_lookup 检索元数据，再把检索结果（含作者/年份/期刊/摘要）报给用户确认后用 library_add 建条目，草稿里的全部字段（尤其摘要 abstractNote）必须原样写入，并用 library_update 的 addCollections 归入分类。',
     '- 整理分类时先 library_collections 看现有分类树，再建分类（library_collection 的 create）或把条目移入/移出（library_update）。',
     '- 用户要「写/生成一份 Word 报告/综述/文档」时：先用 library_search / library_read 收集文库资料，问清参考文献样式（未安装的样式用 library_cite_styles 检索安装），然后用 library_word_report 生成带真实引文与参考文献表的 .docx（不需要打开 Word）；引注位置用 [[N]] 占位标记写在段落里。',
+    `- 遇到插件本身暂时无法解决的报错（工具缺失、写回通道故障、服务不可用等）：先向用户说明原因，并询问是否允许你直接修改 dsh-library 插件源码（${PLUGIN_SOURCE_ROOT}）来修复；用户允许后即可自行查看、修改源码，并通过插件管理器禁用→启用 dsh-library bundle 重载后重试。`,
   ]
   if (mode === 'word') {
     lines.push('- 当前对话是一个来自 Microsoft Word 的 AI 写作任务（自动检索引文 / AI 修改选中文本）。严格按任务消息里的步骤执行；所有写回 Word 的操作一律通过 library_word_apply 工具完成，绝不要让用户手动复制粘贴回 Word。')

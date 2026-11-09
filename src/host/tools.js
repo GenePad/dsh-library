@@ -2,7 +2,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { readAnnotations, readAttachmentRows, readCollections, readItem, readItems, readStats, readTags, attachmentTarget } from './read.js'
-import { createItem, trashItems, updateItem, deleteForever, createCollection, renameCollection, trashCollection, createUrlAttachment } from './write.js'
+import { createItem, trashItems, updateItem, deleteForever, createCollection, renameCollection, trashCollection, createUrlAttachment, createNoteItem, updateNoteItem } from './write.js'
 import { importFile } from './ingest.js'
 import { lookupDoi, lookupArxiv, lookupIsbn, lookupPmid, resolveMetadata, searchCrossref } from './metadata.js'
 import { extractPdfText, pdfPageTexts } from './pdf.js'
@@ -273,7 +273,7 @@ export function createTools(deps) {
     },
     {
       name: 'library_add',
-      description: '在文库中新建条目（先 library_lookup 检索确认元数据再入库）。itemType 用 Zotero 类型名（journalArticle、book、preprint、conferencePaper、thesis、report、webpage、document、note…），fields 放 title、abstractNote、date、DOI、url、publicationTitle、volume、issue、pages、publisher、ISBN、language 等字段。creators 为 [{firstName,lastName,creatorType}]，机构作者用 [{fieldMode:1,lastName}]。返回新条目 key。',
+      description: '在文库中新建条目（先 library_lookup 检索确认元数据再入库）。itemType 用 Zotero 类型名（journalArticle、book、preprint、conferencePaper、thesis、report、webpage、document、note…），fields 放 title、abstractNote（摘要——library_lookup 草稿里带有的话必须原样带入，不要省略）、date、DOI、url、publicationTitle、volume、issue、pages、publisher、ISBN、language 等字段。creators 为 [{firstName,lastName,creatorType}]，机构作者用 [{fieldMode:1,lastName}]。返回新条目 key。',
       parameters: {
         type: 'object',
         properties: {
@@ -300,7 +300,7 @@ export function createTools(deps) {
     },
     {
       name: 'library_lookup',
-      description: '检索一条文献的元数据而不入库：给 identifier（DOI / ISBN / arXiv id / PMID）返回规范元数据草稿（itemType、fields、creators、tags、来源）；给 query（题名片段）返回 Crossref 候选列表。用户让你「收录某篇文章」或要补全字段时先调它，把结果报给用户确认后再用 library_add 写入库。',
+      description: '检索一条文献的元数据而不入库：给 identifier（DOI / ISBN / arXiv id / PMID）返回规范元数据草稿（itemType、fields——含 abstractNote 摘要——creators、tags、来源）；给 query（题名片段）返回 Crossref 候选列表。用户让你「收录某篇文章」或要补全字段时先调它，把结果（全部字段，含摘要）报给用户确认后再用 library_add 写入库。',
       parameters: {
         type: 'object',
         properties: {
@@ -434,6 +434,32 @@ export function createTools(deps) {
       },
     },
     {
+      name: 'library_note',
+      description: '新建或修改笔记：create 在条目下建子笔记（parentKey 为文献条目 key；text 为纯文本，按空行分段）；update 整体替换某个笔记的正文（key 为笔记 key，从 library_item 的 notes 里取）。用户要求「给这篇文献写条笔记 / 把笔记内容改成…」时用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['create', 'update'], description: '默认 create' },
+          parentKey: { type: 'string', description: 'create：挂笔记的文献条目 key；缺省为独立笔记' },
+          key: { type: 'string', description: 'update：要修改的笔记 key（8 位）' },
+          text: { type: 'string', description: '笔记正文（纯文本，空行分段）' },
+        },
+        required: ['text'],
+      },
+      output: { schema: JSON_SCHEMA, render: renderJson },
+      async execute(args = {}) {
+        const db = getDb()
+        if (String(args.action ?? 'create') === 'update') {
+          const key = requireKey(args)
+          return updateNoteItem(db, key, String(args.text ?? ''))
+        }
+        return createNoteItem(db, {
+          parentKey: typeof args.parentKey === 'string' ? args.parentKey : undefined,
+          text: String(args.text ?? ''),
+        })
+      },
+    },
+    {
       name: 'library_import',
       description: '把文件（通常是 PDF）导入文库：复制进 Zotero 存储、建附件、提取全文和 PDF 内嵌批注，并通过文件名/正文中的 DOI/arXiv id/ISBN 或 Crossref 题名检索自动补全父条目元数据。用户要求"添加/导入某篇 PDF"时用。',
       parameters: {
@@ -464,7 +490,7 @@ export function createTools(deps) {
     },
     {
       name: 'library_open',
-      description: '在系统 PDF 阅读器中打开条目的 PDF（或用文件管理器显示文件）。用户要求"在电脑上打开/查看这篇文献"时用。',
+      description: '在系统 PDF 阅读器中打开条目的 PDF（或用文件管理器显示文件）。条目没有 PDF 时自动改为在浏览器打开它的网页链接或 DOI。用户要求"在电脑上打开/查看这篇文献"时用。',
       parameters: {
         type: 'object',
         properties: {
