@@ -276,30 +276,65 @@ export function createOfficeServer({ integration, dialogs, styles, ai = null, lo
   function listenOn(candidate) {
     return new Promise((resolve, reject) => {
       const instance = http.createServer((request, response) => { void route(request, response) })
-      instance.once('error', reject)
-      instance.listen(candidate, '127.0.0.1', () => {
-        instance.removeListener('error', reject)
-        resolve(instance)
-      })
+      let settled = false
+      const settle = (failure, value) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        instance.removeListener('error', onError)
+        if (failure) {
+          try { instance.close() } catch { /* never bound */ }
+          reject(failure)
+        } else {
+          // An embedded service must never hold its host process alive:
+          // unref'd, the listen handle cannot keep a smoke suite (or an idle
+          // shell) running after its work is done.
+          instance.unref()
+          resolve(value)
+        }
+      }
+      const onError = (failure) => settle(failure)
+      instance.once('error', onError)
+      instance.listen(candidate, '127.0.0.1', () => settle(null, instance))
+      // A bind attempt must always settle. CI runners were observed to never
+      // answer the listen on the Zotero connector port, which stalled start()
+      // (and with it whole smoke suites) forever; failing the candidate after
+      // 3s just moves on to the next port.
+      const timer = setTimeout(() => settle(new Error(`端口 ${candidate} 绑定超时`)), 3000)
     })
   }
 
+  // Every start/stop bumps this; a bind that lands after its generation was
+  // superseded (stop during an in-flight start) hands the port right back.
+  let generation = 0
+
   async function start(preferredPort = 0) {
     if (server?.listening) return { ...status() }
+    const epoch = ++generation
     const candidates = []
     const chosen = Number(preferredPort)
     if (Number.isInteger(chosen) && chosen > 0 && chosen < 65536) candidates.push(chosen)
     for (let i = 0; i < PORT_ATTEMPTS; i += 1) candidates.push(DEFAULT_PORT + i)
     for (const candidate of candidates) {
+      let instance
       try {
-        server = await listenOn(candidate)
-        port = candidate
-        error = ''
-        logger.info?.(`library: word integration server listening on 127.0.0.1:${port}`)
-        return { ...status() }
+        instance = await listenOn(candidate)
       } catch (failure) {
         error = String(failure?.message ?? failure)
+        continue
       }
+      if (epoch !== generation) {
+        // stop() (or a newer start) raced this bind: release the port.
+        try { instance.close() } catch { /* already closed */ }
+        try { instance.closeAllConnections?.() } catch { /* no clients */ }
+        return { ...status() }
+      }
+      generation = epoch
+      server = instance
+      port = candidate
+      error = ''
+      logger.info?.(`library: word integration server listening on 127.0.0.1:${port}`)
+      return { ...status() }
     }
     server = null
     port = 0
@@ -307,6 +342,7 @@ export function createOfficeServer({ integration, dialogs, styles, ai = null, lo
   }
 
   function stop() {
+    generation += 1
     if (active) {
       active.transport.abort(new Error('服务已停止'))
       clearTransaction(active)
@@ -314,6 +350,9 @@ export function createOfficeServer({ integration, dialogs, styles, ai = null, lo
     dialogs.dispose()
     if (server) {
       try { server.close() } catch { /* already closed */ }
+      // Keep-alive sockets would otherwise delay the close event and, in the
+      // worst case, keep the process' event loop reachable.
+      try { server.closeAllConnections?.() } catch { /* no clients */ }
       server = null
     }
     port = 0

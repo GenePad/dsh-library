@@ -1,18 +1,18 @@
 {
-  "version": "0.3.14",
+  "version": "0.3.15",
   "base": "../",
-  "publishedAt": 1794196517266,
+  "publishedAt": 1794200633417,
   "notes": "",
   "files": [
     {
       "path": "package.json",
       "size": 1702,
-      "sha256": "be1cceaa3ee81a70c4d7a5c2e37e00c576ac5792fd210c51adcd0f47d01cad67"
+      "sha256": "4c43f8a33b6edc78735fbe227558c9529e36886b6b8e5b0d7567f5b246f19180"
     },
     {
       "path": "index.js",
       "size": 7180,
-      "sha256": "aee413b8994c76755cd461f2a0efda9389ee70e26c81d5c64ece1101a9600f55"
+      "sha256": "1b418d823b39b019ce4402ff549c4ec56794cb57b087982bc3902be0432247fe"
     },
     {
       "path": "client.js",
@@ -236,8 +236,8 @@
     },
     {
       "path": "src/host/office/server.js",
-      "size": 13064,
-      "sha256": "7340891ad4cd0ae23985e328c7926f55261504deabdc408e2dc91eb36676be54"
+      "size": 14833,
+      "sha256": "c8cdecc3e782b7c2cde275e82925984eb63243baebdaa20b67b1fd745b72296b"
     },
     {
       "path": "src/host/office/session.js",
@@ -546,8 +546,8 @@
     },
     {
       "path": "AGENTS.md",
-      "size": 86950,
-      "sha256": "e755613009e7abc7972397725d2d359a16467a7372bb9b463d084e47e77c26b3"
+      "size": 88013,
+      "sha256": "dcfa27a2258c159741ad8599d690b4d80ac667cc00761689a673a4d1859e370a"
     }
   ]
 }

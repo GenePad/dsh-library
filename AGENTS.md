@@ -196,6 +196,8 @@ dsh-library/
 
 43. **嵌入 PowerShell 的 C# P/Invoke 签名改过必须实际跑一遍**：`runWindowScript` 是 fire-and-forget，Add-Type **编译失败只落在 logger.warn 里**（"…failed: …"），功能看起来"没生效"而已——`focusMainWindow` 曾因此静默失效半年（`GetWindowThreadProcessId(IntPtr, IntPtr)` 声明与 `out uint` 调用不匹配，编译错误，置前从未执行过）。用 Node `execFile('powershell.exe', ['-EncodedCommand', …])`（产品同款路径）实际编译运行验证；注意本仓库的 harness 会话**不在交互桌面上**（`GetForegroundWindow()` 恒返回 0），前台切换只能真机验证。`DshSelfFocus.Focus` 返回值：1=已到前台、2=已还原但被前台锁拒绝（Nudge 标题栏合成点击重试后仍失败，任务栏闪烁 `FLASHW_ALL|FLASHW_TIMERNOFG` 兜底）、0=没找到窗口。
 
+44. **office 服务的监听句柄绝不能吊住宿主进程 / bind 必须会结算**：CI（GitHub runner）上 23119 端口状态异常时，`listenOn` 的 bind **既不成功也不报错**——office-smoke 卡死在 `await server.start(0)`（零输出挂死）；host-smoke 则是 `void start()` 尚未落定、disposer 里 `stop()` 看到的 `server` 还是 null（空操作），迟到绑定落在一个没人能停的实例上 → 进程永不退出（`timeout` 杀掉后 exit 124 才暴露）。三重修复（server.js）：① listen 成功后 `instance.unref()`（嵌入服务永不阻止宿主退出）；② 每个 bind 候选 3s 超时兜底；③ `start/stop` 走 generation 代数守卫，stop 之后才落定的绑定立即 close+closeAllConnections 归还端口。WSL 里复现该问题注意：**WSL mirrored 网络会把 Windows 侧监听的 23119（正在运行的 dsh！）映射进来**，表现为间歇性 EADDRINUSE；CI 上 office-smoke 必须跑在带 `timeout` 看门狗的步骤里，超时 kill 才能拿到 exit 124 的证据。
+
 ## 发版
 
 改码 → bump `package.json` **和** `index.js` 的 `version` → `npm run build` → `npm run check` → `npm run manifest` → 提交（含 `client.js`、`vendor/deps.js`、`feed/manifest.json`）→ 推送到 GitHub（`GenePad/dsh-library`）。在线更新**默认走官方源** `https://raw.githubusercontent.com/GenePad/dsh-library/main/feed/manifest.json`（`settings.js#DEFAULT_UPDATE_FEED`；设置里可覆盖，填 `off`/关闭停用），「文库设置 → 更新 → 检查/安装更新」直接可用；安装后重启 dsh 生效。**发版推送前确认 manifest 已重新生成**——GitHub raw 直接服务仓库里的 `feed/manifest.json` 与文件本体（`base: "../"`），版本与哈希必须与提交内容一致。

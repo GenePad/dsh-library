@@ -1,6 +1,6 @@
 {
   "name": "dsh-library",
-  "version": "0.3.14",
+  "version": "0.3.15",
   "type": "module",
   "description": "A Zotero-compatible literature library for DeepSeek Harness: browse and edit a real zotero.sqlite, import PDFs with metadata lookup, annotations, WebDAV file sync, an agent chat dock, and a full Zotero-compatible Microsoft Word citation plugin.",
   "keywords": [
