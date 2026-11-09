@@ -219,18 +219,27 @@ export function raiseDialogWindow(id, logger = console) {
 }
 
 /**
- * Win32 script that brings a window of OUR OWN process (the dsh desktop shell
- * — this plugin's host half runs inside it, so process.pid is dsh's pid) to
- * the foreground. Used when a Word AI task is dispatched: the user must see
- * dsh take over and work, instead of everything happening behind Word's
- * maximised window. dsh may be anywhere when that happens: on screen,
- * minimised to the taskbar, or hidden in the tray (window hidden — the old
- * version filtered on IsWindowVisible and silently gave up exactly then).
+ * Win32 script that brings the dsh window to the foreground. Used when a Word
+ * AI task is dispatched: the user must see dsh take over and work, instead of
+ * everything happening behind Word's maximised window.
+ *
+ * The visible window is NOT always owned by this process: the desktop shell
+ * runs the plugin host in a child process (this one) while the Electron main
+ * process owns the window. `pids` therefore carries the candidates (own pid
+ * first, then its parent), and the script falls back to any window owned by an
+ * executable called "DeepSeek Harness.exe" — a browser tab showing the same
+ * page belongs to another executable and is never mistaken for the app. dsh
+ * may be on screen, minimised, or hidden in the tray (an invisible window, which
+ * the old visible-only filter skipped exactly then).
  */
-export function buildFocusSelfScript(pid) {
+export function buildFocusSelfScript(pids) {
+  const list = (Array.isArray(pids) ? pids : [pids])
+    .map(pid => Number(pid))
+    .filter(pid => Number.isInteger(pid) && pid > 0)
   return `Add-Type -TypeDefinition @'
 using System;
 using System.Text;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 public class DshSelfFocus {
   public delegate bool EP(IntPtr h, IntPtr l);
@@ -245,32 +254,21 @@ public class DshSelfFocus {
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int i);
-  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
-  [DllImport("user32.dll")] public static extern int GetSystemMetrics(int i);
-  [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, UIntPtr i);
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
   [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
   [DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr h, bool altTab);
   [DllImport("user32.dll")] public static extern bool FlashWindowEx(ref FLASHWINFO info);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+  [DllImport("kernel32.dll")] public static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern bool QueryFullProcessImageName(IntPtr h, uint flags, StringBuilder name, ref uint size);
+  [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr h);
   [StructLayout(LayoutKind.Sequential)] public struct FLASHWINFO { public uint cbSize; public IntPtr hwnd; public uint dwFlags; public uint uCount; public uint dwTimeout; }
-  public struct RECT { public int L, T, R, B; }
 
-  // Deterministic foreground kicker (same trick as the citation dialogs): a
-  // synthetic input event on the caption bar grants the foreground right, so
-  // even when AttachThreadInput fails the switch goes through. Neighbouring
-  // events with no sleep in between cannot be redirected by a user hand
-  // movement; a caption click has no client-area effect.
-  static void Nudge(IntPtr h) {
-    RECT r;
-    if (!GetWindowRect(h, out r)) return;
-    int vx = GetSystemMetrics(76), vy = GetSystemMetrics(77);
-    int vw = GetSystemMetrics(78), vh = GetSystemMetrics(79);
-    int tx = (r.L + r.R) / 2, ty = r.T + 14;
-    uint ax = (uint)((tx - vx) * 65535 / Math.Max(vw - 1, 1));
-    uint ay = (uint)((ty - vy) * 65535 / Math.Max(vh - 1, 1));
-    mouse_event(0x8000 | 0x4000 | 0x0001, ax, ay, 0, UIntPtr.Zero);  // MOVE|VIRTUALDESK|ABSOLUTE
-    mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);                      // LEFTDOWN
-    mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);                      // LEFTUP
+  // An ALT tap grants the foreground right without touching the target window's
+  // content: a synthetic caption click could land on the app's own UI controls.
+  static void Nudge() {
+    keybd_event(0x12, 0, 0, UIntPtr.Zero);
+    keybd_event(0x12, 0, 2, UIntPtr.Zero);
   }
 
   // Windows refuses plain SetForegroundWindow from a background process; the
@@ -297,29 +295,69 @@ public class DshSelfFocus {
     return true;
   }
 
-  // Returns 1 when a window of the pid took the foreground, 2 when it was
-  // brought back (taskbar flashing) but Windows kept the foreground with the
-  // other app, 0 when no window of the pid was found at all.
-  public static int Focus(uint pid) {
-    IntPtr[] found = new IntPtr[16];
-    long[] score = new long[16];
-    int n = 0;
-    EnumWindows((h, l) => {
-      uint owner;
-      GetWindowThreadProcessId(h, out owner);
-      if (owner != pid || !IsMainWindow(h)) return true;
-      long s = GetWindowTextLength(h);
-      if (n < 16) { found[n] = h; score[n] = s; n++; return true; }
-      int worst = 0;
-      for (int i = 1; i < n; i++) if (score[i] < score[worst]) worst = i;
-      if (s > score[worst]) { found[worst] = h; score[worst] = s; }
-      return true;
-    }, IntPtr.Zero);
-    if (n == 0) return 0;
+  static string ImageOf(uint pid) {
+    IntPtr h = OpenProcess(0x1000, false, pid);   // PROCESS_QUERY_LIMITED_INFORMATION
+    if (h == IntPtr.Zero) return "";
+    try {
+      var sb = new StringBuilder(1024);
+      uint size = 1024;
+      return QueryFullProcessImageName(h, 0, sb, ref size) ? sb.ToString() : "";
+    } finally { CloseHandle(h); }
+  }
+
+  static bool IsOurApp(uint pid) {
+    string path = ImageOf(pid);
+    return path.EndsWith("DeepSeek Harness.exe", StringComparison.OrdinalIgnoreCase);
+  }
+
+  static void Add(List<IntPtr> found, List<long> score, IntPtr h) {
+    for (int i = 0; i < found.Count; i++) if (found[i] == h) return;
+    found.Add(h);
+    score.Add(GetWindowTextLength(h));
+  }
+
+  // Returns 1 when a dsh window took the foreground, 2 when it was brought back
+  // (taskbar flashing) but Windows kept the foreground with the other app, 0
+  // when no candidate window was found at all.
+  //
+  // The pids array holds the candidates in priority order: the plugin host
+  // process does NOT own the visible window when the desktop shell runs the
+  // host in a child process, so the Electron main process (the parent) has to
+  // be tried too. As a last resort any window whose executable is
+  // "DeepSeek Harness.exe" and whose title mentions the app is accepted — a
+  // browser tab showing the web UI is a different executable and is therefore
+  // never focused by mistake.
+  public static int Focus(uint[] pids) {
+    var found = new List<IntPtr>();
+    var score = new List<long>();
+    foreach (uint pid in pids) {
+      if (pid == 0) continue;
+      uint target = pid;
+      EnumWindows((h, l) => {
+        uint owner;
+        GetWindowThreadProcessId(h, out owner);
+        if (owner == target && IsMainWindow(h)) Add(found, score, h);
+        return true;
+      }, IntPtr.Zero);
+    }
+    if (found.Count == 0) {
+      EnumWindows((h, l) => {
+        if ((GetWindowLong(h, -20) & 0x00000080) != 0) return true;   // WS_EX_TOOLWINDOW
+        var t = new StringBuilder(512);
+        GetWindowText(h, t, 512);
+        if (t.Length == 0 || !t.ToString().Contains("DeepSeek Harness")) return true;
+        uint owner;
+        GetWindowThreadProcessId(h, out owner);
+        if (!IsOurApp(owner)) return true;
+        Add(found, score, h);
+        return true;
+      }, IntPtr.Zero);
+    }
+    if (found.Count == 0) return 0;
     // Try longest title first, until one window actually holds the foreground.
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < found.Count; i++) {
       int w = i;
-      for (int j = i + 1; j < n; j++) if (score[j] > score[w]) w = j;
+      for (int j = i + 1; j < found.Count; j++) if (score[j] > score[w]) w = j;
       IntPtr t = found[i]; found[i] = found[w]; found[w] = t;
       long ts = score[i]; score[i] = score[w]; score[w] = ts;
     }
@@ -335,9 +373,9 @@ public class DshSelfFocus {
     if (primary != IntPtr.Zero) {
       if (!IsWindowVisible(primary)) ShowWindow(primary, 5);
       if (IsIconic(primary)) ShowWindow(primary, 9);
-      // Foreground-lock fallback: a synthetic caption click grants the
-      // foreground right (proven on the citation dialog windows).
-      Nudge(primary);
+      // Foreground-lock fallback: an ALT tap grants the switch without clicking
+      // anything inside the window.
+      Nudge();
       ForceForeground(primary);
       System.Threading.Thread.Sleep(200);
       if (GetForegroundWindow() == primary) return 1;
@@ -355,7 +393,7 @@ public class DshSelfFocus {
   }
 }
 '@
-[DshSelfFocus]::Focus(${Number(pid) || 0})
+[DshSelfFocus]::Focus([uint32[]]@(${list.join(', ') || '0'}))
 `
 }
 
@@ -369,7 +407,12 @@ public class DshSelfFocus {
 export function focusMainWindow(logger = console) {
   if (process.platform !== 'win32') return
   if (process.env.DSH_LIBRARY_OFFICE_NO_BROWSER === '1') return
-  runWindowScript(buildFocusSelfScript(process.pid), logger, 'focusing the dsh window')
+  // The desktop shell may run this host in a child process: the window then
+  // belongs to the parent (Electron main), not to us.
+  const candidates = [process.pid, process.ppid].filter((pid, index, all) => (
+    Number.isInteger(pid) && pid > 0 && all.indexOf(pid) === index
+  ))
+  runWindowScript(buildFocusSelfScript(candidates), logger, 'focusing the dsh window')
 }
 
 /**

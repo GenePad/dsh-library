@@ -2,7 +2,7 @@
 
 ## 这是什么
 
-一个面向 [DeepSeek Harness (dsh)](https://github.com/deepseek-ai/deepseek-harness) 的第三方文献管理插件：把 **Zotero 文库**搬进 dsh。左侧栏底部一键进入 Zotero 风格的整页图书馆，直接读写你现有的 `zotero.sqlite`（没有装 Zotero 也能用独立文库），并配一个具备完整 agent 能力的「文献助手」。
+一个面向 [DeepSeek Harness (dsh)](https://www.deepseek.com/harness/) 的第三方文献管理插件：把 **Zotero 文库**搬进 dsh。左侧栏底部一键进入 Zotero 风格的整页图书馆，直接读写你现有的 `zotero.sqlite`（没有装 Zotero 也能用独立文库），并配一个具备完整 agent 能力的「文献助手」。
 
 ## 能做什么
 
@@ -65,7 +65,7 @@
    ![设置 → 文库 → 写作插件：一键安装 / 卸载 Word 加载项](docs/screenshots/settings-word-plugin.png)
 
 2. **完全退出并重启 Word**，出现「文库引用」选项卡。
-3. 「文档设置」选参考文献样式（APA / IEEE / GB-T 7714 等，未安装的可在线检索安装），然后：
+3. 「引文格式设置」选参考文献样式（APA / IEEE / GB-T 7714 等，未安装的可在线检索安装），然后：
    - **添加 / 编辑引文**：光标放在要引的位置，弹出的引文对话框可按关键词检索文库或按分类浏览，支持页码等定位符、前后缀，确定后引注与参考文献表**自动重算**；
    - **插入 / 编辑参考文献表**：文末一键生成，可自定义条目文本；
    - **刷新 / 取消引文链接 / 查看引注**：维护文档里的全部引文域。
@@ -82,13 +82,6 @@
    | --- | --- |
    | ![AI修改按钮](docs/screenshots/ai-edit-before.png) | ![AI改写写回](docs/screenshots/ai-edit-after.png) |
 
-**方式二：不开 Word，直接让 AI 写报告**
-
-在 dsh 对话里说「生成一份关于 XX 的 Word 报告」，文献助手会检索文库资料、按你指定的参考文献样式，生成带真实引文域与文末参考文献表的 .docx（之后仍可在 Word 里用「文库引用」选项卡刷新 / 换样式）。
-
-**方式三：导出引用**
-
-条目右键复制 BibTeX / CSL JSON；设置里可导出整个文库。CSL JSON 可直接用 Zotero 的「导入…」读取。
 
 ## License
 

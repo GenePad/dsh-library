@@ -83,7 +83,7 @@ export class IntegrationInterface {
 
   async addBibliography() {
     await this._session.init(true, false)
-    if (!this._session.data.style.hasBibliography) throw new AlertError('当前引用样式没有参考文献表。请在「文档设置」中选择带参考文献表的样式。')
+    if (!this._session.data.style.hasBibliography) throw new AlertError('当前引用样式没有参考文献表。请在「引文格式设置」中选择带参考文献表的样式。')
     const existing = await this._bibliographyField(await this._session.getFields())
     if (existing) throw new AlertError('文档中已有参考文献表。请使用「编辑参考文献表」修改其内容。')
     const field = new BibliographyField(await this._session.addField(), '', this._session.fieldOptions)
@@ -107,7 +107,7 @@ export class IntegrationInterface {
 
   async addEditBibliography() {
     await this._session.init(true, false)
-    if (!this._session.data.style.hasBibliography) throw new AlertError('当前引用样式没有参考文献表。请在「文档设置」中选择带参考文献表的样式。')
+    if (!this._session.data.style.hasBibliography) throw new AlertError('当前引用样式没有参考文献表。请在「引文格式设置」中选择带参考文献表的样式。')
     const fields = await this._session.getFields()
     let field = await this._bibliographyField(fields)
     const isNew = !field
@@ -163,7 +163,6 @@ export class IntegrationInterface {
     }
     if (!oldData) return false
     const fields = await this._session.getFields()
-    const styleHasChanged = oldData?.style?.styleID !== this._session.data.style.styleID
     const convertBibliographies = oldData?.prefs?.fieldType !== this._session.data.prefs.fieldType
     const convertItems = convertBibliographies || oldData?.prefs?.noteType !== this._session.data.prefs.noteType
     const fieldsToConvert = []
@@ -187,7 +186,11 @@ export class IntegrationInterface {
     }
     this._session._fields = null
     this._session.ignoreEmptyBibliography = true
-    if (this._session.data.prefs.delayCitationUpdates && !fieldsToConvert.length && !styleHasChanged) return
+    // A preferences change is an explicit user action, so always re-render the
+    // document right away — exactly like inserting a citation. The old guard
+    // skipped this whenever 「延迟更新引注」 was on, which made a style switch
+    // look like a no-op until the user pressed 刷新.
+    this._session.rebuildCiteprocState = true
     this._session._transactionUpToDate = false
     await this._session.updateFromDocument(FORCE_CITATIONS_RESET_TEXT)
     await this._session.updateDocument(FORCE_CITATIONS_RESET_TEXT, true, true)

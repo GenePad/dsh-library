@@ -217,7 +217,7 @@ export class Session {
       showImportExport: Boolean(showImportExport && oldData?.prefs?.fieldType && this._app.supportsImportExport),
       requireStoreReferences: this.registry.items.size > 0,
     }
-    const result = await this.dialogs.open({ type: 'docPrefs', io, title: '文档设置' })
+    const result = await this.dialogs.open({ type: 'docPrefs', io, title: '引文格式设置' })
     if (!result || result.cancelled) throw new UserCancelled('document preferences window')
     if (result.exportDocument) return this.exportDocument()
     if (!result.style || !result.fieldType) throw new UserCancelled('document preferences window')

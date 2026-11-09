@@ -495,6 +495,38 @@ assert.equal(ping.ok, true, 'connector ping')
     'IEEE numeric citation regenerated')
 }
 
+// 6b. A preferences change must re-render even with 「延迟更新引注」 on: the old
+// guard skipped the refresh in that mode, so a style switch looked like a no-op
+// until the user pressed 刷新.
+{
+  const running = word.transact('setDocPrefs')
+  const dialog = await waitForDialog('docPrefs')
+  await post('/office/api/dialog-result', {
+    id: dialog.id,
+    value: {
+      style: 'http://www.zotero.org/styles/apa', locale: 'en-US',
+      fieldType: 'Field', useEndnotes: 0, automaticJournalAbbreviations: false,
+      delayCitationUpdates: true, dontAskDelayCitationUpdates: true,
+    },
+  })
+  await running
+  const citation = word.fields.find(f => f.code.startsWith('ITEM CSL_CITATION'))
+  assert.ok(!/\[\d+\]/.test(citation.text), 'style switch regenerates even when delayed updates are enabled')
+  assert.ok(/\(.+\)/.test(citation.text), `APA citation rendered (${citation.text})`)
+  // Restore the previous state so later cases see the plain mode again.
+  const restore = word.transact('setDocPrefs')
+  const again = await waitForDialog('docPrefs')
+  await post('/office/api/dialog-result', {
+    id: again.id,
+    value: {
+      style: 'http://www.zotero.org/styles/ieee', locale: 'en-US',
+      fieldType: 'Field', useEndnotes: 0, automaticJournalAbbreviations: false,
+      delayCitationUpdates: false, dontAskDelayCitationUpdates: false,
+    },
+  })
+  await restore
+}
+
 // 7. Cancelling an insertion deletes the new field.
 {
   word.cursorFieldId = null

@@ -261,7 +261,7 @@ export function LibrarySettingsSection() {
       await api.call('cite-styles-install', { styleID })
       const list = await api.call('cite-styles-list', {})
       setInstalledStyles(Array.isArray(list) ? list : [])
-      setMessage('样式已安装，可在 Word 的「文档首选项」中选用。')
+      setMessage('样式已安装，可在 Word 的「引文格式设置」中选用。')
     } catch (error) {
       setMessage(error?.message ?? String(error))
     } finally {
@@ -359,7 +359,7 @@ export function LibrarySettingsSection() {
                 <Button variant="outline" size="sm" disabled={busy !== ''} onClick={openPendingDialogs}>打开待处理对话框</Button>
               </div>
               <div className="lib-settings-hint">
-                完整移植 Zotero 的文字处理集成：引文对话框（文献列表按关键词检索 / 文献库按分类浏览）、参考文献表、文档首选项、刷新、移除域代码、引注浏览器。
+                完整移植 Zotero 的文字处理集成：引文对话框（文献列表按关键词检索 / 文献库按分类浏览）、参考文献表、引文格式设置、刷新、移除域代码、引注浏览器。
                 引文对话框在独立的无地址栏小窗口中打开（不是浏览器标签页），确定/取消后自动关闭。以 Zotero 兼容的本地 HTTP 协议与 Word 通信，域代码可与 Zotero 文档互通。
               </div>
             </div>
@@ -401,7 +401,7 @@ export function LibrarySettingsSection() {
                 </Button>
               </div>
               <div className="lib-settings-hint">
-                文档内切换样式请用 Word 功能区的「文档首选项」；这里用于预先安装样式。
+                文档内切换样式请用 Word 功能区的「引文格式设置」；这里用于预先安装样式。
               </div>
             </div>
             {styleResults.length ? (

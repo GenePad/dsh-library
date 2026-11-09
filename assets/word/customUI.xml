@@ -12,8 +12,8 @@
           <button id="DshHelpEditBibliography" label="?" showLabel="false" image="dshHelp" screentip="？ 编辑参考文献表是做什么的" supertip="打开参考文献表编辑窗口：可手工改写某条文字、把未引用的文库条目加进表里，或从表中隐藏某些条目；这些修改在刷新后仍会保留。文档中还没有参考文献表时，请先插入参考文献表。" tag="编辑参考文献表：打开参考文献表编辑窗口：可手工改写某条文字、把未引用的文库条目加进表里，或从表中隐藏某些条目；这些修改在刷新后仍会保留。文档中还没有参考文献表时，请先插入参考文献表。" onAction="DshLibRibbon.DshLibRibbonHelp"/>
           <separator id="DshSeparator1"/>
           <box id="DshBoxDocPrefs" boxStyle="horizontal">
-            <button id="DshSetDocPrefs" label="文档设置" image="dshDocPrefs" onAction="DshLibRibbon.DshLibRibbonSetDocPrefs" keytip="P" screentip="文档设置" supertip="设置当前文档的引文样式、语言区域、引注显示方式（正文/脚注/尾注）与字段类型（域/书签），可在线检索并安装 CSL 样式。切换样式后全文引注会自动按新样式重排。"/>
-            <button id="DshHelpDocPrefs" label="?" showLabel="false" image="dshHelp" screentip="？ 文档设置是做什么的" supertip="设置当前文档的引文样式、语言区域、引注显示方式（正文/脚注/尾注）与字段类型（域/书签），可在线检索并安装 CSL 样式。切换样式后全文引注会自动按新样式重排。" tag="文档设置：设置当前文档的引文样式、语言区域、引注显示方式（正文/脚注/尾注）与字段类型（域/书签），可在线检索并安装 CSL 样式。切换样式后全文引注会自动按新样式重排。" onAction="DshLibRibbon.DshLibRibbonHelp"/>
+            <button id="DshSetDocPrefs" label="引文格式设置" image="dshDocPrefs" onAction="DshLibRibbon.DshLibRibbonSetDocPrefs" keytip="P" screentip="引文格式设置" supertip="设置当前文档的引文样式、语言区域、引注显示方式（正文/脚注/尾注）与字段类型（域/书签），可在线检索并安装 CSL 样式。切换样式后全文引注会自动按新样式重排。"/>
+            <button id="DshHelpDocPrefs" label="?" showLabel="false" image="dshHelp" screentip="？ 引文格式设置是做什么的" supertip="设置当前文档的引文样式、语言区域、引注显示方式（正文/脚注/尾注）与字段类型（域/书签），可在线检索并安装 CSL 样式。切换样式后全文引注会自动按新样式重排。" tag="引文格式设置：设置当前文档的引文样式、语言区域、引注显示方式（正文/脚注/尾注）与字段类型（域/书签），可在线检索并安装 CSL 样式。切换样式后全文引注会自动按新样式重排。" onAction="DshLibRibbon.DshLibRibbonHelp"/>
           </box>
           <box id="DshBoxRefresh" boxStyle="horizontal">
             <button id="DshRefresh" label="刷新" image="dshRefresh" onAction="DshLibRibbon.DshLibRibbonRefresh" keytip="R" screentip="刷新" supertip="重新计算文档中全部引注与参考文献表，使其与文库条目和当前样式保持一致。插入或编辑引文后插件会自动刷新；在文库里修改过条目信息后，可点此手动同步。"/>
