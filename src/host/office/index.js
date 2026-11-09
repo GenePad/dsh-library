@@ -13,6 +13,7 @@ import { createIntegration } from './commands.js'
 import { createOfficeServer } from './server.js'
 import { createWordInstaller } from './installer.js'
 import { createAiTasks } from './ai-tasks.js'
+import { createReportGenerator } from './report.js'
 import { focusMainWindow } from './window.js'
 
 export function createOfficeService({ runtime, logger = console, packageDir, version = '0.2.1' }) {
@@ -31,6 +32,9 @@ export function createOfficeService({ runtime, logger = console, packageDir, ver
     logger,
   })
   const integration = createIntegration({ styles, items, dialogs, ai, logger, version })
+  // Word reports generated entirely host-side (no Word needed): the agent
+  // writes a .docx with real Zotero citation fields + bibliography field.
+  const report = createReportGenerator({ styles, items, home, logger, version })
   const server = createOfficeServer({ integration, dialogs, styles, ai, logger, version })
   dialogs.setBaseUrl(() => server.baseUrl())
   const installer = createWordInstaller({
@@ -66,6 +70,6 @@ export function createOfficeService({ runtime, logger = console, packageDir, ver
 
   return {
     start, restart, stop: () => server.stop(), status, dispose,
-    styles, items, dialogs, integration, server, installer, ai,
+    styles, items, dialogs, integration, server, installer, ai, report,
   }
 }

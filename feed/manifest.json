@@ -1,18 +1,18 @@
 {
-  "version": "0.3.10",
+  "version": "0.3.11",
   "base": "../",
-  "publishedAt": 1794162610234,
+  "publishedAt": 1794184888401,
   "notes": "",
   "files": [
     {
       "path": "package.json",
       "size": 1702,
-      "sha256": "a479fbe31897919c9ebd8a7d6858e1d997abdd8a84150f2236052a684d145679"
+      "sha256": "3d374011d670dd0c9ceb697760dd9f8cd0fc05052dfd12f32b1dc41c5c211b53"
     },
     {
       "path": "index.js",
-      "size": 6941,
-      "sha256": "0de53ff2d44f1a1121b4df941920bdeadd407c35ab6353f9a879dd0865ca4e8d"
+      "size": 7180,
+      "sha256": "04cb316bd720ce81e668cbbc1ad430acfd2cdf35a3036bf3c5261b448b780625"
     },
     {
       "path": "client.js",
@@ -131,8 +131,8 @@
     },
     {
       "path": "src/host/chat.js",
-      "size": 14895,
-      "sha256": "09f32eb3bee24f22c5fae04d59591dd46a1ea9dd19c8990169c2cc7641ef7f7d"
+      "size": 15272,
+      "sha256": "b48b9ed9525b92e597d7f2c200b85683a9aaf3753729f5e844c34b104158ce5b"
     },
     {
       "path": "src/host/cite.js",
@@ -211,8 +211,8 @@
     },
     {
       "path": "src/host/office/index.js",
-      "size": 2683,
-      "sha256": "9e991a6592396e76ca00f1911288e2fef9399a984cb65d0598b3b7711703ca48"
+      "size": 2974,
+      "sha256": "69430e834c2f92f407b798891a99a628e71895cceb5bef6232c323402e7ee28f"
     },
     {
       "path": "src/host/office/installer.js",
@@ -228,6 +228,11 @@
       "path": "src/host/office/pages.js",
       "size": 58498,
       "sha256": "b59aa611af5ec4f173e34f8dc64beecec47ef1792d65088c1e0b2dbb3a2af42a"
+    },
+    {
+      "path": "src/host/office/report.js",
+      "size": 23141,
+      "sha256": "584ac8385bae4e48ab9ccafa632225f680998ce1996115ffdf7dcfe1b5866629"
     },
     {
       "path": "src/host/office/server.js",
@@ -291,8 +296,8 @@
     },
     {
       "path": "src/host/tools.js",
-      "size": 32588,
-      "sha256": "1888e01be2cbe21b74fe7a4268ad7f870ceba1b80347b785fc497b6552d01ced"
+      "size": 38445,
+      "sha256": "d1c6e326ae5904f66c152618b64eb8609c19f8c2156606452ed8a164ca6c15df"
     },
     {
       "path": "src/host/translate.js",
@@ -531,8 +536,8 @@
     },
     {
       "path": "README.md",
-      "size": 10868,
-      "sha256": "861cb812344e2f69ce66252661efaa0a75cb3d981edf62f4b84deec557e43b1a"
+      "size": 11237,
+      "sha256": "dc92d5b3934ae6fe67eec8a3fce7295b9248413401e51606eb6c0ad138308799"
     },
     {
       "path": "LICENSE",
@@ -541,8 +546,8 @@
     },
     {
       "path": "AGENTS.md",
-      "size": 81128,
-      "sha256": "7a1e21c3d176c5fad6b0a0ca0e0a37b09205e50cfd0adefdeef73ba13e8036e7"
+      "size": 85442,
+      "sha256": "c8bec2fb7b163d51812ff94b35fb4604898391b4f20bae62f7ea898ca534803d"
     }
   ]
 }

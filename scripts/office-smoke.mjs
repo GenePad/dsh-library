@@ -1147,6 +1147,123 @@ assert.equal(ping.ok, true, 'connector ping')
   assert.equal((await poll(taskE, pidA, docA)).status, 'cancelled')
 }
 
+// 15. Word reports generated WITHOUT Word: real citation fields, a bibliography
+//     field, chunked ZOTERO_PREF document data — and the integration engine
+//     can refresh the generated document, proving it is a genuine Zotero doc.
+{
+  const { createReportGenerator } = await import('../src/host/office/report.js')
+  const { unzipSync } = await import('../vendor/deps.js')
+  const dec = new TextDecoder()
+  const report = createReportGenerator({ styles, items, home, logger: quiet, version: '0.2.1' })
+
+  const result = await report.generate({
+    title: '血脑屏障 AAV 递送:测试报告',
+    style: 'ieee',
+    outline: [
+      { heading: '背景' },
+      {
+        text: 'AAV 跨血脑屏障递送近年进展显著[[1]]，其中衣壳工程是核心手段[[2]]。',
+        citations: [
+          { id: 1, keys: [keys[0]] },
+          { id: 2, keys: [keys[1], keys[2]], locator: '5' },
+        ],
+      },
+      { heading: '展望', level: 2 },
+      { text: 'This paragraph deliberately carries no citations.' },
+    ],
+    open: false,
+  })
+  assert.equal(result.citations, 2, 'two citation clusters were processed')
+  assert.equal(result.bibliographyEntries, 3, 'the bibliography lists all three cited items')
+  assert.equal(result.styleID, 'http://www.zotero.org/styles/ieee', 'short style names resolve')
+  assert.ok(fs.existsSync(result.path), 'the .docx is written to the reports directory')
+  assert.ok(path.dirname(result.path).endsWith('reports'), 'reports land in <home>/reports')
+
+  const parts = unzipSync(new Uint8Array(fs.readFileSync(result.path)))
+  const docXml = dec.decode(parts['word/document.xml'])
+  const instrs = [...docXml.matchAll(/<w:instrText[^>]*>([^<]*)<\/w:instrText>/g)].map(match => match[1])
+  const citeInstrs = instrs.filter(text => text.includes('ADDIN ZOTERO_ITEM CSL_CITATION'))
+  const bibInstrs = instrs.filter(text => text.includes('ADDIN ZOTERO_BIBL'))
+  assert.equal(citeInstrs.length, 2, 'two citation fields in the document')
+  assert.equal(bibInstrs.length, 1, 'one bibliography field at the end')
+  // Strip instrText blocks first: the embedded CSL JSON legitimately contains
+  // "date-parts":[[2021]] arrays that would false-match a [[N]] marker scan.
+  const visibleXml = docXml.replace(/<w:instrText[^>]*>[\s\S]*?<\/w:instrText>/g, '')
+  assert.ok(!/\[\[\d/.test(visibleXml), 'all [[N]] markers were consumed')
+  assert.ok(docXml.includes('参考文献'), 'a bibliography heading precedes the field')
+  // IEEE numeric style: the pre-rendered results are [1] / [2]-[3]-style labels.
+  assert.ok(/\[1\]/.test(docXml) && /\[2\]/.test(docXml), 'ieee numeric citations pre-rendered')
+  assert.ok(citeInstrs[0].includes(keys[0]), 'field code embeds the library key')
+
+  // Document data: docProps/custom.xml chunks reassemble into valid v3 data.
+  const custom = dec.decode(parts['docProps/custom.xml'])
+  const chunkMap = new Map()
+  for (const match of custom.matchAll(/name="ZOTERO_PREF_(\d+)"[^>]*><vt:lpstr>([\s\S]*?)<\/vt:lpstr>/g)) {
+    chunkMap.set(Number(match[1]), match[2]
+      .replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&quot;', '"')
+      .replaceAll('&apos;', "'").replaceAll('&amp;', '&'))
+  }
+  const chunks = [...chunkMap.keys()].sort((a, b) => a - b).map(index => chunkMap.get(index))
+  const joined = chunks.join('')
+  assert.ok(chunks.length >= 1 && chunks.every(chunk => chunk.length <= 255), 'properties are ≤255-char chunks')
+  const { DocumentData: ReportData } = await import('../src/host/office/document-data.js')
+  const parsed = new ReportData(joined, '0.2.1')
+  assert.equal(parsed.style.styleID, 'http://www.zotero.org/styles/ieee', 'stored style is ieee')
+  assert.equal(parsed.prefs.fieldType, 'Field', 'stored field type is Field')
+  assert.ok(parsed.sessionID, 'a session id is stored')
+
+  // Round trip through the REAL engine: load the generated fields into the
+  // fake Word, refresh, and the engine re-renders every citation + the
+  // bibliography from the field codes alone.
+  const word3 = new FakeWord()
+  word3.docData = joined
+  // Word decodes XML entities when parsing instrText, so the field code VBA
+  // sees is the UNESCAPED instruction — mirror that here.
+  const unwrap = instr => instr.trim().replace(/^ADDIN ZOTERO_/, '')
+    .replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&quot;', '"')
+    .replaceAll('&apos;', "'").replaceAll('&amp;', '&')
+  const visible = value => value
+    .replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&quot;', '"')
+    .replaceAll('&apos;', "'").replaceAll('&amp;', '&')
+  for (const instr of citeInstrs) {
+    word3.fields.push({ id: `F${word3.nextId++}`, code: unwrap(instr), text: '{Citation}', noteIndex: 0 })
+  }
+  // The bibliography field result is whatever runs sit between its separate
+  // and end markers — read it back out of the generated XML (an empty result
+  // would trip the engine's empty-bibliography removal instead of refreshing).
+  const bibAt = docXml.indexOf(bibInstrs[0])
+  const bibTail = docXml.slice(bibAt)
+  const bibEnd = bibTail.indexOf('w:fldCharType="end"')
+  const bibResult = [...bibTail.slice(0, bibEnd).matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g)]
+    .map(match => visible(match[1])).join('')
+  assert.ok(bibResult.includes('Wang'), 'the generated bibliography result text is populated')
+  word3.fields.push({ id: `F${word3.nextId++}`, code: unwrap(bibInstrs[0]), text: bibResult, noteIndex: 0 })
+  await word3.transact('refresh', 'C:/docs/report.docx')
+  if (process.env.DSH_OFFICE_DEBUG) {
+    console.log('REPORT-REFRESH fields', JSON.stringify(word3.fields, null, 1), 'alerts', word3.alerts)
+  }
+  const refreshedCites = word3.fields.filter(field => field.code.startsWith('ITEM CSL_CITATION'))
+  const refreshedBib = word3.fields.find(field => field.code.startsWith('BIBL '))
+  assert.equal(refreshedCites.length, 2, 'both citation fields survive a refresh')
+  assert.ok(refreshedCites.every(field => /\[\d/.test(field.text)), 'refresh re-rendered numeric citations')
+  assert.ok(refreshedBib && refreshedBib.text.includes('Wang'), 'refresh rebuilt the bibliography from field codes')
+  assert.ok(!word3.alerts.some(text => /手工修改|损坏/.test(text)), 'no damaged-document alerts')
+
+  // Validation refusals.
+  await assert.rejects(
+    async () => report.generate({
+      title: 'x', open: false,
+      outline: [{ text: 'a[[1]]', citations: [{ id: 1, keys: ['ZZZZ9999'] }] }],
+    }), /不在文库/, 'unknown keys are refused')
+  await assert.rejects(
+    async () => report.generate({
+      title: 'x', style: 'no-such-style-xyz', open: false, outline: [{ text: 'plain' }],
+    }), /未找到引用样式/, 'unknown styles are refused with the installed list')
+  await assert.rejects(
+    async () => report.generate({ title: 'x', open: false, outline: [{ text: 'a[[9]]', citations: [] }] }),
+    /没有 id=9/, 'dangling markers are refused')
+}
+
 server.stop()
 db.close()
 safeRemoveTree(tempRoot)

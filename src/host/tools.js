@@ -66,10 +66,12 @@ function textAttachment(db, paths, key) {
  * @param {{storageDir:string, dataDir:string}} deps.paths
  * @param {() => object} deps.getSettings
  * @param {() => object} [deps.wordAi] - the Word AI task service (runtime.office.ai).
+ * @param {() => object} [deps.wordReport] - the Word report generator (runtime.office.report).
+ * @param {() => object} [deps.citeStyles] - the CSL style store (runtime.office.styles).
  * @param {object} [deps.logger]
  */
 export function createTools(deps) {
-  const { getDb, paths, getSettings, wordAi, logger = console } = deps
+  const { getDb, paths, getSettings, wordAi, wordReport, citeStyles, logger = console } = deps
 
   return [
     {
@@ -596,6 +598,113 @@ export function createTools(deps) {
           mode: args.mode === 'insert' ? 'insert' : 'replace',
           inserted: result.inserted ?? 0,
           note: '已写回 Word 并自动刷新引注与参考文献表。',
+        }
+      },
+    },
+    {
+      name: 'library_cite_styles',
+      description: '查看 / 检索 / 安装 CSL 引用样式（apa、ieee、nature、gb-t-7714-2015-numeric 等）。用户指定报告或引文的参考文献样式但该样式未安装时：先用 query 检索（本地+zotero.org 官方仓库），把候选报给用户，用户选定后用 install 安装。不传参数时列出全部已安装样式。',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: '检索关键词（样式名/标题片段），空则只列已安装' },
+          install: { type: 'string', description: '要安装的样式 styleID（来自检索结果，形如 http://www.zotero.org/styles/xxx）' },
+        },
+      },
+      output: { schema: JSON_SCHEMA, render: renderJson },
+      timeoutMs: 60_000,
+      async execute(args = {}) {
+        const styles = citeStyles?.()
+        if (!styles) throw new Error('写作插件服务不可用。')
+        if (args.install) {
+          const styleID = String(args.install).trim()
+          const installed = await styles.install({ styleID })
+          return {
+            installed: true,
+            styleID: installed.styleID,
+            title: installed.title,
+            class: installed.class,
+            hasBibliography: installed.hasBibliography,
+          }
+        }
+        const list = await styles.search(String(args.query ?? ''))
+        return {
+          query: String(args.query ?? ''),
+          styles: list.slice(0, 40).map(entry => ({
+            styleID: entry.styleID,
+            shortName: entry.shortName,
+            title: entry.title,
+            class: entry.class,
+            hasBibliography: entry.hasBibliography,
+            installed: entry.installed === true,
+          })),
+          hint: 'install 传 styleID 即可安装（dependent: true 的样式安装时会自动带上父样式）。',
+        }
+      },
+    },
+    {
+      name: 'library_word_report',
+      description: '不用打开 Word，直接生成一份带真实引文的 .docx 报告：引文按用户指定的 CSL 样式排版并带 Zotero 域代码（之后在 Word 里可继续用「文库引用」选项卡刷新/改样式），文末自动生成参考文献表，生成后自动用系统默认程序打开。用户说「写/生成一份关于 XX 的报告/综述/文档（Word）」时用这个工具；先用 library_search / library_read 收集资料，正文各段用 text 块，引注位置写 [[N]] 占位标记，citations 与标记一一对应。',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: '报告标题（同时用作文件名）' },
+          outline: {
+            type: 'array',
+            description: '报告内容块，按顺序排列',
+            items: {
+              type: 'object',
+              properties: {
+                heading: { type: 'string', description: '章节标题（给此块则为标题块）' },
+                level: { type: 'number', description: '标题级别 1-3，默认 1' },
+                text: { type: 'string', description: '正文段落（给此块则为正文块），引注位置写 [[N]] 占位标记' },
+                citations: {
+                  type: 'array',
+                  description: '本段引文列表，id 与 [[N]] 标记对应',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      id: { type: 'number', description: '与 text 中 [[N]] 标记对应的编号' },
+                      keys: { type: 'array', items: { type: 'string' }, description: '文库条目 key（8 位）' },
+                      locator: { type: 'string', description: '定位符，如页码 "10"' },
+                      prefix: { type: 'string', description: '引注前缀' },
+                      suffix: { type: 'string', description: '引注后缀' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          style: { type: 'string', description: 'CSL 引用样式：styleID、短名（如 ieee）或标题；用户没指定时默认 apa。未安装的样式先用 library_cite_styles 安装' },
+          locale: { type: 'string', description: '样式语言标签，如 zh-CN（默认）、en-US' },
+          open: { type: 'boolean', description: '生成后是否用系统默认程序打开（默认 true）' },
+        },
+        required: ['title', 'outline'],
+      },
+      output: { schema: JSON_SCHEMA, render: renderJson },
+      timeoutMs: 120_000,
+      async execute(args = {}) {
+        const report = wordReport?.()
+        if (!report) throw new Error('写作插件服务不可用（无法生成报告）。')
+        const result = await report.generate({
+          title: args.title,
+          outline: args.outline,
+          style: args.style,
+          locale: args.locale,
+          open: args.open !== false,
+        })
+        return {
+          ok: true,
+          path: result.path,
+          dir: result.dir,
+          style: result.styleID,
+          styleTitle: result.styleTitle,
+          locale: result.locale,
+          citations: result.citations,
+          bibliographyEntries: result.bibliographyEntries,
+          characters: result.characters,
+          opened: result.opened,
+          note: '已生成 Word 报告（引文带真实 Zotero 域代码，可在 Word 的「文库引用」选项卡里刷新或换样式）。',
         }
       },
     },

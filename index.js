@@ -11,7 +11,7 @@ import { createTools } from './src/host/tools.js'
 import { chatGuidance } from './src/host/chat.js'
 
 export const name = 'library'
-export const version = '0.3.10'
+export const version = '0.3.11'
 
 // The plugin cannot do anything useful without the authenticated connection
 // (the API route) or a session controller (the chat dock).
@@ -75,6 +75,10 @@ export function apply(ctx, config = {}) {
         // The Word AI task service (library_word_apply) — created together with
         // the office integration below; resolved lazily so ordering never matters.
         wordAi: () => runtime.office?.ai,
+        // The Word report generator (library_word_report) and the CSL style
+        // store (library_cite_styles), same lazy resolution.
+        wordReport: () => runtime.office?.report,
+        citeStyles: () => runtime.office?.styles,
         logger,
       })
       const disposers = definitions.map(definition => scoped.tools.register(definition))
