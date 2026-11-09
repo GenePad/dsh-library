@@ -4,6 +4,8 @@
 #
 # The npm bundle (.tgz) installs into a dsh profile:
 #   dsh plugin --profile desktop add dsh-zot-library-<version>.tgz
+# The same tarball is published to npm when the version is new (requires the
+# NPM_TOKEN repo secret; skipped with a notice when absent or already published).
 # The in-app updater is NOT served from Releases — it reads feed/manifest.json
 # at the repository root (files are committed), so this workflow never pushes
 # to main.
@@ -229,3 +231,43 @@ jobs:
         run: |
           gh release upload "$RELEASE_TAG" dist/* \
             --repo "$GITHUB_REPOSITORY"
+
+  publish:
+    name: Publish to npm (new versions only)
+    runs-on: ubuntu-latest
+    needs: [pack]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Download the npm bundle artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: npm-package
+          path: dist
+
+      # Publishes the exact tarball the pack job built and smoke-tested.
+      # npm forbids republishing a version, so a re-run of the rolling Build
+      # without a version bump is skipped with a notice instead of failing.
+      - name: Publish the tarball when this version is new on npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          TARBALL="dist/dsh-zot-library-${VERSION}.tgz"
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "::notice::NPM_TOKEN secret is not configured; skipping npm publish."
+            exit 0
+          fi
+          if npm view "dsh-zot-library@${VERSION}" version >/dev/null 2>&1; then
+            echo "::notice::dsh-zot-library@${VERSION} is already on npm; skipping."
+            exit 0
+          fi
+          test -f "$TARBALL"
+          npm publish "$TARBALL" --access public

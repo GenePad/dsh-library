@@ -1,18 +1,18 @@
 {
-  "version": "0.4.2",
+  "version": "0.4.3",
   "base": "../",
-  "publishedAt": 1794214530189,
+  "publishedAt": 1794214807956,
   "notes": "",
   "files": [
     {
       "path": "package.json",
       "size": 1705,
-      "sha256": "3e3448c0e1c3ffc5cb85f8bc9ba180d9a30bf84bc0faf9d68147fefff5ce0151"
+      "sha256": "f19c108340e13475ac967ffcad0b5e73c47c997c0cd5f1e130678f2abc9445c9"
     },
     {
       "path": "index.js",
       "size": 7612,
-      "sha256": "f4f552701990b7c2de8778e03e86b22b6fa191290872055cef901b39fb729bb8"
+      "sha256": "d4eb690df11c5c359fe7de04aa92da76649a744c3962dfff0513fc64f1da05d2"
     },
     {
       "path": "client.js",
@@ -541,8 +541,8 @@
     },
     {
       "path": "README.md",
-      "size": 7809,
-      "sha256": "e4470e8498205bf5d290f7970fba6e67f8c4d43188a469c7dd06bf1e9870937c"
+      "size": 7564,
+      "sha256": "54cbeb49ebebc124b245342931874eda972a6de40c462dc6fb33a997f1654b54"
     },
     {
       "path": "LICENSE",
