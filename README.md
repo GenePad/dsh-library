@@ -21,7 +21,13 @@
 
 ## 怎么安装
 
-在 dsh 里安装（三选一），安装后**重启 dsh** 生效：
+终端执行（复制即用），安装后**重启 dsh** 生效：
+
+```bash
+dsh plugin --profile web add dsh-zot-library
+```
+
+也可以在 dsh 里安装（三选一）：
 
 1. **推荐：让 deepseek-harness 帮忙装**：在 dsh 对话里直接说——「用 plugin manager 从 https://github.com/GenePad/dsh-zot-library 安装 dsh-zot-library 插件」。
 2. **npm 包名**：在 dsh 的插件安装入口填包名 `dsh-zot-library`。
