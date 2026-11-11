@@ -1003,6 +1003,12 @@ fakeZoteroHandler = officePing
 // --- schema 不匹配 → 更新/一键修复 --------------------------------------------
 // 临时副本的 userdata schema 手工抬到 999：guard 报 schema-too-new（带版本号），
 // 一键修复自检核心表/列通过后以兼容模式接受（settings 持久化，重启仍生效）。
+// CI（以及任何没有真库的机器）没有真实 zotero.sqlite：用 standalone 种子在
+// 原位造一个完整的 schema-130 库，守卫/修复测试照常跑。
+if (!fs.existsSync(path.join(dataDir, 'zotero.sqlite'))) {
+  const { createStandaloneLibrary } = await import('../src/host/standalone.js')
+  createStandaloneLibrary(dataDir, mockCtx.logger)
+}
 {
   const { DatabaseSync } = await import('node:sqlite')
   const bumpSchema = new DatabaseSync(path.join(dataDir, 'zotero.sqlite'))
