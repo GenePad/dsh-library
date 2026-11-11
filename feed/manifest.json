@@ -1,23 +1,23 @@
 {
-  "version": "0.5.0",
+  "version": "0.5.1",
   "base": "../",
-  "publishedAt": 1794240805331,
+  "publishedAt": 1794373376991,
   "notes": "",
   "files": [
     {
       "path": "package.json",
       "size": 1871,
-      "sha256": "a40bd1825320f572717bd4cbe545656f9c25301f87b898b586210dd51260667d"
+      "sha256": "17d1ed42af16ca48ecc93170994821550546bfb5e5f28d25ad9004cf4253a054"
     },
     {
       "path": "index.js",
-      "size": 7807,
-      "sha256": "4a428ad2d0bd06dab8b6e8b664401674b88983c76bf5cb9ac16f55c0ceee4c8f"
+      "size": 7935,
+      "sha256": "4f761404ab70819d4e49a1611a25a002ddc807ca3fa375a80dea8ff35e537f80"
     },
     {
       "path": "client.js",
-      "size": 1870046,
-      "sha256": "68ef35a6324df5c43f5f57b54d3ff602eb23b4eda4724ec0af857b27018215dc"
+      "size": 1876064,
+      "sha256": "9cfa326540119d1793df06cdf0296305ccc8555fb80f809f859c6a90b21cea50"
     },
     {
       "path": "cordis.patch.yml",
@@ -46,8 +46,8 @@
     },
     {
       "path": "src/client/create-dialog.jsx",
-      "size": 2862,
-      "sha256": "cf9db655f66981ecac92f057ccf229a277689e2cb7d165360567263f6bc4786d"
+      "size": 3024,
+      "sha256": "2b641f2604816dad182a354b91c786a7a39be8a40dc31c660c2649fb2c1e392a"
     },
     {
       "path": "src/client/details-pane.jsx",
@@ -86,8 +86,8 @@
     },
     {
       "path": "src/client/library-page.jsx",
-      "size": 61933,
-      "sha256": "0a64c5add15e8f8cb1371a307f34cb576f68c024d33683cb16512884e88bba98"
+      "size": 66172,
+      "sha256": "4948371237346b40f5e98a13136988486b4d99f5780b927c996663ed9a11288b"
     },
     {
       "path": "src/client/pdf-util.js",
@@ -106,8 +106,8 @@
     },
     {
       "path": "src/client/settings-section.jsx",
-      "size": 25814,
-      "sha256": "eb242dfc81a2227472331280d6dbb219a9a6c6d8e34c704204355a6c89acbfcb"
+      "size": 32609,
+      "sha256": "ade90f2af5b7030b473fde96734f887620c21c704d8397d178a00fba6d2d38cc"
     },
     {
       "path": "src/client/styles.js",
@@ -126,8 +126,8 @@
     },
     {
       "path": "src/host/channel.js",
-      "size": 13855,
-      "sha256": "07b8630c305e227c02acdddc5fb2c8dbd5decece38591e69f80a857264d880d5"
+      "size": 14183,
+      "sha256": "a706da378fbee6b7f86726574372b59dcce4d3a2c74d2d8bd7e4df36c0cd2919"
     },
     {
       "path": "src/host/chat.js",
@@ -141,8 +141,8 @@
     },
     {
       "path": "src/host/db.js",
-      "size": 5675,
-      "sha256": "9f41546ecd60f3377294a1dcf5dc15d43851ff0d0ff6531ca67f7d44d0e2630e"
+      "size": 9267,
+      "sha256": "12d1214770e9eb6ec9e00a9cf1770e7faead2cc8aa5288ab3ebbc86e55f1f948"
     },
     {
       "path": "src/host/ingest.js",
@@ -151,8 +151,8 @@
     },
     {
       "path": "src/host/locate.js",
-      "size": 5036,
-      "sha256": "c2e44953816cb0dd5cc65babf0c16d8169cea7f003c72777b65f299676463263"
+      "size": 5043,
+      "sha256": "7945d6c8b6f8e59e2a0c5311c710b304c34f260f266dd39aba2e5012ffdc4fc0"
     },
     {
       "path": "src/host/metadata.js",
@@ -276,8 +276,8 @@
     },
     {
       "path": "src/host/runtime.js",
-      "size": 27199,
-      "sha256": "4ac27cccd6cfb509d186f67fd81490f5c38a6c6eef4173e0f4e5b399a71ec080"
+      "size": 30659,
+      "sha256": "487a09bf63d2507a752ad7c50728afbf182ee6f2bb40383877d8b08cb0b5d8fe"
     },
     {
       "path": "src/host/schema-data.js",
@@ -291,8 +291,8 @@
     },
     {
       "path": "src/host/settings.js",
-      "size": 4898,
-      "sha256": "4f0baff3f1e291b13aee82aa82b32f0b2b2975d54ffcb782ab1074712e79e7b1"
+      "size": 5629,
+      "sha256": "4dd914889ff605cf056df0615d0e7f798f4ea4bfce9c5940a26f8bb4cf919f5c"
     },
     {
       "path": "src/host/standalone.js",
@@ -306,8 +306,8 @@
     },
     {
       "path": "src/host/tools.js",
-      "size": 62445,
-      "sha256": "d2a921b7ed75157d3cc24a7e6822eae4dbfa122c4994294302e6f4e1a12ba160"
+      "size": 63032,
+      "sha256": "68ed06b089ea2771436eb294999ef0ac84c926f3937153512e1a936263356160"
     },
     {
       "path": "src/host/translate.js",
@@ -343,6 +343,11 @@
       "path": "src/host/write.js",
       "size": 48067,
       "sha256": "725627555e9e882f66b06177ee68846a29606aa85fcdcc45b313e30df693eef9"
+    },
+    {
+      "path": "src/host/zotero-client.js",
+      "size": 15808,
+      "sha256": "974fbea5d816aa6c62bccbe52b17842889fd095f4d910d02cb3e6d005de596cd"
     },
     {
       "path": "vendor/citeproc.js",
@@ -551,8 +556,8 @@
     },
     {
       "path": "README.md",
-      "size": 7564,
-      "sha256": "54cbeb49ebebc124b245342931874eda972a6de40c462dc6fb33a997f1654b54"
+      "size": 7666,
+      "sha256": "910c522330cb37a60b7a0454e9ec6ef6d789b269fb0c9fbe3c0e4daebb66c11f"
     },
     {
       "path": "LICENSE",
@@ -561,8 +566,8 @@
     },
     {
       "path": "AGENTS.md",
-      "size": 99214,
-      "sha256": "893be4af985bc92b7b1e5793a77f67741e08789e6900076b9bc1d13dc86742e1"
+      "size": 105976,
+      "sha256": "439a6e3671c9a3a270812b035ebc2e4ec285301821cb905404c64a3940c5fc5a"
     }
   ]
 }

@@ -72,7 +72,7 @@ function textAttachment(db, paths, key) {
  * @param {object} [deps.logger]
  */
 export function createTools(deps) {
-  const { getDb, paths, getSettings, wordAi, wordAgent, wordReport, citeStyles, logger = console } = deps
+  const { getDb, paths, getSettings, runSync, wordAi, wordAgent, wordReport, citeStyles, logger = console } = deps
 
   // ------------------------------------------- opened-Word document tools ---
   // Shared plumbing for library_word_* : resolve the Word process holding the
@@ -588,7 +588,7 @@ export function createTools(deps) {
     },
     {
       name: 'library_sync',
-      description: '与已配置的 Zotero WebDAV 存储同步附件文件：上传本地改动、下载远端更新。verify:true 时只检查服务器配置不做同步。用户要求同步文库或批量导入之后用。',
+      description: '同步文库。关联 Zotero 模式下唤起 Zotero 客户端并置前，由用户在 Zotero 里点同步按钮（结果 kind 告知是否已置前，同步结果之后经 revision 轮询自动回流）；独立文库模式下与已配置的 WebDAV 存储同步附件文件。verify:true 时只检查 WebDAV 连接不做同步。用户要求同步文库或批量导入之后用。',
       parameters: {
         type: 'object',
         properties: { verify: { type: 'boolean', description: 'true 时只验证 WebDAV 连接' } },
@@ -596,11 +596,16 @@ export function createTools(deps) {
       output: { schema: JSON_SCHEMA, render: renderJson },
       timeoutMs: 600_000,
       async execute(args = {}) {
-        const db = getDb()
         const settings = getSettings()
+        if (args.verify === true) {
+          if (settings.webdav.url === '') throw new Error('WebDAV is not configured. Ask the user to fill in the server URL, user name and password in the library settings.')
+          return await new WebDavClient(settings.webdav).verify()
+        }
+        // Zotero mode: the Zotero client owns the sync; runSync dispatches.
+        if (settings.mode === 'zotero' && typeof runSync === 'function') return await runSync()
+        const db = getDb()
         if (settings.webdav.url === '') throw new Error('WebDAV is not configured. Ask the user to fill in the server URL, user name and password in the library settings.')
         const client = new WebDavClient(settings.webdav)
-        if (args.verify === true) return await client.verify()
         return await syncStorage({ db, storageDir: paths.storageDir, client, logger })
       },
     },

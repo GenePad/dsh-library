@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { createServer } from 'node:http'
 import { safeRemoveTree } from '../src/host/util.js'
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-zot-library-smoke-'))
@@ -20,6 +21,25 @@ fs.mkdirSync(storageDir, { recursive: true })
 const realDb = path.join(process.env.USERPROFILE ?? os.homedir(), 'Zotero', 'zotero.sqlite')
 const hasRealLibrary = fs.existsSync(realDb)
 if (hasRealLibrary) fs.copyFileSync(realDb, path.join(dataDir, 'zotero.sqlite'))
+
+// --- fake Zotero client (local HTTP server) ----------------------------------
+// One swappable handler answers /connector/ping for every phase below. Started
+// before the plugin import so the runtime reads the DSH_LIBRARY_ZOTERO_* env
+// (ports, launch sink, launch wait) when zotero-client.js loads.
+let fakeZoteroHandler = (req, res) => {
+  res.writeHead(200, { 'content-type': 'application/json' })
+  res.end(JSON.stringify({ ok: true, processorName: 'Word', active: false, styles: 0 }))
+}
+const fakeZotero = createServer((req, res) => fakeZoteroHandler(req, res))
+const fakeZoteroPort = await new Promise((resolve, reject) => {
+  fakeZotero.once('error', reject)
+  fakeZotero.listen(0, '127.0.0.1', () => resolve(fakeZotero.address().port))
+})
+process.env.DSH_LIBRARY_ZOTERO_PORTS = String(fakeZoteroPort)
+process.env.DSH_LIBRARY_ZOTERO_LAUNCH_WAIT_MS = '900'
+const launchSinkPath = path.join(tempRoot, 'zotero-launch-sink.jsonl')
+process.env.DSH_LIBRARY_ZOTERO_LAUNCH_SINK = launchSinkPath
+fs.writeFileSync(launchSinkPath, '')
 
 const { apply, name, version } = await import('../index.js')
 const { chatGuidance } = await import('../src/host/chat.js')
@@ -201,20 +221,26 @@ if (hasRealLibrary) {
   assert.ok(state.value.counts.collections > 0)
   assert.ok(state.value.schemaVersion > 100)
 
-  // A running Zotero holds the rollback-journal lock: state must explain the
-  // lock with its own error code (the UI auto-recovers on poll) and the
-  // library must come back by itself once the lock is released.
+  // Another writer holding the database: Zotero 10 runs WAL, so readers pass
+  // (availability stays true) and only writes run into SQLITE_BUSY after the
+  // 4 s busy timeout — the library comes back by itself once the lock clears.
   {
     const { DatabaseSync } = await import('node:sqlite')
     const locker = new DatabaseSync(path.join(dataDir, 'zotero.sqlite'))
+    locker.exec('PRAGMA busy_timeout = 0')
     locker.exec('BEGIN EXCLUSIVE')
     try {
-      const locked = await call('state', {})
-      assert.equal(locked.ok, true)
-      assert.equal(locked.value.available, false, 'locked library reports unavailable')
-      assert.equal(locked.value.error.code, 'library/db-locked', `locked code (got ${locked.value.error.code}: ${locked.value.error.message})`)
-      const ping = await call('ping', {})
-      assert.equal(ping.value.available, false, 'ping reports availability')
+      const duringLock = await call('state', {})
+      assert.equal(duringLock.ok, true)
+      assert.equal(duringLock.value.available, true, 'WAL: reads pass while another writer holds the db')
+      const busyWrite = await call('create', {
+        itemType: 'document',
+        fields: { title: 'written while another writer holds the db' },
+        creators: [],
+        tags: [],
+      })
+      assert.equal(busyWrite.ok, false, JSON.stringify(busyWrite))
+      assert.match(busyWrite.error.message, /database is locked|busy/i, `write reports the busy error (got ${busyWrite.error.code}: ${busyWrite.error.message})`)
     } finally {
       locker.exec('ROLLBACK')
       locker.close()
@@ -910,6 +936,119 @@ if (hasRealLibrary) {
   assert.equal(backToZotero.value.source, 'override')
 }
 
+// --- Zotero 客户端同步（zotero 模式 = 唤起 + 置前，用户点同步） ---------------
+// 上面的假 Zotero 客户端按阶段重编程；启动/置前都记进 sink，绝不 spawn 真
+// zotero.exe、不跑 PowerShell。GET /connector/ping 回 "Zotero is running" 文本
+// = 真 Zotero，JSON 且带 processorName = 自家 office 服务（必须被探测跳过）。
+const launchSinkLines = () => fs.readFileSync(launchSinkPath, 'utf8').trim().split('\n').filter(line => line !== '')
+const launchSinkCount = (kind) => launchSinkLines().filter(line => line.includes(`"${kind}"`)).length
+const officePing = (req, res) => {
+  res.writeHead(200, { 'content-type': 'application/json' })
+  res.end(JSON.stringify({ ok: true, processorName: 'Word', active: false, styles: 0 }))
+}
+const zoteroPing = (req, res) => {
+  // Zotero stamps every connector response with X-Zotero-Version; GET answers
+  // the plain text "Zotero is running", POST returns connector prefs.
+  const isGet = req.method === 'GET'
+  res.writeHead(200, { 'content-type': isGet ? 'text/html' : 'application/json', 'x-zotero-version': '7.0.10-smoke' })
+  if (isGet) {
+    res.end('Zotero is running')
+    return
+  }
+  res.end(JSON.stringify({ prefs: {} }))
+}
+
+// ① 混淆防护：只有 office 形状的 ping 应答 → 探测跳过；手动同步启动 Zotero
+//    （sink 记 launch + focus），等待期处理器切成真 Zotero → launched。
+fakeZoteroHandler = officePing
+setTimeout(() => { fakeZoteroHandler = zoteroPing }, 300)
+const launched = await call('zotero-sync-run', {})
+assert.equal(launched.ok, true, JSON.stringify(launched))
+assert.equal(launched.value.kind, 'launched', `office-shaped ping is skipped, launch-wait finds Zotero: ${launched.value.kind}`)
+assert.equal(launched.value.version, '7.0.10-smoke', 'version comes off the X-Zotero-Version header')
+assert.ok(launched.value.message.includes('同步'), 'the hand-off message tells the user what to click')
+assert.equal(launchSinkCount('launch-zotero'), 1, 'exactly one launch recorded')
+assert.equal(launchSinkCount('focus-zotero'), 1, 'the window focus is requested once')
+
+// ② 已在运行：直接置前，不再启动（多一次 focus，无 launch）。
+const focused = await call('zotero-sync-run', {})
+assert.equal(focused.value.kind, 'focused', JSON.stringify(focused))
+assert.equal(focused.value.port, fakeZoteroPort)
+assert.equal(focused.value.version, '7.0.10-smoke')
+assert.equal(launchSinkCount('launch-zotero'), 1, 'no extra launch when Zotero is already running')
+assert.equal(launchSinkCount('focus-zotero'), 2, 'the running client is focused directly')
+
+// ③ status 形状：running/port/version/last。
+const syncState = await call('zotero-sync-status', {})
+assert.equal(syncState.value.running, true)
+assert.equal(syncState.value.port, fakeZoteroPort)
+assert.equal(syncState.value.version, '7.0.10-smoke')
+assert.equal(syncState.value.last.kind, 'focused')
+
+// ④ 找不到 Zotero：启动失败 → not-installed，且不请求置前。
+process.env.DSH_LIBRARY_ZOTERO_LAUNCH_FAIL = '1'
+fakeZoteroHandler = officePing
+const missing = await call('zotero-sync-run', {})
+delete process.env.DSH_LIBRARY_ZOTERO_LAUNCH_FAIL
+assert.equal(missing.value.kind, 'not-installed', JSON.stringify(missing))
+assert.equal(launchSinkCount('launch-zotero'), 2, 'the failed launch is still recorded')
+assert.equal(launchSinkCount('focus-zotero'), 2, 'no focus request without a client')
+
+// ⑤ library_sync 工具在 zotero 模式下走同一条分派链。
+fakeZoteroHandler = zoteroPing
+const syncTool = await toolDefs.get('library_sync').execute({})
+assert.equal(syncTool.kind, 'focused', JSON.stringify(syncTool))
+fakeZoteroHandler = officePing
+
+// --- schema 不匹配 → 更新/一键修复 --------------------------------------------
+// 临时副本的 userdata schema 手工抬到 999：guard 报 schema-too-new（带版本号），
+// 一键修复自检核心表/列通过后以兼容模式接受（settings 持久化，重启仍生效）。
+{
+  const { DatabaseSync } = await import('node:sqlite')
+  const bumpSchema = new DatabaseSync(path.join(dataDir, 'zotero.sqlite'))
+  bumpSchema.exec('PRAGMA busy_timeout = 4000')
+  bumpSchema.exec("UPDATE version SET version = 999 WHERE schema = 'userdata'")
+  bumpSchema.close()
+}
+await call('setup', { mode: 'zotero' }) // 关闭缓存连接，让 guard 重新读到新版本号
+const broken = await call('state', {})
+assert.equal(broken.ok, true)
+assert.equal(broken.value.available, false)
+assert.equal(broken.value.error.code, 'library/schema-too-new', `got ${broken.value.error.code}: ${broken.value.error.message}`)
+assert.equal(broken.value.error.schemaVersion, 999, 'the error carries the actual schema version')
+assert.equal(broken.value.error.supported, 131, 'the error carries the supported ceiling')
+const repaired = await call('schema-repair', {})
+assert.equal(repaired.ok, true, JSON.stringify(repaired))
+assert.equal(repaired.value.available, true, `repair accepts the additive schema: ${JSON.stringify(repaired.value.error ?? {})}`)
+const afterRepair = await call('state', {})
+assert.equal(afterRepair.value.available, true, 'the accepted schema keeps the library usable')
+
+// 自检不过（tags.name 被改名 = 结构性变化）→ 明确拒绝，绝不带病工作。
+{
+  const { DatabaseSync } = await import('node:sqlite')
+  const breakColumn = new DatabaseSync(path.join(dataDir, 'zotero.sqlite'))
+  breakColumn.exec('PRAGMA busy_timeout = 4000')
+  breakColumn.exec('ALTER TABLE tags RENAME COLUMN name TO name2')
+  breakColumn.close()
+}
+await call('setup', { mode: 'zotero' })
+const refused = await call('schema-repair', {})
+assert.equal(refused.ok, false, JSON.stringify(refused))
+assert.equal(refused.error.code, 'library/schema-incompatible')
+assert.ok(refused.error.message.includes('tags'), 'the refusal names the offending table')
+// 列恢复后修复再次成功（acceptedSchema 已在 settings 里）。
+{
+  const { DatabaseSync } = await import('node:sqlite')
+  const fixColumn = new DatabaseSync(path.join(dataDir, 'zotero.sqlite'))
+  fixColumn.exec('PRAGMA busy_timeout = 4000')
+  fixColumn.exec('ALTER TABLE tags RENAME COLUMN name2 TO name')
+  fixColumn.close()
+}
+await call('setup', { mode: 'zotero' })
+const recovered = await call('schema-repair', {})
+assert.equal(recovered.ok, true, JSON.stringify(recovered))
+assert.equal(recovered.value.available, true)
+
 // --- reader translation ------------------------------------------------------
 const translateModels = await call('translate-models', {})
 assert.equal(translateModels.ok, true, JSON.stringify(translateModels))
@@ -956,6 +1095,11 @@ assert.equal(llmCalls[0].reasoningEffort, 'off')
 
 // Every effect must expose a disposer; disposing must not throw.
 for (const dispose of disposers.reverse()) dispose()
+
+// The fake Zotero client shuts down with the rest (fetch keep-alive sockets
+// would otherwise hold the process open).
+fakeZotero.closeAllConnections?.()
+await new Promise(resolve => fakeZotero.close(() => resolve()))
 
 safeRemoveTree(tempRoot)
 console.log('host-smoke: OK')

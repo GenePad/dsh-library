@@ -126,6 +126,23 @@ const stateSettings = {
   mode: 'zotero', zoteroDataDir: '', webdav: { url: '', username: '', hasPassword: false }, autoSync: false,
   updateFeed: '', translate: { thinking: false, auto: false, modelSource: 'follow', model: '' },
 }
+// The schema-mismatch panel test flips this to render the unavailable state;
+// 一键修复 clears it again (the host's repair returns the recovered state).
+let schemaUnavailable = false
+const stateValue = () => schemaUnavailable
+  ? {
+      available: false, needsChoice: false, mode: 'zotero', revision: 1, version: '0.2.0',
+      settings: { ...stateSettings, translate: { ...stateSettings.translate } },
+      sync: { running: false, last: null },
+      error: { code: 'library/schema-too-new', message: 'schema 999 > 131', schemaVersion: 999, supported: 131 },
+    }
+  : {
+      available: true, dataDir: 'C:/Zotero', dbPath: 'C:/Zotero/zotero.sqlite', storageDir: 'C:/Zotero/storage',
+      source: 'default', mode: 'zotero', schemaVersion: 125,
+      counts: { items: 2, attachments: 1, annotations: 1, collections: 1, tags: 1, trash: 0 },
+      settings: { ...stateSettings, translate: { ...stateSettings.translate } },
+      sync: { running: false, last: null }, revision: 1, version: '0.2.0',
+    }
 globalThis.fetch = async (url, options) => {
   if (String(url).includes('api/library/file')) {
     fileRouteHits += 1
@@ -172,13 +189,7 @@ globalThis.fetch = async (url, options) => {
   let value
   switch (body.endpoint) {
     case 'state':
-      value = {
-        available: true, dataDir: 'C:/Zotero', dbPath: 'C:/Zotero/zotero.sqlite', storageDir: 'C:/Zotero/storage',
-        source: 'default', mode: 'zotero', schemaVersion: 125,
-        counts: { items: 2, attachments: 1, annotations: 1, collections: 1, tags: 1, trash: 0 },
-        settings: { ...stateSettings, translate: { ...stateSettings.translate } },
-        sync: { running: false, last: null }, revision: 1, version: '0.2.0',
-      }
+      value = stateValue()
       break
     case 'collections':
       value = { collections: [collection], unfiled: 0, trash: 0, tags: [{ name: 'AAV', count: 2 }] }
@@ -254,6 +265,24 @@ globalThis.fetch = async (url, options) => {
       break
     case 'ping':
       value = { revision: 1 }
+      break
+    case 'zotero-sync-run':
+      // zotero 模式下点「同步」= 唤起 Zotero 并置前，请用户在它里面点同步。
+      value = { kind: 'focused', port: 23119, version: '10.0.8', message: '已切到 Zotero：点它工具栏的「同步」图标（⟳）完成同步' }
+      break
+    case 'zotero-sync-status':
+      value = { running: true, port: 23119, version: '10.0.8', last: null }
+      break
+    case 'schema-repair':
+      // 一键修复：宿主自检通过，恢复可用状态。
+      schemaUnavailable = false
+      value = stateValue()
+      break
+    case 'update-check':
+      value = { available: false, current: '0.5.0', feed: true }
+      break
+    case 'update-apply':
+      value = { applied: false }
       break
     case 'translate-models':
       value = {
@@ -1382,7 +1411,8 @@ await act(async () => {
 })
 assert.ok(!container.querySelector('.lib-pdf-root'), 'closing the tab restores the list')
 
-// Toast = 可复制错误：无 WebDAV 时点同步弹出配置提示，正文可选中、一键复制。
+// Toast = 可复制错误：zotero 模式点同步 = 唤起 Zotero 并请用户在它里面点同步，
+// 正文可选中、一键复制。
 const syncBtn = [...container.querySelectorAll('button')].find(node => node.textContent.includes('同步'))
 assert.ok(syncBtn, 'sync button rendered')
 await act(async () => {
@@ -1390,7 +1420,7 @@ await act(async () => {
   await tick()
 })
 const toastText = container.querySelector('.lib-toast .lib-toast-text')
-assert.ok(toastText && toastText.textContent.includes('WebDAV'), 'sync without WebDAV shows the config notice')
+assert.ok(toastText && toastText.textContent.includes('Zotero'), 'zotero-mode sync hands off to the Zotero client via toast')
 const toastCopy = container.querySelector('.lib-toast .lib-toast-copy')
 assert.ok(toastCopy, 'the toast offers a copy button')
 await act(async () => {
@@ -1420,8 +1450,49 @@ assert.equal(mounted.get('active'), null, 'clicking the active entry returns to 
 
 root.unmount()
 
+// Schema 更新面板：state 报 schema-too-new 时渲染「检查并更新插件 / 一键修复」，
+// 一键修复成功后面板回到正常文库视图。
+schemaUnavailable = true
+const schemaRoot = ReactDOMClient.createRoot(container)
+await act(async () => {
+  schemaRoot.render(React.createElement(Page, {
+    ...(injectFns.get('main:library')?.() ?? {}),
+    layout,
+    openNativeSession: id => nativeOpens.push(id),
+    retainSession: (sessionId, signal) => ({ sessionId, release() {} }),
+    SessionProvider: (props) => React.createElement('div', null, props.children),
+    renderSlot: (key) => React.createElement('div', { 'data-slot': key }, 'native-conversation'),
+  }))
+  await tick()
+  await tick()
+})
+assert.ok(container.textContent.includes('Zotero 数据库结构更新'), 'schema mismatch panel renders')
+assert.ok(container.textContent.includes('schema 999'), 'the panel names the actual schema version')
+const repairButtons = [...container.querySelectorAll('button')]
+assert.ok(repairButtons.some(node => node.textContent.includes('检查并更新插件')), 'update-plugin button renders')
+assert.ok(repairButtons.some(node => node.textContent.includes('一键修复')), 'repair button renders')
+await act(async () => {
+  const updateButton = [...container.querySelectorAll('button')].find(node => node.textContent.includes('检查并更新插件'))
+  updateButton.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  await tick()
+  await tick()
+})
+assert.ok(calls.includes('update-check'), 'update flow reaches the plugin updater')
+assert.ok(container.textContent.includes('还没有适配新 schema 的发布'), 'no-release message tells the user about 一键修复')
+await act(async () => {
+  const repair = [...container.querySelectorAll('button')].find(node => node.textContent.includes('一键修复'))
+  repair.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  await tick()
+  await tick()
+  await tick()
+})
+assert.ok(container.textContent.includes('我的文库'), 'repair success restores the library view')
+schemaRoot.unmount()
+
 // The 文库 settings page (rendered inside dsh's native settings modal) mounts
 // standalone: tabbed rows over the mock channel, no crash, save flow wired.
+// 先以 schema-too-new 状态进页：数据来源页出修复面板，一键修复后面板消失。
+schemaUnavailable = true
 const SettingsSection = mounted.get('settings.section')
 assert.ok(SettingsSection, 'settings section component registered')
 const settingsRoot = ReactDOMClient.createRoot(container)
@@ -1433,6 +1504,18 @@ await act(async () => {
 })
 assert.ok(container.textContent.includes('数据来源'), 'settings tabs render')
 assert.ok(container.textContent.includes('Zotero 数据目录'), 'source rows render')
+assert.ok(container.textContent.includes('Zotero 数据库结构更新'), 'settings source tab renders the schema repair panel')
+assert.ok(container.textContent.includes('schema 999'), 'the settings panel names the actual schema version')
+await act(async () => {
+  const repair = [...container.querySelectorAll('button')].find(node => node.textContent.includes('一键修复'))
+  repair.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  await tick()
+  await tick()
+  await tick()
+})
+assert.ok(calls.includes('schema-repair'), 'settings repair button reaches the host')
+assert.ok(container.textContent.includes('修复完成'), 'repair success message shows in the settings footer')
+assert.ok(!container.textContent.includes('Zotero 数据库结构更新'), 'the settings panel disappears after repair')
 assert.ok(calls.includes('state'), 'settings page fetched the library state')
 await act(async () => {
   const pdfTab = [...container.querySelectorAll('button')].find(node => node.textContent.includes('PDF 与导出'))
@@ -1449,6 +1532,16 @@ assert.ok(container.textContent.includes('翻译时开启思考'), 'translate th
 assert.ok(container.textContent.includes('划词后自动翻译'), 'auto-translate switch row renders')
 assert.ok(container.textContent.includes('跟随 dsh 当前模型'), 'model source segmented control renders')
 assert.ok(calls.includes('translate-models'), 'model catalog fetched for the settings page')
+await act(async () => {
+  const syncTab = [...container.querySelectorAll('button')].find(node => node.textContent.trim() === '同步')
+  syncTab.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  await tick()
+})
+assert.ok(container.textContent.includes('Zotero 客户端同步'), 'zotero client sync card renders in zotero mode')
+assert.ok(container.textContent.includes('上次唤起'), 'last hand-off row renders')
+assert.ok(container.textContent.includes('由 Zotero 客户端负责'), 'webdav rows are marked as zotero-owned in zotero mode')
+assert.ok(!container.textContent.includes('debug-bridge'), 'no third-party plugin guidance is shown')
+assert.ok(calls.includes('zotero-sync-status'), 'sync status fetched for the settings page')
 await act(async () => {
   const save = [...container.querySelectorAll('button')].find(node => node.textContent.includes('保存'))
   save.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))

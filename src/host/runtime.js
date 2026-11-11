@@ -1,7 +1,7 @@
 // Runtime: database lifecycle, storage watcher, import queue, sync, updates.
 import fs from 'node:fs'
 import path from 'node:path'
-import { ZoteroDb } from './db.js'
+import { ZoteroDb, inspectCoreShape, readSchemaVersion } from './db.js'
 import { locateZotero } from './locate.js'
 import { dataDir, loadSettings, loadState, publicSettings, resolveUpdateFeed, saveSettings, saveState } from './settings.js'
 import { attachmentTarget, readAnnotations, readCollections, readItem, readItems, readStats, readTags } from './read.js'
@@ -18,6 +18,7 @@ import { createStandaloneLibrary } from './standalone.js'
 import { ensureSession, openSession, readPage, sendMessage, stopTurn, workspaceDir } from './chat.js'
 import { createTranslator } from './translate.js'
 import { createOfficeService } from './office/index.js'
+import { createZoteroClient } from './zotero-client.js'
 import { safeFileName, safeUnlink } from './util.js'
 
 /** The library runtime shared by the API channel and tools. */
@@ -32,6 +33,8 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
   let importChain = Promise.resolve()
   let syncTask
   let syncResult
+  let zoteroSyncTask
+  let zoteroSyncResult
   let autoSyncTimer
 
   const bump = () => {
@@ -78,6 +81,7 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
     closeDb()
     if (mode === 'standalone') createStandaloneLibrary(path.join(home, 'data'), logger)
     startWatcher()
+    restartAutoSyncTimer()
     bump()
     return stateSnapshot()
   }
@@ -118,7 +122,7 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
     if (!fs.existsSync(where.dbPath)) {
       throw Object.assign(new Error(`zotero.sqlite is missing under ${where.dataDir}`), { code: 'library/no-library' })
     }
-    const instance = new ZoteroDb({ dbPath: where.dbPath, logger })
+    const instance = new ZoteroDb({ dbPath: where.dbPath, logger, acceptedSchema: getSettings().acceptedSchema })
     instance.open()
     // Expose storageDir to read helpers through the instance.
     instance.storageDir = where.storageDir
@@ -174,13 +178,58 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
     })
   }
 
+  // Auto sync every 30 minutes (standalone only): attachment files over WebDAV.
+  // Zotero mode has no background sync — launching/focusing the user's Zotero
+  // on a timer would be obnoxious, and only the user can click its sync button.
+  function restartAutoSyncTimer() {
+    if (autoSyncTimer !== undefined) {
+      clearInterval(autoSyncTimer)
+      autoSyncTimer = undefined
+    }
+    if (!getSettings().autoSync) return
+    autoSyncTimer = setInterval(() => {
+      const current = getSettings()
+      if (current.mode !== 'zotero' && current.webdav.url !== '') {
+        void runSync().catch(error => logger.warn?.(`library: auto sync failed: ${error?.message ?? error}`))
+      }
+    }, 30 * 60_000)
+    autoSyncTimer.unref?.()
+  }
+
   function refreshSettings(patch) {
     settings = saveSettings(patch)
     located = undefined
     closeDb()
     startWatcher()
+    restartAutoSyncTimer()
     bump()
     return publicSettings()
+  }
+
+  /**
+   * 一键修复: the user explicitly lets the plugin keep working against a
+   * userdata schema newer than MAX_SUPPORTED_SCHEMA. Zotero's schema bumps
+   * have historically been additive (new tables + nullable columns — 130→131
+   * was exactly that) and every INSERT goes through insertRow()'s column
+   * filtering, so after a core-shape sanity check the plugin simply accepts
+   * the version (persisted in settings). A schema that renamed or dropped
+   * core tables/columns is refused outright — this function never mutates
+   * the library, compatibility mode is read/write-as-before or nothing.
+   */
+  function repairSchema() {
+    const where = paths()
+    const problems = inspectCoreShape(where.dbPath)
+    if (problems.length > 0) {
+      throw Object.assign(new Error(`数据库结构与插件差异过大，无法一键修复：${problems.join('；')}。请等待插件适配新版本 Zotero。`), { code: 'library/schema-incompatible' })
+    }
+    const schemaVersion = readSchemaVersion(where.dbPath)
+    settings = saveSettings({ acceptedSchema: schemaVersion })
+    located = undefined
+    closeDb()
+    startWatcher()
+    bump()
+    logger.info?.(`library: schema repair accepted userdata schema ${schemaVersion}`)
+    return stateSnapshot()
   }
 
   /**
@@ -196,7 +245,9 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
         message: 'Zotero 正在运行并锁定了数据库（zotero.sqlite）。退出 Zotero 后文库会自动恢复，无需重启 dsh。',
       }
     }
-    return { code: error?.code ?? 'library/error', message: String(error?.message ?? error) }
+    // Spread first so extra fields the UI needs (schemaVersion / supported on
+    // the schema-too-new error) survive into stateSnapshot.error.
+    return { ...error, code: error?.code ?? 'library/error', message: String(error?.message ?? error) }
   }
 
   function stateSnapshot() {
@@ -311,7 +362,30 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
     return target
   }
 
+  // The Zotero client driver (zotero mode): probe 23119+, launch on demand and
+  // raise the Zotero window so the user runs the sync in Zotero itself.
+  const zoteroClient = createZoteroClient({ logger, getSettings })
+
+  /** Zotero client hand-off (zotero mode): launch + focus, user clicks sync. */
+  function zoteroSync() {
+    if (zoteroSyncTask !== undefined) return zoteroSyncTask
+    zoteroSyncTask = (async () => {
+      try {
+        const result = await zoteroClient.sync()
+        zoteroSyncResult = result
+        logger.info?.(`library: zotero sync hand-off ${result.kind}${result.message ? `: ${result.message}` : ''}`)
+        return zoteroSyncResult
+      } finally {
+        zoteroSyncTask = undefined
+      }
+    })()
+    return zoteroSyncTask
+  }
+
   async function runSync() {
+    // Zotero mode delegates to the Zotero client (metadata + files): our own
+    // WebDAV storage sync would race the client writing the same store.
+    if (getSettings().mode === 'zotero') return zoteroSync()
     if (syncTask !== undefined) return syncTask
     const settingsNow = getSettings()
     if (settingsNow.webdav.url === '') throw Object.assign(new Error('WebDAV is not configured'), { code: 'library/webdav-missing' })
@@ -664,14 +738,18 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
       return removed
     },
     runSync,
+    zoteroSync,
+    /** Client + bridge reachability for the settings page (async: probes ports). */
+    zoteroStatus: () => zoteroClient.status(),
     verifySync: async () => {
       const settingsNow = getSettings()
       if (settingsNow.webdav.url === '') throw Object.assign(new Error('WebDAV is not configured'), { code: 'library/webdav-missing' })
       return await new WebDavClient(settingsNow.webdav).verify()
     },
-    syncStatus: () => ({ running: syncTask !== undefined, last: syncResult }),
+    syncStatus: () => ({ running: syncTask !== undefined, last: syncResult, zotero: zoteroSyncResult }),
     refreshSettings,
     setupLibrary,
+    repairSchema,
     /**
      * Update the dock context (open article / reader selection) without a
      * chat-send. The guidance section reads this on every model step, so the
@@ -730,11 +808,9 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
   runtime.office = createOfficeService({ runtime, logger, packageDir, version: config.version })
 
   startWatcher()
-  if (settings.autoSync && settings.webdav.url !== '') {
-    autoSyncTimer = setInterval(() => {
-      void runSync().catch(error => logger.warn?.(`library: auto sync failed: ${error?.message ?? error}`))
-    }, 30 * 60_000)
-    autoSyncTimer.unref?.()
+  restartAutoSyncTimer()
+  if (getSettings().autoSync) {
+    // Startup catch-up (standalone): same rules as the timer.
     setTimeout(() => {
       void runSync().catch(() => {})
     }, 20_000).unref?.()

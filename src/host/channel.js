@@ -197,6 +197,10 @@ export function createChannel(runtime) {
           return ok(await runtime.runSync())
         case 'sync-status':
           return ok(runtime.syncStatus())
+        case 'zotero-sync-run':
+          return ok(await runtime.zoteroSync())
+        case 'zotero-sync-status':
+          return ok(await runtime.zoteroStatus())
         case 'chat-open':
           return ok(await runtime.chat.open({
             fresh: body.fresh === true,
@@ -216,6 +220,9 @@ export function createChannel(runtime) {
           return ok(await runtime.chat.stop())
         case 'setup':
           return ok(runtime.setupLibrary(body.mode === 'standalone' ? 'standalone' : 'zotero'))
+        case 'schema-repair':
+          // 一键修复: core-shape check → accept the newer userdata schema.
+          return ok(runtime.repairSchema())
         case 'cite-json':
           return ok(withCite(runtime, body, 'csl-json'))
         case 'cite-bibtex':

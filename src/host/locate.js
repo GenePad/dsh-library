@@ -54,7 +54,7 @@ function profileDirs() {
 }
 
 /** Extract a quoted pref value from a Firefox prefs.js line. */
-function prefValue(text, name) {
+export function prefValue(text, name) {
   const match = new RegExp(`user_pref\\("${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}",\\s*"((?:[^"\\\\]|\\\\.)*)"\\)`).exec(text)
   if (!match) return undefined
   try {

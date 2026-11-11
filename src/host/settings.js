@@ -53,6 +53,12 @@ export function loadSettings() {
     // Where double-click / "open" puts a PDF: the in-app pdf.js viewer tab or
     // the OS reader. (Legacy settings may hold 'dsh' — treated as builtin.)
     pdfOpen: ['native', 'builtin'].includes(raw.pdfOpen) ? raw.pdfOpen : 'builtin',
+    // Zotero client hand-off (zotero mode): exe path override for a
+    // non-standard install (the zotero:// protocol handler is tried first).
+    zoteroExePath: typeof raw.zoteroExePath === 'string' ? raw.zoteroExePath : '',
+    // 一键修复: a userdata schema newer than MAX_SUPPORTED_SCHEMA that the user
+    // explicitly accepted after the core-shape check; relaxes the version guard.
+    acceptedSchema: Number.isFinite(raw.acceptedSchema) && raw.acceptedSchema > 0 ? raw.acceptedSchema : 0,
     updateFeed: typeof raw.updateFeed === 'string' ? raw.updateFeed : '',
     // Reader「译」button: one-shot translation. `modelSource` 'follow' uses
     // dsh's current model; 'fixed' pins settings.translate.model. `auto`
@@ -90,6 +96,8 @@ export function saveSettings(patch = {}) {
       : {}),
     ...(patch.autoSync === undefined ? {} : { autoSync: patch.autoSync === true }),
     ...(['native', 'builtin'].includes(patch.pdfOpen) ? { pdfOpen: patch.pdfOpen } : {}),
+    ...(typeof patch.zoteroExePath === 'string' ? { zoteroExePath: patch.zoteroExePath.trim() } : {}),
+    ...(Number.isFinite(patch.acceptedSchema) && patch.acceptedSchema > 0 ? { acceptedSchema: patch.acceptedSchema } : {}),
     ...(typeof patch.updateFeed === 'string' ? { updateFeed: patch.updateFeed.trim() } : {}),
     ...(patch.translate && typeof patch.translate === 'object' ? { translate: normalizeTranslate(patch.translate) } : {}),
   }

@@ -178,6 +178,9 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
   const [collectionDialog, setCollectionDialog] = React.useState({ open: false, mode: 'create', target: undefined })
   const [syncing, setSyncing] = React.useState(false)
   const [settingUp, setSettingUp] = React.useState('')
+  // 「schema 比插件新」面板：更新插件 / 一键修复按钮的在途状态与结果消息。
+  const [repairing, setRepairing] = React.useState('')
+  const [schemaMessage, setSchemaMessage] = React.useState('')
   const [detailsOpen, setDetailsOpen] = React.useState(restoreDetailsOpen)
   // Visible list columns (Zotero's column picker): owned here so the items
   // request can carry the matching field names to the host.
@@ -253,6 +256,26 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
   }, [])
   React.useEffect(() => () => clearTimeout(toastTimer.current), [])
 
+  // 错误统一走这里：schema 不匹配可能从任何操作冒出来（在轮询把 available
+  // 翻转之前用户点了什么），与其在几十个 catch 里各塞修复按钮，不如让错误
+  // 把界面直接带到带按钮的修复面板，toast 只负责把原因说清楚。
+  const showError = React.useCallback((error) => {
+    const code = String(error?.code ?? '')
+    if (code === 'library/schema-too-new' || code === 'library/schema-incompatible') {
+      api.call('state', {}).then((state) => {
+        setSnapshot(state)
+      }).catch(() => {
+        setSnapshot(previous => ({
+          ...(previous ?? {}),
+          available: false,
+          needsChoice: false,
+          error: { code, message: error?.message ?? String(error) },
+        }))
+      })
+    }
+    notify(error?.message ?? String(error))
+  }, [notify])
+
   // Collapse the host sidebar's conversation list while the library is open;
   // restore it exactly once, when this page unmounts.
   React.useEffect(() => {
@@ -314,7 +337,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
       setDetail(value)
     } catch (error) {
       setDetail(undefined)
-      notify(error?.message ?? String(error))
+      showError(error)
     } finally {
       setDetailLoading(false)
     }
@@ -324,7 +347,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
     try {
       return await loadItems(options)
     } catch (error) {
-      notify(error?.message ?? String(error))
+      showError(error)
       return undefined
     }
   }, [loadItems, notify])
@@ -334,7 +357,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
       await Promise.all([loadCollections(), loadItems()])
       if (activeKeyRef.current) await loadDetail(activeKeyRef.current)
     } catch (error) {
-      notify(error?.message ?? String(error))
+      showError(error)
     }
   }, [loadCollections, loadItems, loadDetail, notify])
 
@@ -479,7 +502,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
       try {
         await api.call('open', { key })
       } catch (error) {
-        notify(error?.message ?? String(error))
+        showError(error)
       }
       return
     }
@@ -531,7 +554,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
         }
       })
     } catch (error) {
-      notify(error?.message ?? String(error))
+      showError(error)
     }
   }
 
@@ -565,7 +588,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
     try {
       await api.call('open', { key, reveal: true })
     } catch (error) {
-      notify(error?.message ?? String(error))
+      showError(error)
     }
   }
 
@@ -574,7 +597,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
       await api.call('update', { key, patch })
       await Promise.all([loadDetail(key), loadItems(), loadCollections()])
     } catch (error) {
-      notify(error?.message ?? String(error))
+      showError(error)
     }
   }
 
@@ -594,7 +617,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
       setActiveKey(created.key)
       notify(`已创建${itemTypeLabel(itemType)}，在右侧信息栏中编辑`)
     } catch (error) {
-      notify(error?.message ?? String(error))
+      showError(error)
     }
   }
 
@@ -628,7 +651,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
       setActiveKey(createdKeys[0])
       notify(`已通过标识符添加 ${createdKeys.length} 条文献`)
     } catch (error) {
-      notify(error?.message ?? String(error))
+      showError(error)
     } finally {
       setIdentifierBusy(false)
     }
@@ -639,7 +662,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
     try {
       await api.call('open-url', { url })
     } catch (error) {
-      notify(error?.message ?? String(error))
+      showError(error)
     }
   }
   const addAttachmentFile = async (file) => {
@@ -652,7 +675,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
       notify('附件已添加')
       await refreshAll()
     } catch (error) {
-      notify(error?.message ?? String(error))
+      showError(error)
     }
   }
   const addAttachmentUrl = async (url) => {
@@ -667,7 +690,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
       await api.call('trash', { keys: [key] })
       await refreshAll()
     } catch (error) {
-      notify(error?.message ?? String(error))
+      showError(error)
     }
   }
   const updateNote = async (key, text) => {
@@ -684,7 +707,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
       setActiveKey('')
       await refreshAll()
     } catch (error) {
-      notify(error?.message ?? String(error))
+      showError(error)
     }
   }
 
@@ -698,7 +721,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
       setActiveKey('')
       await refreshAll()
     } catch (error) {
-      notify(error?.message ?? String(error))
+      showError(error)
     }
   }
 
@@ -784,7 +807,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
                 notify('已添加网页链接')
                 await refreshAll()
               } catch (error) {
-                notify(error?.message ?? String(error))
+                showError(error)
               }
             },
           })
@@ -882,7 +905,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
           break
       }
     } catch (error) {
-      notify(error?.message ?? String(error))
+      showError(error)
     }
   }
 
@@ -904,7 +927,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
       notify('附件已添加')
       await refreshAll()
     } catch (error) {
-      notify(error?.message ?? String(error))
+      showError(error)
     }
   }
 
@@ -957,7 +980,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
         notify('已导入，但当前列表未能显示该条目，请刷新查看')
       }
     } catch (error) {
-      notify(error?.message ?? String(error))
+      showError(error)
     }
   }
 
@@ -1084,18 +1107,25 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
   }
 
   const runSync = async () => {
-    if (snapshot?.settings?.webdav?.url === '') {
-      openSettings?.()
-      notify('请先在设置的 WebDAV 页配置服务器')
-      return
-    }
     setSyncing(true)
     try {
+      // Zotero mode: bring the Zotero client up front — the user clicks sync
+      // there; database changes arrive via the revision polling afterwards.
+      if (snapshot?.settings?.mode === 'zotero') {
+        const result = await api.call('zotero-sync-run', {})
+        notify(result?.message ?? '已唤起 Zotero')
+        return
+      }
+      if (snapshot?.settings?.webdav?.url === '') {
+        openSettings?.()
+        notify('请先在设置的 WebDAV 页配置服务器')
+        return
+      }
       const result = await api.call('sync-run', {})
       notify(`同步完成：上传 ${result.uploaded}，下载 ${result.downloaded}，冲突 ${result.conflicts}，失败 ${result.failed}`)
       await refreshAll()
     } catch (error) {
-      notify(error?.message ?? String(error))
+      showError(error)
     } finally {
       setSyncing(false)
     }
@@ -1115,9 +1145,52 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
         notify(state.error?.message ?? '设置失败')
       }
     } catch (error) {
-      notify(error?.message ?? String(error))
+      showError(error)
     } finally {
       setSettingUp('')
+    }
+  }
+
+  // 「Zotero 数据库结构更新」面板的两个自助按钮。更新走插件自己的
+  // update-check/apply（装好后需重启 dsh）；一键修复 = 宿主自检核心表结构后
+  // 以兼容模式接受新 schema（结构差异过大时宿主会拒绝并给出原因）。
+  const repairPlugin = async () => {
+    setRepairing('update')
+    setSchemaMessage('')
+    try {
+      const status = await api.call('update-check', {})
+      if (!status.available) {
+        setSchemaMessage(status.feed === false
+          ? '未配置更新源，无法在线更新；可用「一键修复」以兼容模式继续使用文库。'
+          : `已是最新版本（${status.current}），还没有适配新 schema 的发布；可用「一键修复」以兼容模式继续使用文库。`)
+        return
+      }
+      const result = await api.call('update-apply', {})
+      setSchemaMessage(result.applied
+        ? `已安装 ${result.lastApplied?.version}，重启 dsh 后生效；若重启后文库仍不可用，再用「一键修复」。`
+        : '没有可安装的更新；可用「一键修复」以兼容模式继续使用文库。')
+    } catch (error) {
+      setSchemaMessage(error?.message ?? String(error))
+    } finally {
+      setRepairing('')
+    }
+  }
+
+  const runRepair = async () => {
+    setRepairing('repair')
+    setSchemaMessage('')
+    try {
+      const state = await api.call('schema-repair', {})
+      if (state.available) {
+        setSnapshot(state)
+        notify('修复完成：以兼容模式继续使用本文库')
+      } else {
+        setSchemaMessage(state?.error?.message ?? '修复失败')
+      }
+    } catch (error) {
+      setSchemaMessage(error?.message ?? String(error))
+    } finally {
+      setRepairing('')
     }
   }
 
@@ -1188,6 +1261,26 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
                 <span className="lib-choice-check">打开设置</span>
               </button>
             </div>
+          </div>
+        ) : snapshot?.error?.code === 'library/schema-too-new' ? (
+          <div className="lib-choice">
+            <div className="lib-choice-title">Zotero 数据库结构更新</div>
+            <div className="lib-choice-sub">
+              本机 Zotero 的数据库结构（schema {snapshot?.error?.schemaVersion ?? '?'}）比当前插件支持的最高版本
+              （{snapshot?.error?.supported ?? '?'}）新。建议先「检查并更新插件」；
+              若还没有适配版本，可用「一键修复」：插件会自检核心表结构，通过后以兼容模式继续读写本文库。
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 14 }}>
+              <Button variant="primary" size="sm" disabled={repairing !== ''} onClick={() => void repairPlugin()}>
+                {repairing === 'update' ? '检查中…' : '检查并更新插件'}
+              </Button>
+              <Button variant="outline" size="sm" disabled={repairing !== ''} onClick={() => void runRepair()}>
+                {repairing === 'repair' ? '修复中…' : '一键修复'}
+              </Button>
+            </div>
+            {schemaMessage ? (
+              <div className="lib-form-hint" style={{ maxWidth: 560, margin: '12px auto 0', lineHeight: 1.7 }}>{schemaMessage}</div>
+            ) : null}
           </div>
         ) : (
           <div className="lib-empty" style={{ marginTop: 70 }}>
@@ -1262,8 +1355,8 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
             </div>
           ) : null}
         </span>
-        <Button variant="toolbar" size="sm" icon={<SyncIcon size={14} />} disabled={syncing} onClick={runSync} title="与 WebDAV 同步附件文件">
-          {syncing ? '同步中…' : '同步'}
+        <Button variant="toolbar" size="sm" icon={<SyncIcon size={14} />} disabled={syncing} onClick={runSync} title={snapshot?.settings?.mode === 'zotero' ? '唤起 Zotero，在它里面点同步' : '与 WebDAV 同步附件文件'}>
+          {syncing ? '唤起中…' : '同步'}
         </Button>
         <Button variant="toolbar" size="sm" title="设置" icon={<GearIcon size={14} />} onClick={() => openSettings?.()} />
         <div className="lib-search">
@@ -1349,10 +1442,10 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
                       bytes={activeReaderTab.bytes}
                       title={activeReaderTab.title}
                       attachmentKey={activeReaderTab.key}
-                      onNotify={notify}
+                      onNotify={showError}
                       translateAuto={snapshot?.settings?.translate?.auto === true}
                       onOpenNative={() => {
-                        void api.call('open', { key: activeReaderTab.key }).catch(error => notify(error?.message ?? String(error)))
+                        void api.call('open', { key: activeReaderTab.key }).catch(error => showError(error))
                       }}
                     />
                   </div>
@@ -1371,7 +1464,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
                     activeKey={activeKey}
                     onSelect={selectItem}
                     onOpen={openItem}
-                    onNotify={notify}
+                    onNotify={showError}
                     onSort={(next) => {
                       if (next === sort) setDesc(value => !value)
                       else {
@@ -1421,7 +1514,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
                   onAddUrl={addAttachmentUrl}
                   onTrashAttachment={trashAttachment}
                   onUpdateNote={updateNote}
-                  onNotify={notify}
+                  onNotify={showError}
                   onRefetch={() => { if (detail) void runRecognition('item', [detail.key]) }}
                 />
               </div>
@@ -1445,6 +1538,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
         mode={collectionDialog.mode}
         target={collectionDialog.target}
         collections={collectionFlat}
+        onError={showError}
         onClose={() => setCollectionDialog({ open: false, mode: 'create', target: undefined })}
         onDone={async () => {
           setCollectionDialog({ open: false, mode: 'create', target: undefined })

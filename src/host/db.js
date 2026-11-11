@@ -2,7 +2,10 @@
 import { DatabaseSync } from 'node:sqlite'
 
 /** Known userdata schema versions this plugin writes. Newer schemas are refused. */
-export const MAX_SUPPORTED_SCHEMA = 130
+// 131 (Zotero 10) is additive over 130 — proxy/sync-queue tables and nullable
+// columns (itemAttachments.lastRead); all INSERTs go through insertRow(), which
+// filters to the columns each database actually has.
+export const MAX_SUPPORTED_SCHEMA = 131
 
 /** A zotero.sqlite connection with cached schema metadata. */
 export class ZoteroDb {
@@ -10,10 +13,13 @@ export class ZoteroDb {
    * @param {object} options
    * @param {string} options.dbPath - absolute path of zotero.sqlite.
    * @param {object} [options.logger]
+   * @param {number} [options.acceptedSchema] - a newer userdata schema the user
+   *   explicitly accepted via 一键修复 (settings); relaxes the version guard.
    */
-  constructor({ dbPath, logger = console }) {
+  constructor({ dbPath, logger = console, acceptedSchema = 0 }) {
     this.dbPath = dbPath
     this.logger = logger
+    this.acceptedSchema = Number(acceptedSchema) || 0
     this.db = undefined
     this.readOnly = false
     this.meta = undefined
@@ -109,8 +115,15 @@ export class ZoteroDb {
     if (this.meta) return this.meta
     const versionRow = this.get("SELECT version FROM version WHERE schema = 'userdata'")
     const schemaVersion = Number(versionRow?.version ?? 0)
-    if (schemaVersion > MAX_SUPPORTED_SCHEMA) {
-      throw new Error(`library: this zotero.sqlite uses userdata schema ${schemaVersion}; dsh-zot-library supports up to ${MAX_SUPPORTED_SCHEMA}. Update dsh-zot-library.`)
+    const maxSupported = Math.max(MAX_SUPPORTED_SCHEMA, this.acceptedSchema)
+    if (schemaVersion > maxSupported) {
+      // 这条 message 会原样出现在各处 toast、Word 引文对话框与 agent 工具输出
+      // 里，所以直接写成可操作的中文；文库主页与设置页按 code 渲染专属面板。
+      throw Object.assign(new Error(`本机 Zotero 数据库结构（schema ${schemaVersion}）比插件支持的最高版本（${maxSupported}）新：请更新插件，或在文库面板使用「一键修复」。`), {
+        code: 'library/schema-too-new',
+        schemaVersion,
+        supported: maxSupported,
+      })
     }
     const library = this.get("SELECT libraryID, version, storageVersion FROM libraries WHERE type = 'user' ORDER BY libraryID LIMIT 1")
     const itemTypes = new Map()
@@ -158,5 +171,68 @@ export class ZoteroDb {
     const id = this.schema().itemTypes.get(name)
     if (id === undefined) throw new Error(`library: unknown Zotero item type "${name}"`)
     return id
+  }
+}
+
+// The tables and columns the plugin reads and writes on every install. A newer
+// schema that keeps all of these is, historically, additive (Zotero 130→131 was
+// new tables + nullable columns) and safe to drive blind — INSERTs go through
+// insertRow(), which filters to the columns each database actually has. One
+// renamed/dropped member here means the schema changed under our feet and
+// blind compatibility would corrupt data, so 一键修复 refuses.
+const CORE_SHAPE = [
+  ['items', ['itemID', 'itemTypeID', 'libraryID', 'key', 'version', 'synced', 'dateAdded', 'dateModified']],
+  ['itemData', ['itemID', 'fieldID', 'valueID']],
+  ['itemDataValues', ['valueID', 'value']],
+  ['fieldsCombined', ['fieldID', 'fieldName']],
+  ['itemTypes', ['itemTypeID', 'typeName']],
+  ['creatorTypes', ['creatorTypeID', 'creatorType']],
+  ['creators', ['creatorID', 'firstName', 'lastName', 'fieldMode']],
+  ['itemCreators', ['itemID', 'creatorID', 'creatorTypeID', 'orderIndex']],
+  ['tags', ['tagID', 'name']],
+  ['itemTags', ['itemID', 'tagID', 'type']],
+  ['collections', ['collectionID', 'collectionName', 'libraryID', 'key']],
+  ['collectionItems', ['collectionID', 'itemID', 'orderIndex']],
+  ['itemNotes', ['itemID', 'parentItemID', 'note']],
+  ['itemAttachments', ['itemID', 'parentItemID', 'linkMode', 'contentType', 'path', 'syncState', 'storageModTime', 'storageHash']],
+  ['itemAnnotations', ['itemID', 'parentItemID', 'type', 'position', 'sortIndex', 'isExternal']],
+  ['deletedItems', ['itemID']],
+  ['libraries', ['libraryID', 'type', 'version']],
+]
+
+/**
+ * Sanity-check a zotero.sqlite's core shape without opening it through the
+ * ZoteroDb guard. Returns a list of human-readable problems (empty = fine).
+ */
+export function inspectCoreShape(dbPath) {
+  const db = new DatabaseSync(dbPath, { readOnly: true })
+  try {
+    const problems = []
+    for (const [table, columns] of CORE_SHAPE) {
+      let info
+      try {
+        info = db.prepare(`PRAGMA table_info(${table})`).all()
+      } catch {
+        problems.push(`表 ${table} 不存在`)
+        continue
+      }
+      const names = new Set(info.map(row => row.name))
+      const missing = columns.filter(name => !names.has(name))
+      if (missing.length > 0) problems.push(`表 ${table} 缺少列 ${missing.join('/')}`)
+    }
+    return problems
+  } finally {
+    db.close()
+  }
+}
+
+/** The userdata schema version of a zotero.sqlite (0 when unreadable). */
+export function readSchemaVersion(dbPath) {
+  const db = new DatabaseSync(dbPath, { readOnly: true })
+  try {
+    const row = db.prepare("SELECT version FROM version WHERE schema = 'userdata'").get()
+    return Number(row?.version ?? 0)
+  } finally {
+    db.close()
   }
 }

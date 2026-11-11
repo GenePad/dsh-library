@@ -1,10 +1,11 @@
 // Dialogs for the library page.
 import * as React from 'react'
+import * as api from './api.js'
 import { Button } from './platform.jsx'
 import { CloseIcon } from './icons.jsx'
 
 /** Create or rename a collection. */
-export function CollectionDialog({ open, mode, target, collections, onClose, onDone }) {
+export function CollectionDialog({ open, mode, target, collections, onClose, onDone, onError }) {
   const [name, setName] = React.useState('')
   const [parentID, setParentID] = React.useState('')
   const [busy, setBusy] = React.useState(false)
@@ -31,7 +32,9 @@ export function CollectionDialog({ open, mode, target, collections, onClose, onD
       else await api.call('collection-create', { name: name.trim(), parentID: parentID === '' ? null : Number(parentID) })
       onDone?.()
     } catch (error) {
+      // 本地留一句提示；schema 类错误同时经 onError 让整页切到修复面板。
       setMessage(error?.message ?? String(error))
+      onError?.(error)
     } finally {
       setBusy(false)
     }
