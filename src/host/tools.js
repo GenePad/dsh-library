@@ -72,7 +72,7 @@ function textAttachment(db, paths, key) {
  * @param {object} [deps.logger]
  */
 export function createTools(deps) {
-  const { getDb, paths, getSettings, runSync, wordAi, wordAgent, wordReport, citeStyles, logger = console } = deps
+  const { getDb, paths, getSettings, runSync, zoteroKill, wordAi, wordAgent, wordReport, citeStyles, logger = console } = deps
 
   // ------------------------------------------- opened-Word document tools ---
   // Shared plumbing for library_word_* : resolve the Word process holding the
@@ -344,7 +344,7 @@ export function createTools(deps) {
     },
     {
       name: 'library_add',
-      description: '在文库中新建条目（先 library_lookup 检索确认元数据再入库）。itemType 用 Zotero 类型名（journalArticle、book、preprint、conferencePaper、thesis、report、webpage、document、note…），fields 放 title、abstractNote（摘要——library_lookup 草稿里带有的话必须原样带入，不要省略）、date、DOI、url、publicationTitle、volume、issue、pages、publisher、ISBN、language 等字段。creators 为 [{firstName,lastName,creatorType}]，机构作者用 [{fieldMode:1,lastName}]。返回新条目 key。',
+      description: '在文库中新建条目（先 library_lookup 检索确认元数据再入库）。itemType 用 Zotero 类型名（journalArticle、book、preprint、conferencePaper、thesis、report、webpage、document、note…），fields 放 title、shortTitle（必填：**中文 10~20 字**概括这篇文章的重点——关注点/方法/结论要点，不是标题的中文翻译）、abstractNote（摘要——library_lookup 草稿里带有的话必须原样带入，不要省略；草稿没有且拿不到原文摘要就留空，不要编造）、date、DOI、url、publicationTitle、volume、issue、pages、publisher、ISBN、language 等字段。creators 为 [{firstName,lastName,creatorType}]，机构作者用 [{fieldMode:1,lastName}]。返回新条目 key。',
       parameters: {
         type: 'object',
         properties: {
@@ -475,7 +475,7 @@ export function createTools(deps) {
     },
     {
       name: 'library_update',
-      description: '修改已有条目：设置或清除字段（值为 null 即清除）、整体替换作者/标签、加入或移出分类、更换条目类型。对独立附件（无父条目的 PDF）更换类型不会改写附件本身，而是新建该类型的父条目并返回 parentKey——后续修改请改用 parentKey。每次写入都标记为本地改动，由 Zotero 自身同步上传。',
+      description: '修改已有条目：设置或清除字段（值为 null 即清除）、整体替换作者/标签、加入或移出分类、更换条目类型。更新元数据（题名/作者/年份/期刊/DOI 等）时同步维护两个字段：shortTitle 写**中文 10~20 字**的重点概括（关注点/方法/结论要点，不是标题翻译），abstractNote 保持忠实的原文摘要（缺失时可读全文提炼一段，拿不到就留空，不要编造）。对独立附件（无父条目的 PDF）更换类型不会改写附件本身，而是新建该类型的父条目并返回 parentKey——后续修改请改用 parentKey。每次写入都标记为本地改动，由 Zotero 自身同步上传。',
       parameters: {
         type: 'object',
         properties: {
@@ -607,6 +607,17 @@ export function createTools(deps) {
         if (settings.webdav.url === '') throw new Error('WebDAV is not configured. Ask the user to fill in the server URL, user name and password in the library settings.')
         const client = new WebDavClient(settings.webdav)
         return await syncStorage({ db, storageDir: paths.storageDir, client, logger })
+      },
+    },
+    {
+      name: 'library_zotero_kill',
+      description: '强制结束正在运行的 Zotero 客户端进程（Stop-Process -Force 级别）。仅在文库因 Zotero 独占数据库而断开（library_status 或其他工具报「Zotero 正在运行并独占数据库」）、且用户明确要求（「结束 Zotero」「杀掉 Zotero 进程」）或已同意强制结束时使用；Zotero 中未保存/未同步的内容会丢失，调用前必须先向用户确认。结束后文库会自动重连。',
+      parameters: { type: 'object', properties: {} },
+      output: { schema: JSON_SCHEMA, render: renderJson },
+      async execute() {
+        if (typeof zoteroKill !== 'function') throw new Error('This host build has no Zotero process control')
+        const result = await zoteroKill()
+        return { killed: result.killed, available: result.state?.available === true }
       },
     },
     {

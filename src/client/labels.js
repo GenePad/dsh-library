@@ -229,5 +229,5 @@ export const PANE_LABELS = {
   },
   "dateAdded": "添加日期",
   "dateModified": "修改日期",
-  "shortTitleHint": "自己标记这篇文章需要关注的要点"
+  "shortTitleHint": "这篇文章的重点概括（中文一句话，AI 入库/更新时也会自动填写）"
 }

@@ -201,6 +201,12 @@ export function createChannel(runtime) {
           return ok(await runtime.zoteroSync())
         case 'zotero-sync-status':
           return ok(await runtime.zoteroStatus())
+        case 'db-reconnect':
+          // 断连面板的「立即重新连接」；自动重试由宿主的 5 秒定时器负责。
+          return ok(await runtime.reconnect())
+        case 'zotero-kill':
+          // 断连面板的「结束 Zotero 进程」：互斥死锁的最后手段（前端已确认）。
+          return ok(await runtime.zoteroKill())
         case 'chat-open':
           return ok(await runtime.chat.open({
             fresh: body.fresh === true,

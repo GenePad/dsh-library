@@ -96,7 +96,14 @@ const detail = {
     { field: 'date', value: '2024' },
     { field: 'publicationTitle', value: 'Nature' },
   ],
-  creators: [{ firstName: 'San', lastName: 'Zhang', fieldMode: 0, creatorType: 'author', orderIndex: 0 }],
+  creators: [
+    { firstName: 'San', lastName: 'Zhang', fieldMode: 0, creatorType: 'author', orderIndex: 0 },
+    { firstName: 'Si', lastName: 'Li', fieldMode: 0, creatorType: 'author', orderIndex: 1 },
+    { firstName: 'Wu', lastName: 'Wang', fieldMode: 0, creatorType: 'author', orderIndex: 2 },
+    { firstName: '', lastName: 'Zhao', fieldMode: 1, creatorType: 'author', orderIndex: 3 },
+    { firstName: '', lastName: 'Qian', fieldMode: 1, creatorType: 'author', orderIndex: 4 },
+    { firstName: '', lastName: 'Sun', fieldMode: 1, creatorType: 'author', orderIndex: 5 },
+  ],
   tags: [{ name: 'AAV', type: 0 }],
   collections: [{ collectionID: 1, collectionName: 'Cas-Screen' }],
   attachments: [{
@@ -129,20 +136,36 @@ const stateSettings = {
 // The schema-mismatch panel test flips this to render the unavailable state;
 // 一键修复 clears it again (the host's repair returns the recovered state).
 let schemaUnavailable = false
-const stateValue = () => schemaUnavailable
+// 断连面板用例：宿主为同步握手主动断开数据库（detached），「立即重新连接」
+// 与「同步」分派都走这里；reconnectFixture 控制 db-reconnect 的应答。
+let detachedFixture = false
+let reconnectFixture
+let syncDetaches = false
+const stateValue = () => detachedFixture
   ? {
-      available: false, needsChoice: false, mode: 'zotero', revision: 1, version: '0.2.0',
+      available: false, needsChoice: false, mode: 'zotero', revision: 2, version: '0.5.1',
       settings: { ...stateSettings, translate: { ...stateSettings.translate } },
       sync: { running: false, last: null },
-      error: { code: 'library/schema-too-new', message: 'schema 999 > 131', schemaVersion: 999, supported: 131 },
+      detached: {
+        reason: 'sync', message: '已为同步断开文库数据库连接：请在 Zotero 中完成同步，退出 Zotero 后文库会自动重连。',
+        since: '2026-11-11T00:00:00Z', lastStatus: 'zotero-running', checkedAt: '2026-11-11T00:00:05Z',
+      },
+      error: { code: 'library/db-detached', message: '已为同步断开文库数据库连接' },
     }
-  : {
-      available: true, dataDir: 'C:/Zotero', dbPath: 'C:/Zotero/zotero.sqlite', storageDir: 'C:/Zotero/storage',
-      source: 'default', mode: 'zotero', schemaVersion: 125,
-      counts: { items: 2, attachments: 1, annotations: 1, collections: 1, tags: 1, trash: 0 },
-      settings: { ...stateSettings, translate: { ...stateSettings.translate } },
-      sync: { running: false, last: null }, revision: 1, version: '0.2.0',
-    }
+  : schemaUnavailable
+    ? {
+        available: false, needsChoice: false, mode: 'zotero', revision: 1, version: '0.2.0',
+        settings: { ...stateSettings, translate: { ...stateSettings.translate } },
+        sync: { running: false, last: null },
+        error: { code: 'library/schema-too-new', message: 'schema 999 > 131', schemaVersion: 999, supported: 131 },
+      }
+    : {
+        available: true, dataDir: 'C:/Zotero', dbPath: 'C:/Zotero/zotero.sqlite', storageDir: 'C:/Zotero/storage',
+        source: 'default', mode: 'zotero', schemaVersion: 125,
+        counts: { items: 2, attachments: 1, annotations: 1, collections: 1, tags: 1, trash: 0 },
+        settings: { ...stateSettings, translate: { ...stateSettings.translate } },
+        sync: { running: false, last: null }, revision: 1, version: '0.2.0',
+      }
 globalThis.fetch = async (url, options) => {
   if (String(url).includes('api/library/file')) {
     fileRouteHits += 1
@@ -267,8 +290,24 @@ globalThis.fetch = async (url, options) => {
       value = { revision: 1 }
       break
     case 'zotero-sync-run':
-      // zotero 模式下点「同步」= 唤起 Zotero 并置前，请用户在它里面点同步。
+      // zotero 模式下点「同步」= 唤起 Zotero 并置前，请用户在它里面点同步；
+      // 断库防护用例里分派同时把宿主转入 detached，随后的 state 即报断连。
+      if (syncDetaches) detachedFixture = true
       value = { kind: 'focused', port: 23119, version: '10.0.8', message: '已切到 Zotero：点它工具栏的「同步」图标（⟳）完成同步' }
+      break
+    case 'db-reconnect':
+      // 「立即重新连接」：Zotero 仍在运行时宿主拒绝（探测挡住，不抢锁），
+      // 否则断连解除并返回恢复后的 state（detachedFixture 随之清除）。
+      if (reconnectFixture) {
+        value = reconnectFixture
+        break
+      }
+      detachedFixture = false
+      value = { reconnected: true, state: stateValue() }
+      break
+    case 'zotero-kill':
+      // 「结束 Zotero 进程」：查杀后返回当前 state（Zotero「仍在运行」时仍断连）。
+      value = { killed: 1, state: stateValue() }
       break
     case 'zotero-sync-status':
       value = { running: true, port: 23119, version: '10.0.8', last: null }
@@ -589,6 +628,21 @@ assert.ok(
   'creator row rendered with an editable last-name field',
 )
 assert.ok([...container.querySelectorAll('.lib-creator-row .lib-creator-type')].some(node => node.value === 'author'), 'creator type select rendered')
+// Zotero's creator truncation: 6 creators show the first 5 + 「还有 N 个…」，
+// and ANY add (trailing ＋ or a row's ＋) expands every row immediately.
+assert.equal(container.querySelectorAll('.lib-creator-row').length, 5, 'creator list truncates after five rows')
+assert.ok(container.textContent.includes('还有 1 个…'), 'the truncation row names the hidden count')
+{
+  const addCreator = [...container.querySelectorAll('.lib-more-creators')].find(node => node.textContent.includes('添加创建者'))
+  assert.ok(addCreator, 'the add-creator button renders under the collapsed list')
+  await act(async () => {
+    addCreator.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await tick()
+    await tick()
+  })
+  assert.equal(container.querySelectorAll('.lib-creator-row').length, 7, 'adding a creator expands ALL rows (6 + the new one)')
+  assert.ok(!container.textContent.includes('还有 1 个…'), 'the truncation row is gone after expanding')
+}
 assert.ok(afterSelect.includes('Nature'), 'field rendered')
 assert.ok(afterSelect.includes('打开 PDF'), 'open button rendered')
 
@@ -601,7 +655,7 @@ assert.ok(fieldLabels.includes('添加日期') && fieldLabels.includes('修改�
 // 短标题 = the user's own key-points marker: right under the title, with a
 // hint explaining its purpose (the mock schema lists it late on purpose).
 assert.ok(fieldLabels.indexOf('短标题') === fieldLabels.indexOf('标题') + 1, '短标题 sits right under the title in the info pane')
-assert.ok(container.querySelector('.lib-sectionpane[data-section="info"]').textContent.includes('自己标记这篇文章需要关注的要点'), 'the short-title hint notes its key-points purpose')
+assert.ok(container.querySelector('.lib-sectionpane[data-section="info"]').textContent.includes('这篇文章的重点概括'), 'the short-title hint notes its key-points purpose (AI-maintained)')
 
 // 联网补全 (info-section wand button): one click re-runs the online metadata
 // fetch for the selected item, with the same progress dialog feedback as the
@@ -1488,6 +1542,76 @@ await act(async () => {
 })
 assert.ok(container.textContent.includes('我的文库'), 'repair success restores the library view')
 schemaRoot.unmount()
+
+// 断连面板：宿主为同步握手主动断开数据库（detached reason sync）→ 专属面板
+// 说明断开原因 + 自动重试；「立即重新连接」被 Zotero 运行探测挡住；恢复后回
+// 到文库视图；点「同步」分派同样把页面切到断连面板。
+detachedFixture = true
+reconnectFixture = { reconnected: false, reason: 'zotero-running', state: stateValue() }
+const detachRoot = ReactDOMClient.createRoot(container)
+const detachProps = {
+  ...(injectFns.get('main:library')?.() ?? {}),
+  layout,
+  openNativeSession: id => nativeOpens.push(id),
+  retainSession: (sessionId, signal) => ({ sessionId, release() {} }),
+  SessionProvider: (props) => React.createElement('div', null, props.children),
+  renderSlot: (key) => React.createElement('div', { 'data-slot': key }, 'native-conversation'),
+}
+await act(async () => {
+  detachRoot.render(React.createElement(Page, detachProps))
+  await tick()
+  await tick()
+})
+assert.ok(container.textContent.includes('已断开文库数据库连接'), 'sync detach panel renders')
+assert.ok(container.textContent.includes('每 5 秒自动尝试重连'), 'the panel explains the host-side auto retry')
+assert.ok(container.textContent.includes('Zotero 仍在运行'), 'the last probe status renders')
+assert.ok(!calls.includes('db-reconnect'), 'the client never polls reconnect; the host timer owns the 5 s loop')
+const clickReconnect = async () => {
+  const button = [...container.querySelectorAll('button')].find(node => node.textContent.includes('立即重新连接'))
+  assert.ok(button, 'reconnect button renders')
+  await act(async () => {
+    button.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await tick()
+    await tick()
+    await tick()
+  })
+}
+await clickReconnect()
+assert.ok(bodies.some(body => body.endpoint === 'db-reconnect'), 'manual reconnect reaches the host')
+assert.ok(container.textContent.includes('已断开文库数据库连接'), 'the panel stays while Zotero is running')
+// 「结束 Zotero 进程」：确认弹窗 → 宿主查杀端点；Zotero「仍在运行」时面板保留，
+// 等真正的退出再由定时器恢复。
+{
+  const originalConfirm = window.confirm
+  window.confirm = () => true
+  const killButton = [...container.querySelectorAll('button')].find(node => node.textContent.includes('结束 Zotero 进程'))
+  assert.ok(killButton, 'the kill button renders next to 立即重新连接')
+  await act(async () => {
+    killButton.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    await tick()
+    await tick()
+    await tick()
+  })
+  window.confirm = originalConfirm
+  assert.ok(bodies.some(body => body.endpoint === 'zotero-kill'), 'kill button reaches the host kill endpoint')
+  assert.ok(container.textContent.includes('已断开文库数据库连接'), 'the panel stays after the kill while Zotero runs')
+}
+reconnectFixture = undefined // Zotero "exited": the host reconnects and returns the restored state
+await clickReconnect()
+assert.ok(container.textContent.includes('我的文库'), 'reconnect success restores the library view')
+syncDetaches = true
+await act(async () => {
+  const syncButton = [...container.querySelectorAll('button')].find(node => node.textContent.trim() === '同步')
+  assert.ok(syncButton, 'toolbar sync button renders')
+  syncButton.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  await tick()
+  await tick()
+  await tick()
+})
+assert.ok(container.textContent.includes('已断开文库数据库连接'), 'the sync hand-off switches the page to the detached panel')
+syncDetaches = false
+detachedFixture = false
+detachRoot.unmount()
 
 // The 文库 settings page (rendered inside dsh's native settings modal) mounts
 // standalone: tabbed rows over the mock channel, no crash, save flow wired.

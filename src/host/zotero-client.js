@@ -78,21 +78,13 @@ async function exeFromProtocolHandler() {
   })
 }
 
-/** Start Zotero; records into the sink instead of spawning when one is set. */
-async function launchZotero(exeOverride) {
-  if (LAUNCH_SINK !== '') {
-    recordSink({ kind: 'launch-zotero', target: exeOverride || '' })
-    return !launchFailForced()
-  }
-  if (launchFailForced()) return false
-  if (process.platform === 'darwin') {
-    try {
-      spawn('open', ['-a', 'Zotero'], { detached: true, stdio: 'ignore' }).unref()
-      return true
-    } catch {
-      return false
-    }
-  }
+/**
+ * The executable a launch would use (first existing candidate), or undefined
+ * when Zotero is not installed. Separate from launchZotero so the caller can
+ * decide "not installed" BEFORE the hand-off disconnects the database.
+ */
+async function findZoteroExe(exeOverride) {
+  if (LAUNCH_SINK !== '') return exeOverride || 'sink' // smoke env: pretend an exe exists
   const candidates = []
   if (typeof exeOverride === 'string' && exeOverride.trim() !== '') candidates.push(exeOverride.trim())
   if (process.platform === 'win32') {
@@ -106,16 +98,33 @@ async function launchZotero(exeOverride) {
   }
   candidates.push(...exeCandidates())
   for (const candidate of candidates) {
+    // The bare 'zotero' on Linux resolves over PATH; file candidates must exist.
+    if (candidate === 'zotero' || fs.existsSync(candidate)) return candidate
+  }
+  return undefined
+}
+
+/** Start Zotero with a resolved executable; records into the sink when one is set. */
+async function launchZotero(exe) {
+  if (LAUNCH_SINK !== '') {
+    recordSink({ kind: 'launch-zotero', target: exe || '' })
+    return !launchFailForced()
+  }
+  if (launchFailForced()) return false
+  if (process.platform === 'darwin') {
     try {
-      // The bare 'zotero' on Linux resolves over PATH; file candidates must exist.
-      if (candidate !== 'zotero' && !fs.existsSync(candidate)) continue
-      spawn(candidate, [], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
+      spawn('open', ['-a', 'Zotero'], { detached: true, stdio: 'ignore' }).unref()
       return true
     } catch {
-      // Try the next candidate.
+      return false
     }
   }
-  return false
+  try {
+    spawn(exe, [], { detached: true, stdio: 'ignore', windowsHide: true }).unref()
+    return true
+  } catch {
+    return false
+  }
 }
 
 function recordSink(entry) {
@@ -270,6 +279,42 @@ async function focusZotero() {
 }
 
 /**
+ * Last resort for the database mutual exclusion: force-kill every Zotero
+ * process (zotero.exe / the zotero binary). The caller owns the user
+ * confirmation; returns the number of processes found (0 = nothing killed).
+ * Records into the sink instead of spawning anything when one is set (smoke).
+ */
+async function killZoteroProcesses() {
+  if (LAUNCH_SINK !== '') {
+    recordSink({ kind: 'kill-zotero' })
+    return 1
+  }
+  if (process.platform === 'win32') {
+    const script = [
+      `$procs = Get-Process -Name 'zotero' -ErrorAction SilentlyContinue`,
+      `if (-not $procs) { Write-Output '0'; exit }`,
+      `$procs | Stop-Process -Force -ErrorAction SilentlyContinue`,
+      `@($procs).Count`,
+    ].join('\n')
+    const encoded = Buffer.from(script, 'utf16le').toString('base64')
+    return await new Promise((resolve) => {
+      execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true, timeout: 10_000 }, (error, stdout) => {
+        if (error) return resolve(0)
+        const count = Number(String(stdout ?? '').trim())
+        resolve(Number.isFinite(count) && count > 0 ? count : 0)
+      })
+    })
+  }
+  // macOS / Linux: the bundle binary is named zotero (lowercase) on both;
+  // pkill exits 1 when nothing matched.
+  return await new Promise((resolve) => {
+    execFile('pkill', ['-x', 'zotero'], { timeout: 8000 }, (error) => {
+      resolve(error && Number(error.code) === 1 ? 0 : 1)
+    })
+  })
+}
+
+/**
  * The Zotero client driver: probe the local server and launch + raise it so
  * the user can run the sync in Zotero itself.
  * @param {object} deps
@@ -332,10 +377,16 @@ export function createZoteroClient({ logger = console, getSettings, fetchImpl = 
    * Bring Zotero up (launching it when closed) and put its window in front so
    * the user can run the sync there. Never pretends to have synced: the
    * database changes arrive through the revision polling afterwards.
+   * @param {object} [options]
+   * @param {(phase: 'focus' | 'launch') => (void | Promise<void>)} [options.beforeHandoff]
+   *   Called right before Zotero takes over — the runtime releases its database
+   *   connection there, because a Zotero that finds zotero.sqlite locked fails
+   *   to start. NOT called for the not-installed verdict (nothing to hand over).
    */
-  async function sync() {
+  async function sync({ beforeHandoff } = {}) {
     let client = await probe()
     if (client) {
+      await beforeHandoff?.('focus')
       const shown = await focusZotero()
       return record({
         kind: 'focused',
@@ -346,7 +397,13 @@ export function createZoteroClient({ logger = console, getSettings, fetchImpl = 
       })
     }
     const settings = getSettings?.() ?? {}
-    const launched = await launchZotero(settings.zoteroExePath)
+    const exe = await findZoteroExe(settings.zoteroExePath)
+    if (!exe) {
+      return record({ kind: 'not-installed', message: '未找到 Zotero 客户端：请先启动 Zotero，或在文库设置里配置 zoteroExePath' })
+    }
+    // Disconnect NOW — from this moment on, Zotero must find the file unlocked.
+    await beforeHandoff?.('launch')
+    const launched = await launchZotero(exe)
     if (!launched) {
       return record({ kind: 'not-installed', message: '未找到 Zotero 客户端：请先启动 Zotero，或在文库设置里配置 zoteroExePath' })
     }
@@ -375,5 +432,5 @@ export function createZoteroClient({ logger = console, getSettings, fetchImpl = 
     }
   }
 
-  return { probe, sync, status, lastSync: () => lastResult }
+  return { probe, sync, status, kill: killZoteroProcesses, lastSync: () => lastResult }
 }

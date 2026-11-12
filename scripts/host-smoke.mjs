@@ -39,6 +39,8 @@ process.env.DSH_LIBRARY_ZOTERO_PORTS = String(fakeZoteroPort)
 process.env.DSH_LIBRARY_ZOTERO_LAUNCH_WAIT_MS = '900'
 const launchSinkPath = path.join(tempRoot, 'zotero-launch-sink.jsonl')
 process.env.DSH_LIBRARY_ZOTERO_LAUNCH_SINK = launchSinkPath
+// 断连恢复的 5 秒定时器调快，用例用轮询断言自动重连。
+process.env.DSH_LIBRARY_RECONNECT_MS = '120'
 fs.writeFileSync(launchSinkPath, '')
 
 const { apply, name, version } = await import('../index.js')
@@ -151,6 +153,7 @@ assert.deepEqual([...toolDefs.keys()].sort(), [
   'library_note', 'library_open', 'library_read', 'library_search', 'library_status', 'library_sync',
   'library_trash', 'library_update', 'library_word_apply', 'library_word_busy', 'library_word_cite',
   'library_word_list', 'library_word_read', 'library_word_report', 'library_word_search', 'library_word_write',
+  'library_zotero_kill',
 ])
 
 const call = async (endpoint, payload) => {
@@ -936,12 +939,29 @@ if (hasRealLibrary) {
   assert.equal(backToZotero.value.source, 'override')
 }
 
+// CI（以及任何没有真库的机器）没有真实 zotero.sqlite：用 standalone 种子在
+// 原位造一个完整的 schema-130 库 —— 断库防护、同步分派与 schema 守卫/修复
+// 用例照常跑（真库机器跳过，用的本来就是临时副本）。
+if (!fs.existsSync(path.join(dataDir, 'zotero.sqlite'))) {
+  const { createStandaloneLibrary } = await import('../src/host/standalone.js')
+  createStandaloneLibrary(dataDir, mockCtx.logger)
+}
+
 // --- Zotero 客户端同步（zotero 模式 = 唤起 + 置前，用户点同步） ---------------
 // 上面的假 Zotero 客户端按阶段重编程；启动/置前都记进 sink，绝不 spawn 真
 // zotero.exe、不跑 PowerShell。GET /connector/ping 回 "Zotero is running" 文本
 // = 真 Zotero，JSON 且带 processorName = 自家 office 服务（必须被探测跳过）。
 const launchSinkLines = () => fs.readFileSync(launchSinkPath, 'utf8').trim().split('\n').filter(line => line !== '')
 const launchSinkCount = (kind) => launchSinkLines().filter(line => line.includes(`"${kind}"`)).length
+// 自动重连靠宿主的 120ms 定时器（RECONNECT_MS 已调快）；轮询 ping 直到恢复。
+const waitForAvailable = async () => {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const probe = await call('ping', {})
+    if (probe.value.available === true) return true
+    await new Promise(resolve => setTimeout(resolve, 200))
+  }
+  return false
+}
 const officePing = (req, res) => {
   res.writeHead(200, { 'content-type': 'application/json' })
   res.end(JSON.stringify({ ok: true, processorName: 'Word', active: false, styles: 0 }))
@@ -960,6 +980,7 @@ const zoteroPing = (req, res) => {
 
 // ① 混淆防护：只有 office 形状的 ping 应答 → 探测跳过；手动同步启动 Zotero
 //    （sink 记 launch + focus），等待期处理器切成真 Zotero → launched。
+//    断库防护：分派前宿主已释放数据库连接，Zotero 才拿得到文件锁。
 fakeZoteroHandler = officePing
 setTimeout(() => { fakeZoteroHandler = zoteroPing }, 300)
 const launched = await call('zotero-sync-run', {})
@@ -969,6 +990,10 @@ assert.equal(launched.value.version, '7.0.10-smoke', 'version comes off the X-Zo
 assert.ok(launched.value.message.includes('同步'), 'the hand-off message tells the user what to click')
 assert.equal(launchSinkCount('launch-zotero'), 1, 'exactly one launch recorded')
 assert.equal(launchSinkCount('focus-zotero'), 1, 'the window focus is requested once')
+const afterHandoff = await call('state', {})
+assert.equal(afterHandoff.value.available, false, 'the hand-off disconnects the database for Zotero')
+assert.equal(afterHandoff.value.detached?.reason, 'sync', JSON.stringify(afterHandoff.value))
+assert.equal(afterHandoff.value.error?.code, 'library/db-detached')
 
 // ② 已在运行：直接置前，不再启动（多一次 focus，无 launch）。
 const focused = await call('zotero-sync-run', {})
@@ -985,7 +1010,8 @@ assert.equal(syncState.value.port, fakeZoteroPort)
 assert.equal(syncState.value.version, '7.0.10-smoke')
 assert.equal(syncState.value.last.kind, 'focused')
 
-// ④ 找不到 Zotero：启动失败 → not-installed，且不请求置前。
+// ④ 找不到 Zotero：启动失败 → not-installed，且不请求置前；这次断开是白断的，
+//    宿主立即把连接拿回来（绕过「Zotero 启动宽限」，因为根本没有东西要启动）。
 process.env.DSH_LIBRARY_ZOTERO_LAUNCH_FAIL = '1'
 fakeZoteroHandler = officePing
 const missing = await call('zotero-sync-run', {})
@@ -993,22 +1019,81 @@ delete process.env.DSH_LIBRARY_ZOTERO_LAUNCH_FAIL
 assert.equal(missing.value.kind, 'not-installed', JSON.stringify(missing))
 assert.equal(launchSinkCount('launch-zotero'), 2, 'the failed launch is still recorded')
 assert.equal(launchSinkCount('focus-zotero'), 2, 'no focus request without a client')
+const restored = await call('state', {})
+assert.equal(restored.value.available, true, 'not-installed restores the connection right away')
 
 // ⑤ library_sync 工具在 zotero 模式下走同一条分派链。
 fakeZoteroHandler = zoteroPing
 const syncTool = await toolDefs.get('library_sync').execute({})
 assert.equal(syncTool.kind, 'focused', JSON.stringify(syncTool))
+
+// ⑥ 断库防护回环：同步分派后文库处于 detached —— 连接已关闭（测试进程能拿
+//    到独占锁，这正是 Zotero 能启动的前提）、所有端点拒绝；Zotero「仍在运行」
+//    时手动重连被探测挡住；「退出」后宿主定时器自动重连恢复。
+const detachedState = await call('state', {})
+assert.equal(detachedState.value.available, false)
+assert.equal(detachedState.value.detached?.reason, 'sync', JSON.stringify(detachedState.value))
+assert.equal(detachedState.value.error?.code, 'library/db-detached')
+const deniedItems = await call('items', { limit: 5 })
+assert.equal(deniedItems.ok, false)
+assert.equal(deniedItems.error.code, 'library/db-detached', 'every endpoint refuses while detached')
+{
+  const { DatabaseSync } = await import('node:sqlite')
+  const locker = new DatabaseSync(path.join(dataDir, 'zotero.sqlite'))
+  locker.exec('PRAGMA busy_timeout = 800')
+  locker.exec('BEGIN EXCLUSIVE')
+  locker.exec('ROLLBACK')
+  locker.close()
+}
+const blocked = await call('db-reconnect', {})
+assert.equal(blocked.value.reconnected, false, JSON.stringify(blocked.value))
+assert.equal(blocked.value.reason, 'zotero-running', 'the probe keeps the reconnect from racing a running Zotero')
+assert.equal(blocked.value.state.available, false)
+// 最后手段：结束 Zotero 进程（sink 记账，绝不真杀 / 不跑 PowerShell）。Zotero
+// 「仍在运行」时查杀后的重连照样被探测挡住；等「退出」再由定时器恢复。
+const killed = await call('zotero-kill', {})
+assert.equal(killed.value.killed, 1, JSON.stringify(killed.value))
+assert.equal(killed.value.state.available, false, 'the probe still blocks the reconnect while Zotero runs')
+assert.equal(launchSinkCount('kill-zotero'), 1, 'the kill is recorded in sink mode')
+const killTool = await toolDefs.get('library_zotero_kill').execute({})
+assert.deepEqual(killTool, { killed: 1, available: false }, 'library_zotero_kill rides the same path')
+assert.equal(launchSinkCount('kill-zotero'), 2, 'one sink line per kill')
 fakeZoteroHandler = officePing
+assert.ok(await waitForAvailable(), 'the host timer reconnects once Zotero exits')
+const recoveredItems = await call('items', { limit: 5 })
+assert.equal(recoveredItems.ok, true, JSON.stringify(recoveredItems))
+
+// ⑦ 数据库防护（另一半）：打开文库时 Zotero 正独占数据库（Zotero 10 = WAL +
+//    locking_mode EXCLUSIVE，新连接第一次读就 busy）→ 转入「Zotero 正在运行」
+//    断连面板；Zotero 退出后自动恢复。测试连接要先拿到独占锁，所以先借一次
+//    同步分派把我们的连接关掉。
+fakeZoteroHandler = zoteroPing
+const refocus = await call('zotero-sync-run', {})
+assert.equal(refocus.value.kind, 'focused', JSON.stringify(refocus.value))
+{
+  const { DatabaseSync } = await import('node:sqlite')
+  const zotero = new DatabaseSync(path.join(dataDir, 'zotero.sqlite'))
+  zotero.exec('PRAGMA locking_mode = EXCLUSIVE')
+  zotero.exec('CREATE TABLE IF NOT EXISTS dsh_lock_probe(x)')
+  zotero.exec('INSERT INTO dsh_lock_probe VALUES (1)') // 写下第一笔，独占锁即到手并保持
+  fakeZoteroHandler = officePing
+  // 模拟「打开文库」：清掉 detached 状态重开 → 撞上独占锁 → busy → locked 断连。
+  await call('setup', { mode: 'zotero' })
+  const locked = await call('state', {})
+  assert.equal(locked.value.available, false, JSON.stringify(locked.value))
+  assert.equal(locked.value.detached?.reason, 'locked', `open under a running Zotero detaches: ${JSON.stringify(locked.value)}`)
+  const deniedCollections = await call('collections', {})
+  assert.equal(deniedCollections.error?.code, 'library/db-detached', 'endpoints refuse while Zotero holds the db')
+  zotero.close() // = 用户退出 Zotero，独占锁释放
+}
+assert.ok(await waitForAvailable(), 'the library auto-recovers once Zotero exits')
+const finalState = await call('state', {})
+assert.equal(finalState.value.available, true, 'the library is usable again without restarting dsh')
 
 // --- schema 不匹配 → 更新/一键修复 --------------------------------------------
 // 临时副本的 userdata schema 手工抬到 999：guard 报 schema-too-new（带版本号），
 // 一键修复自检核心表/列通过后以兼容模式接受（settings 持久化，重启仍生效）。
-// CI（以及任何没有真库的机器）没有真实 zotero.sqlite：用 standalone 种子在
-// 原位造一个完整的 schema-130 库，守卫/修复测试照常跑。
-if (!fs.existsSync(path.join(dataDir, 'zotero.sqlite'))) {
-  const { createStandaloneLibrary } = await import('../src/host/standalone.js')
-  createStandaloneLibrary(dataDir, mockCtx.logger)
-}
+// CI 用的种子库已在同步段之前原位创建（见上）。
 {
   const { DatabaseSync } = await import('node:sqlite')
   const bumpSchema = new DatabaseSync(path.join(dataDir, 'zotero.sqlite'))

@@ -183,8 +183,13 @@ function CreatorRow({ creator, index, typeOptions, onNameInput, onChange, onRemo
  */
 function InfoSection({ detail, schema, onPatch, onOpenUrl, onNotify }) {
   const typeShape = schema?.get(detail.itemType)
-  const fieldNames = typeShape?.fields ?? []
-  const typeOptions = typeShape?.creatorTypes?.map(entry => entry.creatorType) ?? ['author']
+  // Schema not loaded yet (a first boot while Zotero held the db leaves it
+  // empty until the library page's refetch lands): fall back to the stored
+  // fields so the pane never goes blank — the full all-fields Zotero view
+  // returns as soon as the schema arrives.
+  const fieldNames = typeShape?.fields ?? (detail.fields ?? []).map(entry => entry.field)
+  const typeOptions = typeShape?.creatorTypes?.map(entry => entry.creatorType)
+    ?? [...new Set(['author', ...(detail.creators ?? []).map(creator => String(creator.creatorType ?? 'author'))])]
   const stored = new Map((detail.fields ?? []).map(entry => [entry.field, entry.value]))
 
   // Creators are edited locally (keystrokes stay in the row, like Zotero) and
@@ -274,6 +279,9 @@ function InfoSection({ detail, schema, onPatch, onOpenUrl, onNotify }) {
     const template = creators[index] ?? { creatorType: typeOptions[0], fieldMode: 0 }
     const next = [...creators]
     next.splice(index + 1, 0, { firstName: '', lastName: '', fieldMode: 0, creatorType: template.creatorType })
+    // 新行排在折叠线之后时，用户点了「＋」却看不到任何变化（Zotero 会展开）：
+    // 添加创建者一律展开全部行。
+    setShowAllCreators(true)
     commitCreators(next)
   }
   const moveCreator = (index, delta) => {
@@ -316,7 +324,8 @@ function InfoSection({ detail, schema, onPatch, onOpenUrl, onNotify }) {
             value={detail.itemType}
             onChange={event => void changeType(event.target.value)}
           >
-            {(schema ? [...schema.keys()] : [detail.itemType]).map(name => (
+            {/* Schema still loading: keep the current type visible instead of a blank menu. */}
+            {(schema && schema.size > 0 ? [...schema.keys()] : [detail.itemType]).map(name => (
               <option key={name} value={name}>{typeLabel(name)}</option>
             ))}
           </select>
@@ -408,7 +417,15 @@ function InfoSection({ detail, schema, onPatch, onOpenUrl, onNotify }) {
           </button>
         ) : null}
         {creators.length > 0 ? (
-          <button type="button" className="lib-more-creators" onClick={() => commitCreators([...creators, { firstName: '', lastName: '', fieldMode: 0, creatorType: typeOptions[0] }])}>
+          <button
+            type="button"
+            className="lib-more-creators"
+            onClick={() => {
+              // 同上：新增的行永远立即可见，先展开再落库。
+              setShowAllCreators(true)
+              commitCreators([...creators, { firstName: '', lastName: '', fieldMode: 0, creatorType: typeOptions[0] }])
+            }}
+          >
             ＋ 添加创建者
           </button>
         ) : null}

@@ -21,6 +21,19 @@ import { createOfficeService } from './office/index.js'
 import { createZoteroClient } from './zotero-client.js'
 import { safeFileName, safeUnlink } from './util.js'
 
+/** A positive number from the environment (tests shorten the reconnect timer). */
+function positiveEnv(name, fallback) {
+  const raw = Number(process.env[name])
+  return Number.isFinite(raw) && raw > 0 ? raw : fallback
+}
+
+/** SQLITE_BUSY / SQLITE_LOCKED, the way node:sqlite reports them. */
+function isBusyError(error) {
+  const errcode = Number(error?.errcode)
+  if (errcode === 5 || errcode === 6) return true
+  return /database is locked|database table is locked/i.test(`${error?.code ?? ''} ${error?.message ?? error}`)
+}
+
 /** The library runtime shared by the API channel and tools. */
 export function createLibraryRuntime({ ctx, config = {}, logger = console, packageDir }) {
   const home = dataDir()
@@ -78,6 +91,9 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
     }
     settings = saveSettings({ mode })
     located = undefined
+    // A source switch is an explicit recovery: drop any detached state so the
+    // next open starts fresh.
+    clearDetach()
     closeDb()
     if (mode === 'standalone') createStandaloneLibrary(path.join(home, 'data'), logger)
     startWatcher()
@@ -116,24 +132,140 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
     }
   }
 
-  function db() {
+  // --- 数据库防护：文库与 Zotero 客户端对 zotero.sqlite 互斥 ----------------
+  // Zotero 运行时独占整库：本插件开着连接，Zotero 就无法启动（用户只能退出
+  // dsh）；反过来 Zotero 开着，我们也打不开库。detached 记录「主动断开」状
+  // 态：连接已关闭、一切操作报 library/db-detached、宿主每 5 秒自动尝试重连
+  // （zotero 模式先探测客户端，仍在运行就不抢锁），Zotero 退出后立即恢复。
+  let detached
+  let reconnectTimer
+  let reconnectInFlight = false
+  const RECONNECT_MS = positiveEnv('DSH_LIBRARY_RECONNECT_MS', 5000)
+  // 「同步」断开后：握手没有落定（Zotero 正在启动）之前不尝试重开，防止抢在
+  // Zotero 前面拿走文件锁。
+  const SYNC_GRACE_MS = positiveEnv('DSH_LIBRARY_SYNC_GRACE_MS', 20_000)
+  // 唤起了 Zotero 但 15 秒内没等到它的 HTTP 服务：它可能仍在慢启动，再多等一会。
+  const LAUNCH_GRACE_MS = 60_000
+
+  function detachedInfo() {
+    return detached === undefined ? undefined : { ...detached }
+  }
+
+  /** Close the connection and stop every reader until reconnect() succeeds. */
+  function detachDb(reason, message) {
+    detached = {
+      ...(detached ?? {}),
+      reason,
+      message,
+      since: detached?.since ?? new Date().toISOString(),
+      graceUntil: reason === 'sync' ? Date.now() + SYNC_GRACE_MS : 0,
+      lastStatus: undefined,
+      checkedAt: undefined,
+    }
+    closeDb()
+    if (watcher !== undefined) {
+      watcher.dispose()
+      watcher = undefined
+    }
+    if (reconnectTimer === undefined) {
+      reconnectTimer = setInterval(() => {
+        if (detached === undefined || reconnectInFlight) return
+        reconnectInFlight = true
+        void reconnect()
+          .catch(error => logger.warn?.(`library: reconnect attempt failed: ${error?.message ?? error}`))
+          .finally(() => { reconnectInFlight = false })
+      }, RECONNECT_MS)
+      reconnectTimer.unref?.()
+    }
+    bump()
+  }
+
+  function clearDetach() {
+    detached = undefined
+    if (reconnectTimer !== undefined) {
+      clearInterval(reconnectTimer)
+      reconnectTimer = undefined
+    }
+  }
+
+  /** Open a connection without the detached guard (reconnect's own path). */
+  function openDb() {
     if (database !== undefined) return database
     const where = paths()
     if (!fs.existsSync(where.dbPath)) {
       throw Object.assign(new Error(`zotero.sqlite is missing under ${where.dataDir}`), { code: 'library/no-library' })
     }
     const instance = new ZoteroDb({ dbPath: where.dbPath, logger, acceptedSchema: getSettings().acceptedSchema })
-    instance.open()
-    // Expose storageDir to read helpers through the instance.
-    instance.storageDir = where.storageDir
-    database = instance
     try {
+      instance.open()
+      // Expose storageDir to read helpers through the instance.
+      instance.storageDir = where.storageDir
       instance.schema()
     } catch (error) {
-      closeDb()
+      try { instance.close() } catch { /* never got a handle */ }
       throw error
     }
+    database = instance
     return instance
+  }
+
+  function db() {
+    if (detached !== undefined) {
+      throw Object.assign(new Error(detached.message), { code: 'library/db-detached', detached: detachedInfo() })
+    }
+    return openDb()
+  }
+
+  /**
+   * Try to take the database back (the 5 s timer and the panel's 手动按钮).
+   * Zotero mode probes the client first: a running Zotero owns the lock, and
+   * opening under it would either fail or — worse — race its startup for the
+   * file. A real failure (schema bumped while Zotero ran, file gone) drops the
+   * sticky state so the UI renders the actual cause.
+   */
+  async function reconnect({ ignoreGrace = false } = {}) {
+    if (detached === undefined) return { reconnected: true, state: stateSnapshot() }
+    const current = detached
+    if (!ignoreGrace && getSettings().mode === 'zotero' && Date.now() < Number(current.graceUntil ?? 0)) {
+      current.lastStatus = 'waiting-zotero'
+      return { reconnected: false, reason: 'waiting-zotero', state: stateSnapshot() }
+    }
+    if (getSettings().mode === 'zotero') {
+      const client = await zoteroClient.probe()
+      if (detached !== current) return { reconnected: false, reason: 'superseded', state: stateSnapshot() }
+      current.checkedAt = new Date().toISOString()
+      if (client) {
+        current.lastStatus = 'zotero-running'
+        return { reconnected: false, reason: 'zotero-running', state: stateSnapshot() }
+      }
+    }
+    try {
+      openDb()
+    } catch (error) {
+      if (isBusyError(error)) {
+        current.checkedAt = new Date().toISOString()
+        current.lastStatus = 'busy'
+        return { reconnected: false, reason: 'busy', state: stateSnapshot() }
+      }
+      // A real failure (schema bumped while Zotero ran, file gone): drop the
+      // sticky state so the UI renders the actual cause — unless a newer
+      // detach superseded this attempt meanwhile.
+      if (detached === current) clearDetach()
+      throw error
+    }
+    if (detached !== current) {
+      // A newer hand-off superseded this attempt: it must not keep the
+      // connection we just opened — Zotero has to find the file unlocked.
+      closeDb()
+      return { reconnected: false, reason: 'superseded', state: stateSnapshot() }
+    }
+    clearDetach()
+    // Zotero may have written during the hand-off: re-arm the pre-write backup.
+    backupTaken = false
+    startWatcher()
+    bump()
+    logger.info?.('library: database connection restored')
+    return { reconnected: true, state: stateSnapshot() }
   }
 
   /** Run a database operation, reopening once if the file was replaced underneath us. */
@@ -199,6 +331,7 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
   function refreshSettings(patch) {
     settings = saveSettings(patch)
     located = undefined
+    clearDetach()
     closeDb()
     startWatcher()
     restartAutoSyncTimer()
@@ -225,6 +358,7 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
     const schemaVersion = readSchemaVersion(where.dbPath)
     settings = saveSettings({ acceptedSchema: schemaVersion })
     located = undefined
+    clearDetach()
     closeDb()
     startWatcher()
     bump()
@@ -232,26 +366,27 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
     return stateSnapshot()
   }
 
-  /**
-   * A running Zotero holds the rollback-journal lock on zotero.sqlite; every
-   * direct connection (even read-only) gets SQLITE_BUSY until it exits. Report
-   * that case with its own code so the UI can explain and auto-recover.
-   */
-  function lockedError(error) {
-    const text = `${error?.code ?? ''} ${error?.message ?? error}`
-    if (/database is locked|ERR_SQLITE_BUSY/i.test(text)) {
-      return {
-        code: 'library/db-locked',
-        message: 'Zotero 正在运行并锁定了数据库（zotero.sqlite）。退出 Zotero 后文库会自动恢复，无需重启 dsh。',
-      }
+  /** The state shape every detached consumer (panel, ping, endpoints) reports. */
+  function detachedSnapshot(base) {
+    return {
+      ...base,
+      available: false,
+      mode: settings.mode,
+      needsChoice: false,
+      detached: detachedInfo(),
+      error: { code: 'library/db-detached', message: detached.message },
     }
-    // Spread first so extra fields the UI needs (schemaVersion / supported on
-    // the schema-too-new error) survive into stateSnapshot.error.
+  }
+
+  // Spread first so extra fields the UI needs (schemaVersion / supported on the
+  // schema-too-new error) survive into stateSnapshot.error.
+  function lockedError(error) {
     return { ...error, code: error?.code ?? 'library/error', message: String(error?.message ?? error) }
   }
 
   function stateSnapshot() {
     const base = { settings: publicSettings(), sync: { running: syncTask !== undefined, last: syncResult }, revision, version: config.version }
+    if (detached !== undefined) return detachedSnapshot(base)
     try {
       const where = paths()
       const stats = withDb(instance => readStats(instance))
@@ -267,6 +402,14 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
         counts: stats,
       }
     } catch (error) {
+      if (isBusyError(error)) {
+        // 打开文库时发现数据库被独占（Zotero 正在运行）：转入断连状态 —— 面板
+        // 提示退出 Zotero，宿主每 5 秒自动重连，绝不每个端点各试一次。
+        detachDb('locked', settings.mode === 'zotero'
+          ? 'Zotero 正在运行并独占了数据库（zotero.sqlite）。请退出 Zotero：文库每 5 秒自动尝试重连，检测到 Zotero 退出后会立即恢复，无需重启 dsh。'
+          : '文库数据库正被其他程序占用，无法打开。请关闭占用它的程序，文库会自动重连。')
+        return detachedSnapshot(base)
+      }
       // With no choice made yet, tell the browser whether Zotero exists so the
       // first-open dialog can offer "link" next to "standalone".
       let zoteroFound
@@ -371,15 +514,52 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
     if (zoteroSyncTask !== undefined) return zoteroSyncTask
     zoteroSyncTask = (async () => {
       try {
-        const result = await zoteroClient.sync()
+        const result = await zoteroClient.sync({
+          // Release the database BEFORE Zotero comes up: it opens zotero.sqlite
+          // exclusively, and our open connection would break its startup — the
+          // user used to have to quit dsh. The page switches to the detached
+          // panel; the 5 s timer reconnects once Zotero is gone.
+          beforeHandoff: () => detachDb('sync', '已为同步断开文库数据库连接：文库已释放 zotero.sqlite 的文件锁，让 Zotero 能正常启动并同步。请在 Zotero 中点工具栏的同步图标（⟳），完成后退出 Zotero，文库会自动重连。'),
+        })
         zoteroSyncResult = result
+        if (result.kind === 'not-installed') {
+          // We disconnected for nothing — take the connection back right away.
+          await reconnect({ ignoreGrace: true }).catch(() => {})
+        } else if (detached !== undefined) {
+          // The hand-off settled: a confirmed client means the probe-first
+          // reconnect keeps waiting; a launch we could NOT confirm may still be
+          // mid-startup, so hold the grace a while longer before any open.
+          detached.graceUntil = result.port ? 0 : Date.now() + LAUNCH_GRACE_MS
+        }
         logger.info?.(`library: zotero sync hand-off ${result.kind}${result.message ? `: ${result.message}` : ''}`)
         return zoteroSyncResult
+      } catch (error) {
+        // The hand-off blew up after the disconnect: restore what we can.
+        await reconnect({ ignoreGrace: true }).catch(() => {})
+        throw error
       } finally {
         zoteroSyncTask = undefined
       }
     })()
     return zoteroSyncTask
+  }
+
+  /**
+   * Force-kill the running Zotero client (the detached panel's 结束 Zotero
+   * 进程 / the agent tool): the last resort against the database mutual
+   * exclusion. The caller owns the user confirmation. After the kill, wait a
+   * beat for the dying process to release the file lock and try to take the
+   * database back at once — the 5 s timer would also get there, this is
+   * snappier and reports the fresh state.
+   */
+  async function zoteroKill() {
+    const killed = await zoteroClient.kill()
+    logger.warn?.(`library: force-killed ${killed} Zotero process(es)`)
+    if (detached !== undefined) {
+      await new Promise(resolve => setTimeout(resolve, 1500))
+      await reconnect({ ignoreGrace: true }).catch(() => {})
+    }
+    return { killed, state: stateSnapshot() }
   }
 
   async function runSync() {
@@ -739,6 +919,10 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
     },
     runSync,
     zoteroSync,
+    /** 强制结束 Zotero 进程（断连面板按钮 / library_zotero_kill 工具）。 */
+    zoteroKill,
+    /** 手动「立即重新连接」（断连面板按钮）；自动重试走宿主的 5 秒定时器。 */
+    reconnect,
     /** Client + bridge reachability for the settings page (async: probes ports). */
     zoteroStatus: () => zoteroClient.status(),
     verifySync: async () => {
@@ -798,6 +982,7 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
     dispose() {
       watcher?.dispose()
       clearInterval(autoSyncTimer)
+      clearDetach()
       closeDb()
       runtime.office?.dispose()
     },

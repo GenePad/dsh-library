@@ -70,6 +70,11 @@ function viewTitle(view) {
   return '我的文库'
 }
 
+function formatClock(iso) {
+  const at = new Date(iso)
+  return Number.isFinite(at.getTime()) ? at.toLocaleTimeString('zh-CN', { hour12: false }) : ''
+}
+
 /**
  * Toast = 通知 + 可复制错误：正文允许选中（报错原文常要贴给别人看），右侧
  * 一键复制全文。
@@ -177,6 +182,8 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
   const [importing, setImporting] = React.useState([])
   const [collectionDialog, setCollectionDialog] = React.useState({ open: false, mode: 'create', target: undefined })
   const [syncing, setSyncing] = React.useState(false)
+  const [reconnecting, setReconnecting] = React.useState(false)
+  const [killingZotero, setKillingZotero] = React.useState(false)
   const [settingUp, setSettingUp] = React.useState('')
   // 「schema 比插件新」面板：更新插件 / 一键修复按钮的在途状态与结果消息。
   const [repairing, setRepairing] = React.useState('')
@@ -256,12 +263,13 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
   }, [])
   React.useEffect(() => () => clearTimeout(toastTimer.current), [])
 
-  // 错误统一走这里：schema 不匹配可能从任何操作冒出来（在轮询把 available
-  // 翻转之前用户点了什么），与其在几十个 catch 里各塞修复按钮，不如让错误
-  // 把界面直接带到带按钮的修复面板，toast 只负责把原因说清楚。
+  // 错误统一走这里：schema 不匹配 / 数据库被断开都可能从任何操作冒出来（在
+  // 轮询把 available 翻转之前用户点了什么），与其在几十个 catch 里各塞修复
+  // 按钮，不如让错误把界面直接带到带按钮的专属面板，toast 只负责把原因说清楚。
   const showError = React.useCallback((error) => {
     const code = String(error?.code ?? '')
-    if (code === 'library/schema-too-new' || code === 'library/schema-incompatible') {
+    if (code === 'library/schema-too-new' || code === 'library/schema-incompatible'
+      || code === 'library/db-detached' || code === 'library/db-locked') {
       api.call('state', {}).then((state) => {
         setSnapshot(state)
       }).catch(() => {
@@ -392,7 +400,6 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
         if (state.available) {
           await loadCollections()
           await loadItems({ viewOverride: viewRef.current, queryOverride: '' })
-          api.call('schema', {}).then(types => setSchemaTypes(Array.isArray(types) ? types : [])).catch(() => {})
         }
       } catch (error) {
         if (!stopped) setSnapshot({ available: false, error: { message: error?.message ?? String(error) } })
@@ -403,6 +410,27 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
     return () => { stopped = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // 信息栏的「全部字段 + 条目类型菜单」依赖条目类型 schema，而 schema 只在文
+  // 库可用时拿得到：若首次打开恰好撞上 Zotero 占库（available=false），schema
+  // 再也不会加载，右侧信息区从此一片空白。所以只要文库可用而 schema 还没有，
+  // 就补拉 —— 恢复可用、设置保存后的 reloadState 等任何时机都会走到。
+  React.useEffect(() => {
+    if (snapshot?.available !== true) return
+    if (Array.isArray(schemaTypes) && schemaTypes.length > 0) return
+    let cancelled = false
+    api.call('schema', {}).then((types) => {
+      if (cancelled) return
+      const list = Array.isArray(types) ? types : []
+      setSchemaTypes((previous) => {
+        // A parallel fetch already satisfied it — keep the existing reference
+        // so an empty catalogue can never loop this effect.
+        if (Array.isArray(previous) && (previous.length > 0 || list.length === 0)) return previous
+        return list
+      })
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [snapshot?.available, schemaTypes])
 
   // Persist navigation preferences across panel switches.
   React.useEffect(() => {
@@ -938,8 +966,8 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
       '请为刚导入的文献补全元数据（标题、作者、年份、期刊/出版物、卷期页、DOI 等）：',
       `文件名「${entry.name}」${entry.parentKey ? `，条目 key ${entry.parentKey}` : '（尚未建立条目，只有附件）'}${entry.attachmentKey ? `，附件 key ${entry.attachmentKey}` : ''}。`,
       hasParent
-        ? '建议先用 library_read 的 search 参数从全文中确认题名与作者，再用联网搜索核对，最后用 library_update 把字段写回该条目。'
-        : '建议先用 library_read 的 search 参数从全文中确认题名与作者，再用联网搜索核对，最后用 library_add 建立规范的父条目并补全字段。',
+        ? '建议先用 library_read 的 search 参数从全文中确认题名与作者，再用联网搜索核对，最后用 library_update 把字段写回该条目；同时维护 shortTitle（中文 10~20 字概括这篇文章的重点）与 abstractNote（忠实的原文摘要，拿不到就留空，不要编造）。'
+        : '建议先用 library_read 的 search 参数从全文中确认题名与作者，再用联网搜索核对，最后用 library_add 建立规范的父条目并补全字段（含 shortTitle：中文 10~20 字重点概括；abstractNote：原文摘要，拿不到就留空，不要编造）。',
     ].join('')
     void dockRef.current?.openAndSend(task, { mode: 'list' })
   }
@@ -992,7 +1020,7 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
     }).join('、')
     const task = [
       `请为以下文献重新获取元数据：${list}。`,
-      '先用 library_read 的 search 从附件全文确认题名、作者、年份、期刊/出版物、卷期页、DOI 等，再用联网搜索核对，最后用 library_update 把字段写回原条目（不要新建条目）。',
+      '先用 library_read 的 search 从附件全文确认题名、作者、年份、期刊/出版物、卷期页、DOI 等，再用联网搜索核对，最后用 library_update 把字段写回原条目（不要新建条目）；同时维护 shortTitle（中文 10~20 字概括这篇文章的重点，不是标题翻译）与 abstractNote（忠实的原文摘要，拿不到就留空，不要编造）。',
     ].join('')
     void dockRef.current?.openAndSend(task, { mode: 'list' })
   }
@@ -1111,8 +1139,11 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
     try {
       // Zotero mode: bring the Zotero client up front — the user clicks sync
       // there; database changes arrive via the revision polling afterwards.
+      // The hand-off disconnects our database so Zotero can take the file:
+      // pull the state so the page switches to the detached panel at once.
       if (snapshot?.settings?.mode === 'zotero') {
         const result = await api.call('zotero-sync-run', {})
+        await reloadState().catch(() => {})
         notify(result?.message ?? '已唤起 Zotero')
         return
       }
@@ -1128,6 +1159,49 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
       showError(error)
     } finally {
       setSyncing(false)
+    }
+  }
+
+  // 断连面板的「结束 Zotero 进程」：插件与 Zotero 对数据库互斥，等不了时的
+  // 最后手段。强制结束会丢掉 Zotero 里未保存/未同步的内容，必须先确认。
+  const killZoteroNow = async () => {
+    if (!window.confirm('确定强制结束 Zotero 进程吗？\n\n文库数据库正被它独占（或正在等待它启动）。强制结束可立即解除占用，但 Zotero 中未保存或未同步的内容会丢失；结束后文库会自动重新连接。')) return
+    setKillingZotero(true)
+    try {
+      const result = await api.call('zotero-kill', {})
+      if (result?.state) setSnapshot(result.state)
+      notify(result?.killed > 0
+        ? (result.state?.available === true
+          ? `已结束 ${result.killed} 个 Zotero 进程，文库已重新连接`
+          : `已结束 ${result.killed} 个 Zotero 进程，等待文件锁释放后自动重连…`)
+        : '没有找到正在运行的 Zotero 进程')
+    } catch (error) {
+      notify(error?.message ?? String(error))
+    } finally {
+      setKillingZotero(false)
+    }
+  }
+
+  // 断连面板的「立即重新连接」：宿主每 5 秒也在自动尝试，按钮只是不等它。
+  const reconnectNow = async () => {
+    setReconnecting(true)
+    try {
+      const result = await api.call('db-reconnect', {})
+      if (result?.state) setSnapshot(result.state)
+      if (result?.reconnected) {
+        notify('已重新连接文库数据库')
+        await refreshAll()
+      } else if (result?.reason === 'zotero-running') {
+        notify('Zotero 仍在运行：请先退出 Zotero，文库会自动重连')
+      } else if (result?.reason === 'waiting-zotero') {
+        notify('Zotero 正在启动，稍候再试')
+      } else if (result?.reason !== 'superseded') {
+        notify('数据库仍被占用，稍后会自动重试')
+      }
+    } catch (error) {
+      notify(error?.message ?? String(error))
+    } finally {
+      setReconnecting(false)
     }
   }
 
@@ -1228,6 +1302,11 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
 
   if (snapshot?.available !== true) {
     const choice = snapshot?.needsChoice === true
+    // 断连面板：宿主主动释放了数据库连接（同步握手 / Zotero 正占着库）。
+    const detachedPanel = snapshot?.detached
+      ?? (['library/db-detached', 'library/db-locked'].includes(String(snapshot?.error?.code))
+        ? { reason: 'locked', message: snapshot?.error?.message }
+        : undefined)
     return (
       <div className={rootClass}>
         <div className="lib-toolbar">
@@ -1262,6 +1341,38 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
               </button>
             </div>
           </div>
+        ) : detachedPanel ? (
+          <div className="lib-choice">
+            <div className="lib-choice-title">{detachedPanel.reason === 'sync' ? '已断开文库数据库连接' : 'Zotero 正在运行'}</div>
+            <div className="lib-choice-sub">
+              {detachedPanel.reason === 'sync'
+                ? '为让 Zotero 正常启动并完成同步，文库已主动释放 zotero.sqlite 的文件锁。请在 Zotero 中点工具栏的同步图标（⟳），完成后退出 Zotero：文库每 5 秒自动尝试重连，检测到 Zotero 退出后会立即恢复，无需重启 dsh。'
+                : 'Zotero 运行时会独占数据库（zotero.sqlite），文库暂时无法访问。请退出 Zotero：文库每 5 秒自动尝试重连，检测到 Zotero 退出后会立即恢复，无需重启 dsh。'}
+            </div>
+            {detachedPanel.lastStatus ? (
+              <div className="lib-form-hint" style={{ marginTop: 10 }}>
+                {detachedPanel.lastStatus === 'zotero-running'
+                  ? `上次检测（${formatClock(detachedPanel.checkedAt)}）：Zotero 仍在运行`
+                  : detachedPanel.lastStatus === 'waiting-zotero'
+                    ? 'Zotero 正在启动，等它就绪后再尝试重连…'
+                    : `上次检测（${formatClock(detachedPanel.checkedAt)}）：数据库仍被占用`}
+              </div>
+            ) : null}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 14 }}>
+              <Button variant="primary" size="sm" disabled={reconnecting} onClick={() => void reconnectNow()}>
+                {reconnecting ? '重连中…' : '立即重新连接'}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={killingZotero}
+                title="强制结束 Zotero 进程以解除数据库占用（未保存/未同步的内容会丢失）"
+                onClick={() => void killZoteroNow()}
+              >
+                {killingZotero ? '正在结束…' : '结束 Zotero 进程'}
+              </Button>
+            </div>
+          </div>
         ) : snapshot?.error?.code === 'library/schema-too-new' ? (
           <div className="lib-choice">
             <div className="lib-choice-title">Zotero 数据库结构更新</div>
@@ -1287,13 +1398,8 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>文库不可用</div>
             <div className="lib-form-hint" style={{ maxWidth: 520, margin: '0 auto 14px', lineHeight: 1.7 }}>
               {snapshot?.error?.message ?? '请确认已安装 Zotero 并至少打开过一次。'}
-              {snapshot?.error?.code === 'library/db-locked'
-                ? null
-                : <><br />可以在设置中切换数据目录，或改用独立文库。</>}
+              <br />可以在设置中切换数据目录，或改用独立文库。
             </div>
-            {snapshot?.error?.code === 'library/db-locked'
-              ? <div className="lib-form-hint" style={{ marginBottom: 14 }}>正在等待 Zotero 退出，每 5 秒自动重试…</div>
-              : null}
             <Button variant="primary" size="sm" onClick={() => openSettings?.()}>打开设置</Button>
           </div>
         )}
