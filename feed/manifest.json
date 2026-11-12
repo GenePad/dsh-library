@@ -1,13 +1,13 @@
 {
-  "version": "0.6.0",
+  "version": "0.6.1",
   "base": "../",
-  "publishedAt": 1794442869642,
+  "publishedAt": 1794450263366,
   "notes": "",
   "files": [
     {
       "path": "package.json",
       "size": 1871,
-      "sha256": "7948c9d47ca3a73c068d0ea9bfbcb507a92e2e9759da81f7ee42f87a7d145041"
+      "sha256": "aaa24c4016f033ab7b22966695b3806276017cd88fe8bf93015170261ce02232"
     },
     {
       "path": "index.js",
@@ -71,8 +71,8 @@
     },
     {
       "path": "src/client/item-menu.jsx",
-      "size": 10392,
-      "sha256": "5ae6c42d7f834cf9d6d37a2e674e280a2d4287864429897e0fc3d0a1812e74bb"
+      "size": 10157,
+      "sha256": "e0aa55512af8700d86635299f4d8bf17d5b67e866d1dff4ce2d15eb7e7d78da5"
     },
     {
       "path": "src/client/items-pane.jsx",
@@ -126,13 +126,13 @@
     },
     {
       "path": "src/host/channel.js",
-      "size": 14554,
-      "sha256": "cb3327cb38c20d5aeb39961f60925ae91ecc0d43a806d2415544b206680c638d"
+      "size": 14269,
+      "sha256": "8d39b878ff8c2566a17e1e5a8aec981300fef051edf5532f7cf4af5a0730b1de"
     },
     {
       "path": "src/host/chat.js",
-      "size": 17729,
-      "sha256": "f4895c053cd63bd69f958d37b9441b589a64f00b117048e6b27a2d65b24835ad"
+      "size": 17419,
+      "sha256": "3a21ab2635d730eeae76b28bb75ca9f222e777d110a67a248d49ca934fe7f551"
     },
     {
       "path": "src/host/cite.js",
@@ -146,8 +146,8 @@
     },
     {
       "path": "src/host/ingest.js",
-      "size": 18987,
-      "sha256": "1a2c84687b6bdac7f0f3f13d341edc21697160eff22cfd813c2c2068b205e5a2"
+      "size": 18579,
+      "sha256": "23b78e5253b3007f667ea476051e758fc0db4b837ef7cc74a8c02b8bca57f81f"
     },
     {
       "path": "src/host/locate.js",
@@ -156,13 +156,13 @@
     },
     {
       "path": "src/host/metadata.js",
-      "size": 19623,
-      "sha256": "c947ad071f8678a99175b285a646c9156fda2b91202bbd8220b659a046501527"
+      "size": 19172,
+      "sha256": "76f7b9b5166f65809a246f20c615714ff864d6a80971a34ef6a0b2b3f3fc347f"
     },
     {
       "path": "src/host/office/ai-tasks.js",
-      "size": 23758,
-      "sha256": "f726d51c2502d13ef16254681c46d012bb727933dc006ac89e90413d0e0a0bc3"
+      "size": 23302,
+      "sha256": "5b2583c2fa2200d6d128f7ce7878849a2e03afe832ca38b2c41c388377d8014d"
     },
     {
       "path": "src/host/office/citation.js",
@@ -171,8 +171,8 @@
     },
     {
       "path": "src/host/office/commands.js",
-      "size": 25021,
-      "sha256": "aed187efd652c50ccc054f02ffeae723b9f91902c011865a3249b65f3272479d"
+      "size": 24483,
+      "sha256": "3fcd67ab60b926637a4f65556d9c7addfb723f538ac332207b37efed07067d5b"
     },
     {
       "path": "src/host/office/constants.js",
@@ -206,8 +206,8 @@
     },
     {
       "path": "src/host/office/http-client.js",
-      "size": 9773,
-      "sha256": "369f8c3626991890b8b7486a5d2b09765aefa57c2e00a72b43b17da0205374df"
+      "size": 9539,
+      "sha256": "4b4793e0ee4530ec896589b121914ba1ad621346442615823f7366465e494523"
     },
     {
       "path": "src/host/office/index.js",
@@ -231,8 +231,8 @@
     },
     {
       "path": "src/host/office/report.js",
-      "size": 25321,
-      "sha256": "068fa61216857379500c7a4e454fcf815ca536857f63babab3c4180a8a6d9ee5"
+      "size": 24852,
+      "sha256": "7b5aa2f046c04e613e73e62c4a8e01029814cca494b4070f795c172d1a567866"
     },
     {
       "path": "src/host/office/server.js",
@@ -256,8 +256,8 @@
     },
     {
       "path": "src/host/open.js",
-      "size": 3065,
-      "sha256": "0d09316fc879766b26c797228be2dabbb2495827088a29ed106b14082801abf9"
+      "size": 2988,
+      "sha256": "b4b68bb3d58e5aba9db4c5a616b4038c0e068e7d402f3af839b65a1b2c776f46"
     },
     {
       "path": "src/host/pdf.js",
@@ -271,8 +271,8 @@
     },
     {
       "path": "src/host/read.js",
-      "size": 26121,
-      "sha256": "40293a811acb41f34368e31726647ebc220ce2ed6016c8a0169911b6a7e75fb2"
+      "size": 25547,
+      "sha256": "d6e3d153b3cbca1f4371cdfd874e29026af6fe3622d59259e7c5010bb3d6ec32"
     },
     {
       "path": "src/host/runtime.js",
@@ -306,8 +306,8 @@
     },
     {
       "path": "src/host/tools.js",
-      "size": 64470,
-      "sha256": "6c09ea0268f4d56384d78cd2a6f0ba591054312d4ab1cff360c17f63f009e5da"
+      "size": 63356,
+      "sha256": "2a2981495bc6d019df8c0938f4241b3be5783f904e4c48d7d1d4e6b9a119c542"
     },
     {
       "path": "src/host/translate.js",
@@ -316,8 +316,8 @@
     },
     {
       "path": "src/host/updater.js",
-      "size": 10553,
-      "sha256": "3b72bf0346f8a136cf647d4e8e750f74de011026ee9ca48bf654a4d9935f9c4c"
+      "size": 11130,
+      "sha256": "0d6ec20c9ab10b83d04ad142660d99f760d2390ea075356db956bf6cd7ad7a94"
     },
     {
       "path": "src/host/userdata-sql.js",
@@ -336,13 +336,13 @@
     },
     {
       "path": "src/host/webdav.js",
-      "size": 11452,
-      "sha256": "690337bcea190d1c1f3ca4b0f6437f1fe983a519ef81f24878c65aa5e61cb45e"
+      "size": 11180,
+      "sha256": "835f3f35b0e2600fc9d4c7517321f0e8dfe518a1506b2c4da55890fb30efff2b"
     },
     {
       "path": "src/host/write.js",
-      "size": 48067,
-      "sha256": "725627555e9e882f66b06177ee68846a29606aa85fcdcc45b313e30df693eef9"
+      "size": 47049,
+      "sha256": "65b086f2ce5b64e56d9271188a94f3320806e16dc14910eaf1da5c5f4dcc890e"
     },
     {
       "path": "src/host/zotero-client.js",
@@ -351,8 +351,8 @@
     },
     {
       "path": "vendor/citeproc.js",
-      "size": 995927,
-      "sha256": "e3909f01c9ca52efcdb3b47d3af6e3df5e3a4ff34d351b2e91350badfdc3df5b"
+      "size": 970861,
+      "sha256": "4e717cb27c1d66024bbaa578604203c178af04e789c6244a722df44d70631466"
     },
     {
       "path": "vendor/deps.js",
@@ -391,8 +391,8 @@
     },
     {
       "path": "assets/csl/renamed-styles.json",
-      "size": 43099,
-      "sha256": "0facc70f2947a41359649a8bfc28a4a8475ff5bd3ab519f89ddeadb96389cb52"
+      "size": 42488,
+      "sha256": "43fe393534a3cf57c7e9c69c8c46c0a0a2d1d53892e5667e07ae74490f3c03bf"
     },
     {
       "path": "assets/csl/styles/american-chemical-society.csl",
@@ -466,8 +466,8 @@
     },
     {
       "path": "assets/word/customUI.xml",
-      "size": 11684,
-      "sha256": "ddc68f342ada3b55468d6bf94816516f064965e10dbf9a856144e989a2a1fe4e"
+      "size": 11644,
+      "sha256": "9800f621db3d2e3357e8be3852d9231ed816630b5e1ff6f4f19324c8a137c78b"
     },
     {
       "path": "assets/word/DshLibrary.dotm",
@@ -526,33 +526,33 @@
     },
     {
       "path": "assets/word/vba/DshLibAgent.bas",
-      "size": 44245,
-      "sha256": "e62ecb24502a280bc5e238fd4517cec1ce57bc630edc65a32de80e083ceae88a"
+      "size": 43155,
+      "sha256": "3679151eec24e55a81a767af7cd13a115a90a3bd22399148c75263984963fac0"
     },
     {
       "path": "assets/word/vba/DshLibCore.bas",
-      "size": 33700,
-      "sha256": "d64b5654e5c3d02ee27eafb3e1eb727a3562fc84e40442f75912491725f825b9"
+      "size": 32795,
+      "sha256": "94a15202eb219f41f601ed5ed09c7237a90ecbcf2e610b33f6eb794883ecfab6"
     },
     {
       "path": "assets/word/vba/DshLibFields.bas",
-      "size": 72822,
-      "sha256": "00dba9e61948fcbc3dbddb3716feab8e6f1c2136fafa7e053c47b6e90a46d684"
+      "size": 70701,
+      "sha256": "c02203a71b1bbfe591ad5c8043d7a32a62ef9a6ae1b4fa79799bbcd2a4cfba58"
     },
     {
       "path": "assets/word/vba/DshLibJson.bas",
-      "size": 16529,
-      "sha256": "bebf267c5c7ca97a3e9b2b0179f9c512830fd157b7bd9eb6908594dd01a451f1"
+      "size": 15975,
+      "sha256": "ad3c7a198b793e87da846cfcdb7829271961c754c8d27628f73deea62b475990"
     },
     {
       "path": "assets/word/vba/DshLibRibbon.bas",
-      "size": 5068,
-      "sha256": "6051894ce470d1f57adf26e71113129df5955ffec70cae061030091b364bbff8"
+      "size": 4937,
+      "sha256": "a5bf462b01ba735189aa7dc0c9040d5157f44929e935c128309c39c543590153"
     },
     {
       "path": "assets/word/vba/ThisDocument.cls",
-      "size": 2263,
-      "sha256": "d437ad01e756b1653ff550ec50a045092ecdc71233b099322d4b1b6319a64188"
+      "size": 2200,
+      "sha256": "208e51eda776d86204991a46065443ac55ee5008cf37f75e23e9188038f4d772"
     },
     {
       "path": "README.md",
@@ -566,8 +566,8 @@
     },
     {
       "path": "AGENTS.md",
-      "size": 112343,
-      "sha256": "e79cd53f974e0dc44fb3b9955161cbfa804af2c9e7d993b884c98b7d849153de"
+      "size": 112125,
+      "sha256": "507636087b0a85dbe4b9411a04a4e6fda59a9d7233c3ec4e1afe9ae6870849d6"
     }
   ]
 }

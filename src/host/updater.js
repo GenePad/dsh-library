@@ -187,8 +187,14 @@ export class PluginUpdater {
         const response = await fetch(file.url, { headers: { 'user-agent': 'dsh-zot-library/updater' }, signal: AbortSignal.timeout(300_000) })
         if (!response.ok) throw new Error(`library: could not download ${file.path} (HTTP ${response.status})`)
         const buffer = Buffer.from(await response.arrayBuffer())
-        if (buffer.byteLength !== file.size) throw new Error(`library: ${file.path} size mismatch`)
-        if (sha256(buffer) !== file.sha256) throw new Error(`library: ${file.path} failed its SHA-256 check`)
+        // 本地没有任何东西被改动（校验全部通过前不动安装目录）；清单与发布内容
+        // 不一致是发布端问题，报错要直接告诉用户下一步做什么。
+        if (buffer.byteLength !== file.size) {
+          throw new Error(`library: 更新源与清单不一致：${file.path} 下载到 ${buffer.byteLength} 字节，清单记录 ${file.size} 字节。本次更新已中止、文库不受影响，属发布方问题，请稍后重试「检查更新」。`)
+        }
+        if (sha256(buffer) !== file.sha256) {
+          throw new Error(`library: 更新源与清单不一致：${file.path} 未通过 SHA-256 校验。本次更新已中止、文库不受影响，属发布方问题，请稍后重试「检查更新」。`)
+        }
         const target = path.join(stage, ...file.path.split('/'))
         fs.mkdirSync(path.dirname(target), { recursive: true })
         fs.writeFileSync(target, buffer)
