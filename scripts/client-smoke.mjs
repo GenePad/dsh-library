@@ -332,6 +332,14 @@ globalThis.fetch = async (url, options) => {
         current: { provider: 'deepseek', model: 'deepseek-chat' },
       }
       break
+    case 'settings-set':
+      // 浮窗「自动」拨杆的真实回环：宿主合并 translate 段并回传，settings-saved
+      // 事件带着这份设置刷新 library-page 快照。
+      if (body.payload?.patch?.translate && typeof body.payload.patch.translate === 'object') {
+        stateSettings.translate = { ...stateSettings.translate, ...body.payload.patch.translate }
+      }
+      value = { ...stateSettings, translate: { ...stateSettings.translate } }
+      break
     case 'chat-open':
       value = { sessionId: 'session-1' }
       break
@@ -1318,6 +1326,27 @@ assert.ok(container.querySelector('.lib-sel-trans'), 'auto translate starts with
 assert.equal(translateStreamBodies.length, 2, 'auto translate issued its own stream request without the 译 click')
 assert.ok(container.querySelector('.lib-sel-trans-text').textContent.includes('自动译文'), 'auto translation streamed')
 assert.ok(container.querySelector('.lib-sel-colors'), 'color row still offered above the auto translation')
+// 翻译面板头部「自动」拨杆：浮窗内直接开关划词自动翻译（写回设置并广播
+// settings-saved；mock 宿主会合并 translate 段，回环后拨杆与设置保持一致）。
+const autoSwitch = container.querySelector('.lib-sel-trans .lib-mini-switch')
+assert.ok(autoSwitch, 'translate panel header carries the auto-translate switch')
+assert.equal(autoSwitch.getAttribute('role'), 'switch', 'the toggle is exposed as a switch')
+assert.equal(autoSwitch.getAttribute('aria-checked'), 'true', 'switch mirrors the active auto setting')
+await act(async () => {
+  autoSwitch.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  for (let i = 0; i < 6; i += 1) await tick()
+})
+const switchBody = [...bodies].reverse().find(body => body.endpoint === 'settings-set')
+assert.ok(switchBody?.payload?.patch?.translate?.auto === false, 'switch posted translate.auto=false')
+assert.equal(switchBody.payload.patch.translate.modelSource, 'follow', 'the patch keeps the other translate fields')
+assert.equal(stateSettings.translate.auto, false, 'mock host applied the toggle off')
+assert.equal(container.querySelector('.lib-sel-trans .lib-mini-switch').getAttribute('aria-checked'), 'false', 'switch flipped off')
+await act(async () => {
+  container.querySelector('.lib-sel-trans .lib-mini-switch').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  for (let i = 0; i < 6; i += 1) await tick()
+})
+assert.equal(stateSettings.translate.auto, true, 'toggle back on persists through the same path')
+assert.equal(container.querySelector('.lib-sel-trans .lib-mini-switch').getAttribute('aria-checked'), 'true', 'switch back on')
 // 点击别处 → 浮窗关闭，翻译随之中止。
 fakeSelection.isCollapsed = true
 await act(async () => {
@@ -1612,6 +1641,86 @@ assert.ok(container.textContent.includes('已断开文库数据库连接'), 'the
 syncDetaches = false
 detachedFixture = false
 detachRoot.unmount()
+
+// 阅读器标签与阅读进度跨面板开关持久化（reader-store）：打开 PDF → 跳到第 2 页
+// → 卸载重挂（= 从文库切回 dsh 对话再切回文库）→ 标签、页码、批注原样恢复且
+// 不重新下载文件（模块级热缓存）；切标签同样回到记住的页码；关掉标签则清空
+// 持久化的标签列表。冷启动（重启 dsh）后的恢复走同一 restore 路径，只是字节
+// 要重新拉取，真机验证覆盖。
+console.log('MARK reader restore')
+{
+  const mountPage = async () => {
+    const pageRoot = ReactDOMClient.createRoot(container)
+    await act(async () => {
+      pageRoot.render(React.createElement(Page, {
+        ...(injectFns.get('main:library')?.() ?? {}),
+        layout,
+        openNativeSession: id => nativeOpens.push(id),
+        retainSession: (sessionId, signal) => ({ sessionId, release() {} }),
+        SessionProvider: (props) => React.createElement('div', null, props.children),
+        renderSlot: (key) => React.createElement('div', { 'data-slot': key }, 'native-conversation'),
+      }))
+      for (let i = 0; i < 10 && !container.querySelector('.lib-pdf-root') && !container.querySelector('.lib-items'); i += 1) await tick()
+    })
+    return pageRoot
+  }
+  const hitsBefore = fileRouteHits
+  const firstRoot = await mountPage()
+  await act(async () => {
+    container.querySelector('[data-key="AAAAAAAA"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    for (let i = 0; i < 4; i += 1) await tick()
+  })
+  const openPdfButton = [...container.querySelectorAll('button')].find(node => node.textContent.includes('打开 PDF'))
+  assert.ok(openPdfButton, 'open PDF button rendered for the restore scenario')
+  await act(async () => {
+    openPdfButton.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    for (let i = 0; i < 6; i += 1) await tick()
+  })
+  assert.ok(container.querySelector('.lib-pdf-root'), 'viewer open before the simulated panel switch')
+  await act(async () => {
+    container.querySelector('.lib-pdf-link[data-external="0"]')
+      .dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }))
+    for (let i = 0; i < 4; i += 1) await tick()
+  })
+  assert.equal(container.querySelector('.lib-rdr-page-input').value, '2', 'reader sits on page 2 before the switch')
+  const storedTabs = JSON.parse(localStorage.getItem('dsh-zot-library:reader-tabs'))
+  assert.equal(storedTabs?.active, 'CCCCCCCC', 'the open tab is persisted under its attachment key')
+  firstRoot.unmount()
+
+  // 卸载重挂 = 用户从文库切到原始对话再切回文库。
+  const secondRoot = await mountPage()
+  assert.ok(container.querySelector('.lib-pdf-root'), 'the viewer tab survives the panel switch')
+  assert.equal(container.querySelector('.lib-rdr-page-input').value, '2', 'reading progress restores to page 2')
+  assert.ok(container.querySelector('.lib-pdf-annos g[data-anno-key="DDDDDDDD"]'), 'annotations reload into the restored viewer')
+  assert.equal(fileRouteHits, hitsBefore + 1, 'the hot cache serves the bytes: no refetch after switching back')
+  // 保温查看器：面板内切到文献列表再切回，查看器组件原样保留（同一 canvas
+  // 节点、无重渲），页面状态不闪「正在解析」。
+  const warmCanvas = container.querySelector('.lib-pdf-page canvas')
+  assert.ok(warmCanvas, 'a canvas exists to identity-check the warm viewer against')
+  await act(async () => {
+    const listTab = [...container.querySelectorAll('.lib-midcol .lib-tab')].find(node => node.textContent.includes('文献列表'))
+    listTab.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    for (let i = 0; i < 3; i += 1) await tick()
+  })
+  assert.ok(container.querySelector('.lib-items'), 'the list tab still works after restore')
+  assert.ok(container.querySelector('.lib-pdf-root'), 'the warm viewer stays mounted (hidden) while the list is shown')
+  await act(async () => {
+    const pdfTab = [...container.querySelectorAll('.lib-midcol .lib-tab')].find(node => !node.textContent.includes('文献列表'))
+    pdfTab.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    for (let i = 0; i < 3; i += 1) await tick()
+  })
+  assert.equal(container.querySelector('.lib-rdr-page-input').value, '2', 'switching tabs returns to the remembered page')
+  assert.equal(container.querySelector('.lib-pdf-page canvas'), warmCanvas, 'the warm viewer keeps its canvas node across tab switches (no re-render)')
+  assert.ok(!container.textContent.includes('正在解析'), 'the warm switch never shows the parsing placeholder')
+  await act(async () => {
+    container.querySelector('.lib-tab .lib-tab-close').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+    for (let i = 0; i < 3; i += 1) await tick()
+  })
+  assert.ok(!container.querySelector('.lib-pdf-root'), 'closing the restored tab works')
+  const storedAfterClose = JSON.parse(localStorage.getItem('dsh-zot-library:reader-tabs'))
+  assert.equal(storedAfterClose?.tabs.length, 0, 'closing the tab clears the persisted tab list')
+  secondRoot.unmount()
+}
 
 // The 文库 settings page (rendered inside dsh's native settings modal) mounts
 // standalone: tabbed rows over the mock channel, no crash, save flow wired.

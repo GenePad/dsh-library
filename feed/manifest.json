@@ -1,23 +1,23 @@
 {
-  "version": "0.6.1",
+  "version": "0.6.2",
   "base": "../",
-  "publishedAt": 1794450263366,
+  "publishedAt": 1794475672287,
   "notes": "",
   "files": [
     {
       "path": "package.json",
       "size": 1871,
-      "sha256": "aaa24c4016f033ab7b22966695b3806276017cd88fe8bf93015170261ce02232"
+      "sha256": "157db8e359ac0c21b434851ee36151d15ef0d70a8719f7cc402308c77042424a"
     },
     {
       "path": "index.js",
-      "size": 8060,
-      "sha256": "71162f7fce2006ad2fc102e32e0eb58584505b68f82d44a2024adecb87aa741d"
+      "size": 8351,
+      "sha256": "2a88a7ecd2f3bf831b530bb3e2c6e0b286e4eb94f2943e318cc58d1d6e7b3866"
     },
     {
       "path": "client.js",
-      "size": 1879645,
-      "sha256": "9ea9bd0aff88e0db74cf199934f4b9df892222c139806d18a1b42bfcf24ec28c"
+      "size": 1887407,
+      "sha256": "6e439d25f8a75094754b28bcda85372910b2d45051b8834a2a92a5280ddb57e7"
     },
     {
       "path": "cordis.patch.yml",
@@ -86,8 +86,8 @@
     },
     {
       "path": "src/client/library-page.jsx",
-      "size": 72376,
-      "sha256": "b2b51a88247278573bacfafa29b7606e2c8833c46292c64d152b47c5907e9de7"
+      "size": 77733,
+      "sha256": "748299e6db49c0080bae624bde035cc064504fd671c34e09d4997eb958a31a0b"
     },
     {
       "path": "src/client/pdf-util.js",
@@ -96,13 +96,18 @@
     },
     {
       "path": "src/client/pdf-viewer.jsx",
-      "size": 71919,
-      "sha256": "4b4ae3a86825b96693aba5b76f384faec37dcb21573bfd9608bacdf8cc86ba93"
+      "size": 82484,
+      "sha256": "b506e7fe0b79ee2e7e1401d902a3fec1bc27d04c83dfced5f826a798c148e427"
     },
     {
       "path": "src/client/platform.jsx",
       "size": 748,
       "sha256": "8a5a969f553e0ed15f25ae87974d3183f026551f2be886cece3e4b172f05dae3"
+    },
+    {
+      "path": "src/client/reader-store.js",
+      "size": 6706,
+      "sha256": "2fc622c5829ad3d29b656631e7f897be5210825212f47938300710e29daf722c"
     },
     {
       "path": "src/client/settings-section.jsx",
@@ -111,8 +116,8 @@
     },
     {
       "path": "src/client/styles.js",
-      "size": 53520,
-      "sha256": "c76e2adc4ba0967dd25dff024eb3951e1dd5181108451753ae7c01d887fb6fa0"
+      "size": 54560,
+      "sha256": "7eafdf440885868f6a7b798a5206fefefdc78e8c9565d7ecf0ef24f2adaf6c29"
     },
     {
       "path": "src/client/util.js",
@@ -566,8 +571,8 @@
     },
     {
       "path": "AGENTS.md",
-      "size": 112125,
-      "sha256": "507636087b0a85dbe4b9411a04a4e6fda59a9d7233c3ec4e1afe9ae6870849d6"
+      "size": 117779,
+      "sha256": "0fd4cafc75e67121e9a23c802cea71cc9677314febbdbf0688f5d6f969dfac09"
     }
   ]
 }

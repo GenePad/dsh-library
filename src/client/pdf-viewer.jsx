@@ -22,6 +22,8 @@ import {
 } from './platform.jsx'
 import * as api from './api.js'
 import { useDebounced } from './util.js'
+import { SETTINGS_SAVED_EVENT } from './settings-section.jsx'
+import { saveView, retainDoc, takeDoc } from './reader-store.js'
 import {
   SearchIcon, RotateLeftIcon, RotateRightIcon, HighlightIcon, UnderlineIcon,
   CopyIcon, CloseIcon, ChevronRightIcon,
@@ -556,12 +558,17 @@ function SelectionPopup({
   popup, noteMode, noteDraft, onNoteDraft, onNoteSubmit, onNoteCancel, onNoteMode,
   color, onColorChange, onHighlight, onUnderline, maxWidth,
   translateOn, onTranslateMode, onTranslateClose, onTranslateToNote,
+  autoTranslate, onToggleAutoTranslate,
 }) {
   // Translation streams inside this popup; closing the popup (unmount) aborts.
   const [trans, setTrans] = React.useState(() => ({
     phase: 'connecting', thinking: '', answer: '', error: '',
   }))
   const [thinkOpen, setThinkOpen] = React.useState(true)
+  // 划词自动翻译的镜像态：拨杆乐观翻转，落库失败由 onToggleAutoTranslate 通知，
+  // 设置在别处（设置页）变化时随 prop 回正。
+  const [autoOn, setAutoOn] = React.useState(autoTranslate === true)
+  React.useEffect(() => { setAutoOn(autoTranslate === true) }, [autoTranslate])
   const answerRef = React.useRef(null)
   React.useEffect(() => {
     if (!translateOn) return undefined
@@ -681,6 +688,26 @@ function SelectionPopup({
           <div className="lib-sel-trans-head">
             <span className="lib-sel-trans-title">翻译</span>
             {phaseLabel ? <span className="lib-sel-trans-status">{phaseLabel}</span> : null}
+            <span
+              className="lib-sel-trans-auto"
+              title="划词后自动翻译：选中文字即开始翻译，无需点「译」（同设置页「划词后自动翻译」）"
+            >
+              <span className="lib-sel-trans-auto-label">自动</span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={autoOn}
+                aria-label="划词后自动翻译"
+                title={autoOn ? '关闭自动翻译' : '开启自动翻译（选中即译）'}
+                className={`lib-mini-switch${autoOn ? ' on' : ''}`}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  const next = !autoOn
+                  setAutoOn(next)
+                  onToggleAutoTranslate?.(next)
+                }}
+              ><span className="lib-mini-switch-knob" /></button>
+            </span>
             <button className="lib-sel-trans-close" title="关闭翻译" onClick={onTranslateClose}><CloseIcon size={12} /></button>
           </div>
           {trans?.thinking ? (
@@ -768,7 +795,8 @@ function ReaderPane({
   doc, numPages, base, dimsRef, dimsVersion, pageDataOf, rawDimsOf,
   annotationsByPage, attachmentKey, refreshAnnotations, updateAnnotation, deleteAnnotation,
   onNotify, onOpenNative, openWithApps, split, onToggleSplit, axis, onToggleAxis, isActive,
-  onActivate, color, onColorChange, basis, paneIndex, paneViewsRef, initialView, translateAuto,
+  onActivate, color, onColorChange, basis, paneIndex, paneViewsRef, paneAnchorFnsRef, initialView, translateSettings,
+  onViewState, dimsReady,
 }) {
   const [page, setPage] = React.useState(() => Math.max(1, Math.round(Number(initialView?.page) || 1)))
   // null = fit width; otherwise an explicit zoom factor.
@@ -810,13 +838,26 @@ function ReaderPane({
   const noteModeRef = React.useRef(false)
   noteModeRef.current = noteMode
   // 划词自动翻译（设置开关）：mouseup 建浮窗时直接进入翻译，免点「译」。
+  const translateAuto = translateSettings?.auto === true
   const translateAutoRef = React.useRef(false)
-  translateAutoRef.current = translateAuto === true
+  translateAutoRef.current = translateAuto
+  // 浮窗「自动」拨杆：写回 translate.auto 并广播 settings-saved——设置页、
+  // library-page 快照与下一次划词全部走同一条已验证的刷新路径。
+  const toggleAutoTranslate = React.useCallback((next) => {
+    const base = translateSettings && typeof translateSettings === 'object'
+      ? translateSettings
+      : { thinking: false, modelSource: 'follow', model: '' }
+    void (async () => {
+      try {
+        const saved = await api.call('settings-set', { patch: { translate: { ...base, auto: next === true } } })
+        window.dispatchEvent(new CustomEvent(SETTINGS_SAVED_EVENT, { detail: saved }))
+      } catch (error) {
+        onNotify?.(`自动翻译设置保存失败：${error?.message ?? error}`)
+      }
+    })()
+  }, [translateSettings, onNotify])
   const findRef = React.useRef(null)
   findRef.current = find
-  // Report this pane's view state so a NEW split pane can start from the
-  // existing pane's current page/zoom/rotation instead of the beginning.
-  if (paneViewsRef) paneViewsRef.current[paneIndex] = { page, zoom, rotations }
 
   /** Per-page display box: own aspect, swapped for rotated pages. */
   const pageGeometry = React.useCallback((index) => {
@@ -842,11 +883,17 @@ function ReaderPane({
 
   // Track the scroll container's CONTENT width (drives fit-width and the zoom
   // label); clientWidth includes the scroll column's 9px side padding, which
-  // the page boxes must not occupy.
+  // the page boxes must not occupy. A hidden warm tab (display:none) measures
+  // zero — keep the last width then, or the fit-width zoom would collapse and
+  // the scroll position would be wrecked while the tab sits in the background.
   React.useEffect(() => {
     const element = scrollRef.current
     if (!element || typeof ResizeObserver === 'undefined') return undefined
-    const measure = () => setContainerWidth(Math.max(80, element.clientWidth - 18))
+    const measure = () => {
+      const width = element.clientWidth - 18
+      if (width <= 0) return
+      setContainerWidth(Math.max(80, width))
+    }
     const observer = new ResizeObserver(measure)
     observer.observe(element)
     measure()
@@ -867,9 +914,51 @@ function ReaderPane({
     element.scrollTop = total > 0 ? ratio * total : 0
   }, [])
 
+  // Content anchor of this pane's viewport: which page sits at the top edge
+  // and how far into that page (fraction of the page box). The second split
+  // pane maps it through its OWN layout, so both screens show the same content
+  // even when their viewport sizes (or fit-width zooms) differ. Live DOM read —
+  // the scroll position changes without a re-render (a jump whose setPage
+  // bails out), so it must be captured at split time, not during render.
+  const captureContentAnchor = React.useCallback(() => {
+    const element = scrollRef.current
+    if (!element || numPages === 0) return null
+    let top = PAGE_PAD
+    for (let i = 1; i <= numPages; i += 1) {
+      const { boxH } = pageGeometry(i)
+      if (element.scrollTop < top + boxH || i === numPages) {
+        // Slightly negative inside the top padding — kept, so restoring an
+        // identical layout reproduces the donor scrollTop bit-for-bit.
+        return { page: i, ratio: boxH > 0 ? Math.min(1, (element.scrollTop - top) / boxH) : 0 }
+      }
+      top += boxH + PAGE_GAP
+    }
+    return null
+  }, [numPages, pageGeometry])
+
+  const restoreContentAnchor = React.useCallback((anchor) => {
+    const element = scrollRef.current
+    if (!element) return
+    const index = Math.min(numPages, Math.max(1, Math.round(Number(anchor?.page) || 1)))
+    const ratio = Math.min(1, Number(anchor?.ratio) || 0)
+    const { boxH } = pageGeometry(index)
+    element.scrollTop = Math.max(0, pageTop(index) + ratio * boxH)
+  }, [numPages, pageGeometry, pageTop])
+
+  // Snapshot this pane's view state every render: a NEW split pane seeds from
+  // it (page/zoom/rotation). The scroll anchor is NOT part of this snapshot —
+  // it goes stale between renders (see captureContentAnchor); the viewer reads
+  // it through paneAnchorFnsRef at the moment split is entered.
+  if (paneViewsRef) paneViewsRef.current[paneIndex] = { page, zoom, rotations }
+  if (paneAnchorFnsRef) paneAnchorFnsRef.current[paneIndex] = captureContentAnchor
+
   const rotationSig = JSON.stringify(rotations)
-  // Keep the vertical anchor stable across relayouts (zoom / rotation).
+  // Keep the vertical anchor stable across relayouts (zoom / rotation). While
+  // a restored position is still pending, stand down: this effect's rAF would
+  // otherwise fire after the jump and scroll the pane back to where the mount
+  // happened to be (seen as pane 1 landing on page 1 after entering split).
   React.useEffect(() => {
+    if (pendingRestoreRef.current) return undefined
     const ratio = captureAnchor()
     const raf = requestAnimationFrame(() => restoreAnchor(ratio))
     return () => cancelAnimationFrame(raf)
@@ -880,7 +969,9 @@ function ReaderPane({
     scrollRafRef.current = requestAnimationFrame(() => {
       scrollRafRef.current = 0
       const element = scrollRef.current
-      if (!element) return
+      // Hidden warm tab: no user scrolling happens here; ignore stray events
+      // so background relayouts cannot corrupt the remembered page.
+      if (!element || element.clientWidth === 0) return
       // Scrolling detaches the popups from their anchors (and aborts an
       // in-flight translation — the panel unmounts with the popup).
       setPopup(previous => (previous ? null : previous))
@@ -901,6 +992,34 @@ function ReaderPane({
     const element = scrollRef.current
     if (element) element.scrollTop = Math.max(0, pageTop(index) - PAGE_PAD)
   }, [numPages, pageTop])
+
+  // Report this pane's position (page/zoom/rotations) whenever it moves — the
+  // viewer persists it per attachment (reader-store.js), so tab switches and
+  // panel switches reopen at the same place.
+  React.useEffect(() => {
+    onViewState?.({ page, zoom, rotations: { ...rotations } })
+  }, [page, zoom, rotations, onViewState])
+
+  // Restored position: apply once the layout is measurable (fit width needs the
+  // container width) and every page's raw dims are known (pageTop accumulates
+  // heights — jumping on partial dims would land short on mixed-size docs).
+  // A split pane carries the donor pane's content anchor and mirrors the exact
+  // viewport position; restored tabs (reader-store) only know a page number and
+  // land at that page's top.
+  const pendingRestoreRef = React.useRef(
+    initialView?.anchor && Number.isFinite(Number(initialView.anchor.page))
+      ? { anchor: { page: Number(initialView.anchor.page), ratio: Number(initialView.anchor.ratio) } }
+      : Number.isFinite(Number(initialView?.page)) && Number(initialView?.page) > 1
+        ? { page: Math.round(Number(initialView.page)) }
+        : null,
+  )
+  React.useEffect(() => {
+    const pending = pendingRestoreRef.current
+    if (!pending || containerWidth === 0 || !dimsReady) return
+    pendingRestoreRef.current = null
+    if (pending.anchor) restoreContentAnchor(pending.anchor)
+    else jumpToPage(pending.page)
+  }, [containerWidth, dimsReady, jumpToPage, restoreContentAnchor])
 
   const stepZoom = React.useCallback((direction) => {
     setZoom(previous => {
@@ -1369,6 +1488,8 @@ function ReaderPane({
           translateOn={translateMode}
           onTranslateMode={value => { if (value) startTranslateMode(); else setTranslateMode(false) }}
           onTranslateClose={() => setTranslateMode(false)}
+          autoTranslate={translateAuto}
+          onToggleAutoTranslate={toggleAutoTranslate}
           // 翻译结果落在下划线批注上（高亮盖住正文影响阅读，下划线 + 评论既能
           // 定位原文又保留译文）。
           onTranslateToNote={text => makeAnnotation(ANNOTATION_TYPES.underline, color, text ?? '')}
@@ -1397,18 +1518,44 @@ function ReaderPane({
  * @param {Uint8Array} props.bytes - raw PDF bytes (copied before pdf.js takes them).
  * @param {string} props.title - tab title (also the error dialog context).
  * @param {string} props.attachmentKey - attachment key; annotation CRUD targets it.
+ * @param {{page?: number, zoom?: number|null, rotations?: Record<string, number>, split?: boolean, splitRatio?: number}|null} [props.initialView]
+ *   restored reading position for this attachment (reader-store.js).
  * @param {(message: string) => void} [props.onNotify]
- * @param {boolean} [props.translateAuto] - 划词自动翻译（设置开关）。
+ * @param {{thinking?: boolean, auto?: boolean, modelSource?: string, model?: string}|null} [props.translateSettings]
+ *   settings.translate（library-page 透传）；`auto` 驱动划词自动翻译与浮窗拨杆。
  * @param {() => void} [props.onOpenNative] - hand the file to the OS reader.
  */
-export function PdfViewer({ bytes, title, attachmentKey, onNotify, onOpenNative, translateAuto }) {
+export function PdfViewer({ bytes, title, attachmentKey, onNotify, onOpenNative, translateSettings, initialView }) {
   const [phase, setPhase] = React.useState('loading') // loading | ready | error
   const [failMessage, setFailMessage] = React.useState('')
   const [numPages, setNumPages] = React.useState(0)
   const [dimsVersion, setDimsVersion] = React.useState(0)
   const [annotations, setAnnotations] = React.useState([])
-  const [split, setSplit] = React.useState(false)
-  const [splitRatio, setSplitRatio] = React.useState(0.5)
+  // Split state restores with the tab (initialView from reader-store.js), so a
+  // doc left in split view comes back in split view.
+  const [split, setSplit] = React.useState(() => initialView?.split === true)
+  const [splitRatio, setSplitRatio] = React.useState(() => {
+    const value = Number(initialView?.splitRatio)
+    return Number.isFinite(value) && value >= SPLIT_MIN && value <= SPLIT_MAX ? value : 0.5
+  })
+  // Pane 0 reports its position here on every move; the combined view state is
+  // persisted per attachment so restores (tab switches, panel switches,
+  // restarts) reopen at the same place.
+  const [pane0View, setPane0View] = React.useState(null)
+  // All page dims measured — a restored position must not jump on partial
+  // page heights (mixed-size docs would land short).
+  const [dimsReady, setDimsReady] = React.useState(false)
+  // Mount-time snapshot of the stored reading position (stable identity —
+  // ReaderPane seeds its initial state from it).
+  const [pane0Initial] = React.useState(() => (initialView
+    ? {
+      page: Number(initialView.page) || 1,
+      zoom: initialView.zoom === null || initialView.zoom === undefined
+        ? null
+        : (Number.isFinite(Number(initialView.zoom)) ? Number(initialView.zoom) : null),
+      rotations: { ...(initialView.rotations ?? {}) },
+    }
+    : null))
   // 'h' = 上下（横向分隔线），'v' = 左右（纵向分隔线）；默认横向并记住选择。
   const [axis, setAxis] = React.useState(restoreSplitAxis)
   const [activePane, setActivePane] = React.useState(0)
@@ -1422,79 +1569,122 @@ export function PdfViewer({ bytes, title, attachmentKey, onNotify, onOpenNative,
   const pageDataRef = React.useRef(new Map()) // pageNumber → {items, styles, index}
   // Each pane reports {page, zoom, rotations} here every render; entering
   // split snapshots pane 0's state so pane 1 starts from the current page.
+  // A restored split starts pane 1 from the same stored position. The scroll
+  // anchor is different: it lives in the DOM and changes without renders, so
+  // panes register their live capture functions and toggleSplit reads it at
+  // click time (a render-time copy is stale after jumps that bail out).
   const paneViewsRef = React.useRef([null, null])
+  const paneAnchorFnsRef = React.useRef([null, null])
   const splitRef = React.useRef(false)
   splitRef.current = split
-  const splitInitialStateRef = React.useRef(null)
+  const splitInitialStateRef = React.useRef(pane0Initial)
 
   const base = baseRef.current
 
-  // Parse the document whenever new bytes arrive.
+  // Parse the document whenever new bytes arrive — or resume a retained parse
+  // of the same file from the reader-store hot cache (tab/panel switches then
+  // skip the parse entirely; the warm path never shows the loading phase for
+  // more than a tick). Unmounting and byte swaps both HAND THE DOCUMENT BACK to
+  // the cache (LRU-capped there) instead of destroying it, so the next mount
+  // of this attachment reuses it.
   React.useEffect(() => {
     if (!bytes) return undefined
     let cancelled = false
     let loaded = null
-    setPhase('loading')
-    setFailMessage('')
-    setNumPages(0)
-    setAnnotations([])
-    dimsRef.current = []
-    setDimsVersion(value => value + 1)
-    pageDataRef.current.clear()
-    // pdf.js may take ownership of the buffer (structuredClone transfers), so
-    // hand it a copy and keep the tab's bytes intact for tab switches.
-    const task = pdfjsLib.getDocument({
-      data: bytes.slice(),
-      isEvalSupported: false,
-      onPassword: (update, reason) => {
-        let password = null
+    const handBack = (doc) => { if (doc) retainDoc(attachmentKey, doc, bytes) }
+    const resetForDoc = () => {
+      setFailMessage('')
+      setNumPages(0)
+      setAnnotations([])
+      setDimsReady(false)
+      dimsRef.current = []
+      setDimsVersion(value => value + 1)
+      pageDataRef.current.clear()
+    }
+    const goReady = (doc, first) => {
+      const viewport = first.getViewport({ scale: 1 })
+      baseRef.current = rawDimsOfViewport(viewport, first.rotate)
+      dimsRef.current[0] = baseRef.current
+      docRef.current = doc
+      setNumPages(doc.numPages)
+      setDimsVersion(value => value + 1)
+      setPhase('ready')
+    }
+    const warm = takeDoc(attachmentKey, bytes)
+    if (warm) {
+      loaded = warm
+      resetForDoc()
+      ;(async () => {
         try {
-          password = window.prompt(reason === 2 ? '密码不正确，请重新输入：' : '该 PDF 已加密，请输入密码：')
+          const first = await warm.getPage(1)
+          if (cancelled) {
+            handBack(warm)
+            return
+          }
+          goReady(warm, first)
         } catch {
-          // No blocking prompt available (test shells); fail into the error state.
+          // The retained document died somehow — fall back to a fresh parse.
+          if (!cancelled) startFresh()
         }
-        update(password)
-      },
-    })
-    ;(async () => {
-      try {
-        loaded = await task.promise
-        if (cancelled) {
-          loaded.destroy()
-          return
+      })()
+    } else {
+      startFresh()
+    }
+    function startFresh() {
+      setPhase('loading')
+      resetForDoc()
+      // pdf.js may take ownership of the buffer (structuredClone transfers), so
+      // hand it a copy and keep the tab's bytes intact for tab switches.
+      const task = pdfjsLib.getDocument({
+        data: bytes.slice(),
+        isEvalSupported: false,
+        onPassword: (update, reason) => {
+          let password = null
+          try {
+            password = window.prompt(reason === 2 ? '密码不正确，请重新输入：' : '该 PDF 已加密，请输入密码：')
+          } catch {
+            // No blocking prompt available (test shells); fail into the error state.
+          }
+          update(password)
+        },
+      })
+      ;(async () => {
+        try {
+          loaded = await task.promise
+          if (cancelled) {
+            handBack(loaded)
+            return
+          }
+          const first = await loaded.getPage(1)
+          if (cancelled) {
+            handBack(loaded)
+            return
+          }
+          goReady(loaded, first)
+        } catch (error) {
+          if (!cancelled) {
+            setFailMessage(loadErrorMessage(error))
+            setPhase('error')
+          }
         }
-        const first = await loaded.getPage(1)
-        if (cancelled) return
-        const viewport = first.getViewport({ scale: 1 })
-        baseRef.current = rawDimsOfViewport(viewport, first.rotate)
-        dimsRef.current[0] = baseRef.current
-        docRef.current = loaded
-        setNumPages(loaded.numPages)
-        setDimsVersion(value => value + 1)
-        setPhase('ready')
-      } catch (error) {
-        if (!cancelled) {
-          setFailMessage(loadErrorMessage(error))
-          setPhase('error')
-        }
-      }
-    })()
+      })()
+    }
     return () => {
       cancelled = true
-      if (loaded) loaded.destroy()
+      handBack(loaded)
     }
-  }, [bytes])
+  }, [bytes, attachmentKey])
 
-  // Full teardown when the viewer unmounts (tab closed / switched).
+  // The parse effect's cleanup has already handed the document back to the
+  // warm cache on unmount — just drop the reference here.
   React.useEffect(() => () => {
-    for (const entry of [docRef.current]) {
-      try { entry?.destroy() } catch { /* already gone */ }
-    }
     docRef.current = null
   }, [])
 
   // Measure every page's raw dims once (heights fill in for mixed-size docs);
-  // getPage also primes pdf.js' cache so later renders start instantly.
+  // getPage also primes pdf.js' cache so later renders start instantly. The
+  // pass's completion flips dimsReady so a restored position can jump with
+  // exact page heights.
   React.useEffect(() => {
     if (phase !== 'ready') return undefined
     const doc = docRef.current
@@ -1509,10 +1699,13 @@ export function PdfViewer({ bytes, title, attachmentKey, onNotify, onOpenNative,
           const viewport = proxy.getViewport({ scale: 1 })
           dimsRef.current[pageNumber - 1] = rawDimsOfViewport(viewport, proxy.rotate)
         } catch {
-          return
+          break
         }
       }
-      if (!cancelled) setDimsVersion(value => value + 1)
+      if (!cancelled) {
+        setDimsReady(true)
+        setDimsVersion(value => value + 1)
+      }
     })()
     return () => { cancelled = true }
   }, [phase])
@@ -1607,11 +1800,29 @@ export function PdfViewer({ bytes, title, attachmentKey, onNotify, onOpenNative,
     return map
   }, [annotations])
 
+  // 阅读进度落盘（reader-store.js）：位置来自 pane 0，分屏来自本组件。切走
+  // 面板 / 切换标签 / 重启 dsh 后，同一篇文献都从这里恢复。
+  React.useEffect(() => {
+    if (!pane0View) return
+    saveView(attachmentKey, {
+      page: pane0View.page,
+      zoom: pane0View.zoom,
+      rotations: pane0View.rotations,
+      split,
+      splitRatio,
+    })
+  }, [pane0View, split, splitRatio, attachmentKey])
+
   const toggleSplit = React.useCallback(() => {
     if (!splitRef.current) {
       // Entering split: the second pane starts from the FIRST pane's current
-      // position, not from page 1.
-      splitInitialStateRef.current = paneViewsRef.current[0]
+      // position, not from page 1 — including its exact viewport position
+      // (content anchor read live at this moment, see paneAnchorFnsRef).
+      const donor = paneViewsRef.current[0]
+      const capture = paneAnchorFnsRef.current[0]
+      splitInitialStateRef.current = donor
+        ? { ...donor, anchor: capture ? capture() : null }
+        : null
     }
     setSplit(previous => !previous)
     setActivePane(0)
@@ -1688,7 +1899,9 @@ export function PdfViewer({ bytes, title, attachmentKey, onNotify, onOpenNative,
     color: annoColor,
     onColorChange: setAnnoColor,
     paneViewsRef,
-    translateAuto,
+    paneAnchorFnsRef,
+    translateSettings,
+    dimsReady,
   }
 
   return (
@@ -1703,7 +1916,8 @@ export function PdfViewer({ bytes, title, attachmentKey, onNotify, onOpenNative,
           isActive={activePane === 0}
           onActivate={() => setActivePane(0)}
           basis={split ? `${(splitRatio * 100).toFixed(1)}%` : null}
-          initialView={null}
+          initialView={pane0Initial}
+          onViewState={setPane0View}
         />
         {split ? (
           <>

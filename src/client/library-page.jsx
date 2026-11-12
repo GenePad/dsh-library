@@ -7,6 +7,7 @@ import { ChatDock } from './chat-dock.jsx'
 import { SETTINGS_SAVED_EVENT } from './settings-section.jsx'
 import { CollectionDialog } from './create-dialog.jsx'
 import { PdfViewer } from './pdf-viewer.jsx'
+import { rememberReader, restoreReader, restoreViews } from './reader-store.js'
 import { ItemContextMenu, PromptDialog } from './item-menu.jsx'
 import {
   ChevronLeftIcon, ChevronRightIcon, GearIcon, LibraryIcon, PlusIcon, PdfIcon, SearchIcon, SyncIcon, WandIcon,
@@ -18,6 +19,10 @@ const VIEW_STORAGE = 'dsh-zot-library:view'
 const SORT_STORAGE = 'dsh-zot-library:sort'
 // Right pane (文献信息) visibility, remembered across sessions like view/sort.
 const DETAILS_STORAGE = 'dsh-zot-library:details-open'
+// 保温查看器上限：最近查看的 PDF 标签保持挂载（隐藏不占布局），标签/列表/标签
+// 之间切换零重渲（canvas 位图与滚动位置原样保留）。超限的最久未看标签卸载，
+// 其解析好的文档进 reader-store 文档热缓存（LRU 3 份），回来也免重新解析。
+const WARM_VIEWER_LIMIT = 4
 
 function flattenCollections(nodes, depth = 0, out = []) {
   for (const node of nodes ?? []) {
@@ -226,10 +231,24 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
   }, [createMenuOpen, identifierOpen])
   // In-app viewer tabs: [{key, parentKey, title, bytes}]; '' active = the list
   // view. Tabs host the pdf.js viewer (the "dsh 内建查看器"), which owns
-  // selection, annotations, rotation and find.
-  const [reader, setReader] = React.useState({ tabs: [], active: '' })
+  // selection, annotations, rotation and find. The tab list (metadata) and each
+  // document's reading position persist across panel switches and dsh restarts
+  // via reader-store.js — switching to the conversation and back restores them
+  // (bytes come from the hot cache without a refetch; after a restart they are
+  // pulled again when the tab activates).
+  const [reader, setReader] = React.useState(restoreReader)
   const readerRef = React.useRef(reader)
   readerRef.current = reader
+  // 保温查看器的 MRU 序：最近激活的标签优先保留挂载（上限 WARM_VIEWER_LIMIT，
+  // 见 warmTabs），更久的标签卸载后靠 reader-store 的文档热缓存免解析回来。
+  const warmOrderRef = React.useRef([])
+  React.useEffect(() => {
+    if (reader.active === '') return
+    warmOrderRef.current = [reader.active, ...warmOrderRef.current.filter(key => key !== reader.active)]
+  }, [reader.active])
+  // Per-attachment reading progress, written by the viewer (saveView); read
+  // here to seed a tab's viewer at its last position when it mounts.
+  const readerViewsRef = React.useRef(restoreViews())
   // Host sidebar (the dsh conversation list): entering the library collapses
   // it, leaving restores it. The left pane's back-to-chat button is always
   // visible, so no visibility polling is needed.
@@ -445,6 +464,12 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
     }
   }, [view, sort, desc, detailsOpen, columns, columnWidths])
 
+  // Reader tabs persist too: the hot cache keeps bytes for instant panel
+  // switches, localStorage keeps the metadata for the next dsh run.
+  React.useEffect(() => {
+    rememberReader(reader)
+  }, [reader])
+
   // Reload whenever the view, search text or sort changes.
   React.useEffect(() => {
     if (booting || snapshot?.available !== true) return
@@ -459,10 +484,60 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
   // selected row in the list, or the article behind the active reader tab.
   const activeReaderTab = reader.active !== '' ? reader.tabs.find(tab => tab.key === reader.active) : undefined
   const detailKey = activeReaderTab ? (activeReaderTab.parentKey || activeReaderTab.key) : activeKey
+  // 保温标签：有字节的标签按 MRU 截到上限（活动标签强制入选，顶掉最久未看的），
+  // 顺序跟随 reader.tabs——成员变化只在尾部增删，不重排 DOM，查看器实例原样保留。
+  const warmTabs = (() => {
+    const candidates = reader.tabs.filter(tab => tab.bytes)
+    if (candidates.length <= WARM_VIEWER_LIMIT) return candidates
+    const order = warmOrderRef.current
+    const rank = key => {
+      const index = order.indexOf(key)
+      return index === -1 ? order.length + candidates.length : index
+    }
+    const sorted = [...candidates].sort((a, b) => rank(a.key) - rank(b.key))
+    const keep = sorted.slice(0, WARM_VIEWER_LIMIT)
+    if (activeReaderTab?.bytes && !keep.some(tab => tab.key === activeReaderTab.key)) {
+      keep[keep.length - 1] = activeReaderTab
+    }
+    const chosen = new Set(keep.map(tab => tab.key))
+    return candidates.filter(tab => chosen.has(tab.key))
+  })()
 
   React.useEffect(() => {
     void loadDetail(detailKey)
   }, [detailKey, loadDetail])
+
+  // 恢复出来的标签（重启 dsh 后）只有元数据：成为活动标签时再拉取文件字节；
+  // 拉不到（附件已删 / 换了文库）就把该标签摘掉，避免查看器永远停在「正在解析」。
+  React.useEffect(() => {
+    const tab = activeReaderTab
+    if (!tab || tab.bytes) return undefined
+    const key = tab.key
+    let cancelled = false
+    ;(async () => {
+      try {
+        const bundle = await fetchPdfBundle(key)
+        if (cancelled) return
+        setReader(previous => {
+          if (!previous.tabs.some(entry => entry.key === key)) return previous
+          return {
+            ...previous,
+            tabs: previous.tabs.map(entry => (entry.key === key
+              ? { ...entry, bytes: bundle.bytes, parentKey: bundle.parentKey || entry.parentKey, title: bundle.title || entry.title }
+              : entry)),
+          }
+        })
+      } catch (error) {
+        if (cancelled) return
+        setReader(previous => ({
+          tabs: previous.tabs.filter(entry => entry.key !== key),
+          active: previous.active === key ? '' : previous.active,
+        }))
+        notify(`无法恢复标签「${tab.title}」：${error?.message ?? error}`)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [activeReaderTab?.key, activeReaderTab?.bytes]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Poll the host so changes made by the agent or by Zotero show up, and so a
   // locked library (Zotero running) recovers the moment Zotero exits — the
@@ -537,51 +612,83 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
     await openInApp(key)
   }
 
+  // Fetch the file bytes + identity headers for one attachment. Shared by
+  // openInApp (fresh open) and the restore path (a tab remembered from an
+  // earlier panel visit / dsh run whose bytes are not in memory). Error codes
+  // ride on the Error so callers can route (web fallback / native open).
+  const fetchPdfBundle = async (key) => {
+    // Binary streaming route: no base64 round trip, so large papers open fast.
+    const response = await fetch(`api/library/file?key=${encodeURIComponent(key)}`, { credentials: 'same-origin' })
+    if (!response.ok) {
+      let message = `HTTP ${response.status}`
+      let code = ''
+      let url = ''
+      try {
+        const body = await response.json()
+        message = body?.error?.message ?? message
+        code = String(body?.error?.code ?? '')
+        url = String(body?.error?.url ?? '')
+      } catch { /* non-JSON error body */ }
+      const error = new Error(message)
+      error.code = code
+      error.url = url
+      throw error
+    }
+    const contentType = response.headers.get('content-type') ?? 'application/pdf'
+    if (contentType !== 'application/pdf') {
+      // Only PDFs render in the in-app viewer; everything else opens natively.
+      const error = new Error('该附件不是 PDF')
+      error.code = 'library/not-pdf'
+      throw error
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    return {
+      bytes,
+      attachmentKey: response.headers.get('x-library-attachment-key') ?? key,
+      parentKey: response.headers.get('x-library-parent-key') ?? key,
+      title: decodeURIComponent(response.headers.get('x-library-title') ?? 'PDF'),
+    }
+  }
+
   const openInApp = async (key) => {
     try {
-      // Binary streaming route: no base64 round trip, so large papers open fast.
-      const response = await fetch(`api/library/file?key=${encodeURIComponent(key)}`, { credentials: 'same-origin' })
-      if (!response.ok) {
-        let message = `HTTP ${response.status}`
-        let code = ''
-        let url = ''
-        try {
-          const body = await response.json()
-          message = body?.error?.message ?? message
-          code = String(body?.error?.code ?? '')
-          url = String(body?.error?.url ?? '')
-        } catch { /* non-JSON error body */ }
-        // No openable file, but the record points at the web (url field / DOI):
-        // open the browser instead of showing an error (Zotero's behaviour).
-        if (code === 'library/open-url' && /^https?:\/\//i.test(url)) {
-          try {
-            await api.call('open-url', { url })
-          } catch (openError) {
-            notify(openError?.message ?? String(openError))
-          }
-          return
-        }
-        throw new Error(message)
-      }
-      const contentType = response.headers.get('content-type') ?? 'application/pdf'
-      if (contentType !== 'application/pdf') {
-        // Only PDFs render in the in-app viewer; everything else opens natively.
-        await api.call('open', { key })
-        return
-      }
-      const bytes = new Uint8Array(await response.arrayBuffer())
-      const attachmentKey = response.headers.get('x-library-attachment-key') ?? key
-      const parentKey = response.headers.get('x-library-parent-key') ?? key
-      const title = decodeURIComponent(response.headers.get('x-library-title') ?? 'PDF')
+      const bundle = await fetchPdfBundle(key)
       setReader(previous => {
-        const existing = previous.tabs.find(tab => tab.key === attachmentKey)
-        if (existing) return { ...previous, active: attachmentKey }
+        const existing = previous.tabs.find(tab => tab.key === bundle.attachmentKey)
+        if (existing) {
+          // A restored tab (metadata only, no bytes yet) fills in here too.
+          return {
+            ...previous,
+            active: bundle.attachmentKey,
+            tabs: previous.tabs.map(entry => (entry.key === bundle.attachmentKey && !entry.bytes
+              ? { ...entry, bytes: bundle.bytes, parentKey: bundle.parentKey, title: bundle.title }
+              : entry)),
+          }
+        }
         return {
-          tabs: [...previous.tabs, { key: attachmentKey, parentKey, title, bytes }],
-          active: attachmentKey,
+          tabs: [...previous.tabs, { key: bundle.attachmentKey, parentKey: bundle.parentKey, title: bundle.title, bytes: bundle.bytes }],
+          active: bundle.attachmentKey,
         }
       })
     } catch (error) {
+      // No openable file, but the record points at the web (url field / DOI):
+      // open the browser instead of showing an error (Zotero's behaviour).
+      if (error.code === 'library/open-url' && /^https?:\/\//i.test(error.url ?? '')) {
+        try {
+          await api.call('open-url', { url: error.url })
+        } catch (openError) {
+          notify(openError?.message ?? String(openError))
+        }
+        return
+      }
+      if (error.code === 'library/not-pdf') {
+        try {
+          await api.call('open', { key })
+        } catch (openError) {
+          showError(openError)
+        }
+        return
+      }
       showError(error)
     }
   }
@@ -1540,62 +1647,66 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
             />
             <div className="lib-midcol">
               {tabsRow}
-              {activeReaderTab ? (
-                <>
-                  <div className="lib-reader">
-                    <PdfViewer
-                      key={activeReaderTab.key}
-                      bytes={activeReaderTab.bytes}
-                      title={activeReaderTab.title}
-                      attachmentKey={activeReaderTab.key}
-                      onNotify={showError}
-                      translateAuto={snapshot?.settings?.translate?.auto === true}
-                      onOpenNative={() => {
-                        void api.call('open', { key: activeReaderTab.key }).catch(error => showError(error))
-                      }}
-                    />
-                  </div>
-                  {dock}
-                </>
-              ) : (
-                <>
-                  <ItemsPane
-                    items={items}
-                    total={total}
-                    view={view}
-                    sort={sort}
-                    desc={desc}
-                    loading={itemsLoading}
-                    selectedKeys={selectedKeys}
-                    activeKey={activeKey}
-                    onSelect={selectItem}
-                    onOpen={openItem}
+              {/* 保温查看器：warmTabs 内的查看器常驻挂载，隐藏不占布局——标签
+                  与文献列表之间切换瞬间回到原画面（canvas/滚动/查找都保留）；
+                  超出 MRU 上限的标签在此卸载，文档进热缓存供快速恢复。 */}
+              {warmTabs.map(tab => (
+                <div
+                  key={tab.key}
+                  className="lib-reader"
+                  style={tab.key === reader.active ? undefined : { display: 'none' }}
+                >
+                  <PdfViewer
+                    key={tab.key}
+                    bytes={tab.bytes}
+                    title={tab.title}
+                    attachmentKey={tab.key}
+                    initialView={readerViewsRef.current[tab.key] ?? null}
                     onNotify={showError}
-                    onSort={(next) => {
-                      if (next === sort) setDesc(value => !value)
-                      else {
-                        setSort(next)
-                        setDesc(next !== 'title')
-                      }
+                    translateSettings={snapshot?.settings?.translate ?? null}
+                    onOpenNative={() => {
+                      void api.call('open', { key: tab.key }).catch(error => showError(error))
                     }}
-                    onLoadMore={() => { void safeLoadItems({ append: true }) }}
-                    onImportFiles={importFiles}
-                    importing={importing}
-                    columns={columns}
-                    onSetColumns={setColumns}
-                    columnWidths={columnWidths}
-                    onSetColumnWidth={(id, width) => setColumnWidths(previous => {
-                      const next = { ...previous }
-                      if (Number.isFinite(width)) next[id] = width
-                      else delete next[id]
-                      return next
-                    })}
-                    reveal={reveal}
-                    onContextMenu={setContextMenu}
                   />
-                  {dock}
-                </>
-              )}
+                </div>
+              ))}
+              {!activeReaderTab ? (
+                <ItemsPane
+                  items={items}
+                  total={total}
+                  view={view}
+                  sort={sort}
+                  desc={desc}
+                  loading={itemsLoading}
+                  selectedKeys={selectedKeys}
+                  activeKey={activeKey}
+                  onSelect={selectItem}
+                  onOpen={openItem}
+                  onNotify={showError}
+                  onSort={(next) => {
+                    if (next === sort) setDesc(value => !value)
+                    else {
+                      setSort(next)
+                      setDesc(next !== 'title')
+                    }
+                  }}
+                  onLoadMore={() => { void safeLoadItems({ append: true }) }}
+                  onImportFiles={importFiles}
+                  importing={importing}
+                  columns={columns}
+                  onSetColumns={setColumns}
+                  columnWidths={columnWidths}
+                  onSetColumnWidth={(id, width) => setColumnWidths(previous => {
+                    const next = { ...previous }
+                    if (Number.isFinite(width)) next[id] = width
+                    else delete next[id]
+                    return next
+                  })}
+                  reveal={reveal}
+                  onContextMenu={setContextMenu}
+                />
+              ) : null}
+              {dock}
             </div>
             {detailsOpen ? (
               <div className="lib-right-wrap">

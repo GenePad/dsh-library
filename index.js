@@ -4,6 +4,7 @@
 // declaration and binds to the bundle row whose name is this package.
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import { Readable } from 'node:stream'
 import { createLibraryRuntime } from './src/host/runtime.js'
 import { createChannel } from './src/host/channel.js'
@@ -11,7 +12,10 @@ import { createTools } from './src/host/tools.js'
 import { chatGuidance } from './src/host/chat.js'
 
 export const name = 'library'
-export const version = '0.6.0'
+// Single source of truth: package.json. A hardcoded constant WILL go stale
+// (0.6.0 shipped while package.json said 0.6.1) and the updater then offers
+// the current release as an update forever.
+export const version = createRequire(import.meta.url)('./package.json').version
 
 // The plugin cannot do anything useful without the authenticated connection
 // (the API route) or a session controller (the chat dock).

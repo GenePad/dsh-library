@@ -625,12 +625,30 @@ body.lib-col-resizing .lib-colresize { background: color-mix(in srgb, var(--lib-
 .lib-sel-trans-head { display: flex; align-items: center; gap: 6px; min-height: 20px; }
 .lib-sel-trans-title { font-weight: 600; font-size: 12px; color: var(--lib-text); }
 .lib-sel-trans-status { font-size: 11px; color: var(--lib-text-3); }
+/* 「自动」拨杆：划词自动翻译的快捷开关（同设置页 translate.auto）。只用中性
+   hover 家族令牌——宿主品牌令牌（--lib-accent）夜间模式近白，不可作填充。 */
+.lib-sel-trans-auto {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 4px;
+  color: var(--lib-text-3); font-size: 11px; user-select: none;
+}
 .lib-sel-trans-close {
-  margin-left: auto; display: inline-flex; align-items: center; justify-content: center;
+  display: inline-flex; align-items: center; justify-content: center;
   width: 18px; height: 18px; border: none; background: none; border-radius: 4px;
   color: var(--lib-text-3); cursor: pointer; padding: 0;
 }
 .lib-sel-trans-close:hover { background: var(--lib-bg-hover); color: var(--lib-text); }
+.lib-mini-switch {
+  position: relative; width: 26px; height: 15px; padding: 0; flex: none;
+  border: 1px solid var(--lib-border); border-radius: 9px;
+  background: var(--lib-bg-hover); cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.lib-mini-switch .lib-mini-switch-knob {
+  position: absolute; top: 1px; left: 1px; width: 11px; height: 11px; border-radius: 50%;
+  background: var(--lib-text-3); transition: transform 0.15s ease, background 0.15s ease;
+}
+.lib-mini-switch.on { background: var(--lib-bg-active); border-color: var(--lib-text-3); }
+.lib-mini-switch.on .lib-mini-switch-knob { transform: translateX(11px); background: var(--lib-text); }
 .lib-sel-trans-think { border: 1px solid var(--lib-border-soft); border-radius: 5px; background: var(--lib-bg-soft); }
 .lib-sel-trans-think-head {
   display: flex; align-items: center; gap: 4px; width: 100%; padding: 3px 6px;

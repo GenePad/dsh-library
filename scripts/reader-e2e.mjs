@@ -25,7 +25,7 @@ fs.copyFileSync(SAMPLE, path.join(DIR, 'sample.pdf'))
 
 const fixtureBytes = fs.readFileSync(SAMPLE).toString('base64')
 const mockDataJs = JSON.stringify({
-  state: { available: true, dataDir: 'C:/Zotero', dbPath: '', storageDir: '', source: 'default', mode: 'zotero', schemaVersion: 125, counts: { items: 1, attachments: 1, annotations: 0, collections: 0, tags: 0, trash: 0 }, settings: { mode: 'zotero', zoteroDataDir: '', webdav: { url: '', username: '', hasPassword: false }, autoSync: false, updateFeed: '' }, sync: { running: false, last: null }, revision: 1, version: '0.8.0' },
+  state: { available: true, dataDir: 'C:/Zotero', dbPath: '', storageDir: '', source: 'default', mode: 'zotero', schemaVersion: 125, counts: { items: 1, attachments: 1, annotations: 0, collections: 0, tags: 0, trash: 0 }, settings: { mode: 'zotero', zoteroDataDir: '', webdav: { url: '', username: '', hasPassword: false }, autoSync: false, updateFeed: '', translate: { thinking: false, auto: false, modelSource: 'follow', model: '' } }, sync: { running: false, last: null }, revision: 1, version: '0.8.0' },
   collections: { collections: [], unfiled: 0, trash: 0, tags: [] },
   items: { total: 1, offset: 0, limit: 100, items: [{ key: 'AAAAAAAA', itemType: 'journalArticle', title: 'A test paper', date: '2024', year: 2024, doi: '', creators: 'Zhang', creatorList: [], publicationTitle: '', publisher: '', tags: [], firstCreator: 'Zhang', hasAttachment: true, dateAdded: '2026-01-01 00:00:00', dateModified: '2026-01-01 00:00:00' }] },
   item: { key: 'AAAAAAAA', itemType: 'journalArticle', title: 'A test paper', dateAdded: '', dateModified: '', version: 0, synced: false, deleted: false, fields: [{ field: 'title', value: 'A test paper' }], creators: [], tags: [], collections: [], attachments: [{ key: 'CCCCCCCC', title: 'sample.pdf', rawPath: 'storage:sample.pdf', linkMode: 0, contentType: 'application/pdf', syncState: 2, size: 1, target: { kind: 'file', path: 'C:/tmp/sample.pdf' } }], notes: [], annotations: [] },
@@ -46,6 +46,7 @@ const realFetch = window.fetch.bind(window)
 window.fetch = async (url, options) => {
   const target = String(url)
   if (target.includes('api/library/file')) {
+    window.__FILE_HITS = (window.__FILE_HITS ?? 0) + 1
     const bytes = new Uint8Array(await (await realFetch('./sample.pdf')).arrayBuffer())
     return {
       ok: true,
@@ -83,6 +84,13 @@ window.fetch = async (url, options) => {
     const body = JSON.parse(options.body)
     window.__MOCK_CALLS.push(body.endpoint)
     const mock = window.__MOCK__
+    if (body.endpoint === 'settings-set') {
+      // Host semantics: merge the patch into settings and answer with the
+      // saved settings (the client replays them through settings-saved).
+      const patch = body.payload?.patch ?? {}
+      mock.state.settings = { ...mock.state.settings, ...patch }
+      return { ok: true, json: async () => ({ ok: true, value: JSON.parse(JSON.stringify(mock.state.settings)) }) }
+    }
     if (body.endpoint === 'annotation-create') {
       // Echo the created annotation back so overlays carry the real selection
       // geometry (the hit-split probe below tests the created row).
@@ -152,13 +160,26 @@ const ctx = {
 }
 window.__pluginFactory(window.__require).apply(ctx)
 const Page = mounted.get('main:library')
-ReactDOM.createRoot(document.getElementById('app')).render(React.createElement(Page, {
+let libraryRoot = ReactDOM.createRoot(document.getElementById('app'))
+const renderLibrary = () => libraryRoot.render(React.createElement(Page, {
   layout: ctx.layout,
   openNativeSession: () => {},
   retainSession: () => ({ release() {} }),
   SessionProvider: p => React.createElement('div', null, p.children),
   renderSlot: (k, o) => React.createElement('div', { 'data-slot': k }, 'conversation'),
 }))
+renderLibrary()
+// 面板切换 = 整个文库面板卸载重挂：测试用它验证文档热缓存（免重新解析）。
+// 卸载后的 root 不能再 render（React #409），重挂必须新建 root。
+window.__remountLibrary = async () => {
+  libraryRoot.unmount()
+  await new Promise(resolve => setTimeout(resolve, 80))
+  const host = document.getElementById('app')
+  const fresh = document.createElement('div')
+  host.replaceChildren(fresh)
+  libraryRoot = ReactDOM.createRoot(fresh)
+  renderLibrary()
+}
 </script></body></html>`
 fs.writeFileSync(path.join(DIR, 'index.html'), HTML)
 
@@ -420,6 +441,27 @@ try {
     await page.waitForSelector('.lib-sel-trans-think', { timeout: 5000 })
     const thinkCollapsed = await page.evaluate('document.querySelector(".lib-sel-trans-think-body") === null')
     if (!thinkCollapsed) throw new Error('thinking block did not collapse once the answer started')
+    // 「自动」拨杆：翻译面板头部直接开关划词自动翻译；mock 宿主合并 translate
+    // 段后经 settings-saved 回环，拨杆与设置页是同一份设置。
+    const switchProbe = '(() => {\n'
+      + '  const sw = document.querySelector(".lib-sel-trans .lib-mini-switch")\n'
+      + '  return sw ? { role: sw.getAttribute("role"), checked: sw.getAttribute("aria-checked") } : null\n'
+    + '})()'
+    const switchBefore = await page.evaluate(switchProbe)
+    if (!switchBefore || switchBefore.role !== 'switch' || switchBefore.checked !== 'false') {
+      throw new Error(`auto-translate switch missing or wrong state (${JSON.stringify(switchBefore)})`)
+    }
+    await page.click('.lib-sel-trans .lib-mini-switch')
+    await page.waitForTimeout(400)
+    const switchAfter = await page.evaluate(switchProbe)
+    const autoPatch = await page.evaluate('window.__MOCK__.state.settings.translate')
+    if (switchAfter.checked !== 'true' || autoPatch?.auto !== true) {
+      throw new Error(`auto switch did not persist translate.auto=true (${JSON.stringify({ switchAfter, autoPatch })})`)
+    }
+    await page.click('.lib-sel-trans .lib-mini-switch')
+    await page.waitForTimeout(400)
+    const switchReset = await page.evaluate(switchProbe)
+    if (switchReset.checked !== 'false') throw new Error('auto switch did not toggle back off')
     await page.click('.lib-sel-trans-add')
     await page.waitForTimeout(500)
     const lastNote = await page.evaluate('window.__MOCK_LAST_NOTE')
@@ -582,6 +624,7 @@ try {
     && splitState.annoGroups >= 2 && splitState.axisH === true
     && splitState.pages.length === 2 && splitState.pages.every(p => p === '2')
   let splitScrollOk = false
+  let splitMirrorOk = false
   if (splitOk) {
     // Scroll only the bottom pane to its end; the top pane must stay put.
     await page.evaluate('(() => { const s = [...document.querySelectorAll(".lib-pdf-scroll")]; s[1].scrollTop = s[1].scrollHeight })()')
@@ -601,10 +644,80 @@ try {
     if (!axisV.axisV || axisV.panes !== 2 || axisV.stored !== 'v') { console.error('axis switch FAILED'); process.exit(1) }
     await page.click('button:has-text("纵向")')
     await page.waitForTimeout(400)
+    // 分屏第二屏必须复刻第一屏的视口位置（滚动锚），而不只是同一个页号：
+    // 退出分屏后滚到文档中部（页中间）再进分屏，两屏 scrollTop 与 35% 线
+    // 所在页都要一致。
+    await page.click('button[title="退出分屏"]')
+    await page.waitForTimeout(400)
+    await page.evaluate('(() => { const s = document.querySelector(".lib-pdf-scroll"); s.scrollTop = s.scrollHeight * 0.4 })()')
+    await page.waitForTimeout(700)
+    const donorScroll = await page.evaluate('Math.round(document.querySelector(".lib-pdf-scroll").scrollTop)')
+    await page.click('button[title^="分屏阅读"]')
+    await page.waitForSelector('.lib-pdf-divider', { timeout: 5000 })
+    await page.waitForTimeout(900)
+    const mirror = await page.evaluate('(() => [...document.querySelectorAll(".lib-rdr-pane")].map(p => {\n'
+      + '  const scroll = p.querySelector(".lib-pdf-scroll")\n'
+      + '  const line = scroll.getBoundingClientRect().top + scroll.clientHeight * 0.35\n'
+      + '  let shown = null\n'
+      + '  for (const box of p.querySelectorAll(".lib-pdf-page")) {\n'
+      + '    const r = box.getBoundingClientRect()\n'
+      + '    if (line >= r.top && line < r.bottom) shown = box.dataset.page\n'
+      + '  }\n'
+      + '  return { scrollTop: Math.round(scroll.scrollTop), shown }\n'
+      + '}))()')
+    console.log('split mirror:', JSON.stringify({ donorScroll, mirror }))
+    splitMirrorOk = mirror.length === 2
+      && Math.abs(mirror[0].scrollTop - donorScroll) <= 6
+      && Math.abs(mirror[1].scrollTop - mirror[0].scrollTop) <= 6
+      && mirror[0].shown !== null && mirror[0].shown === mirror[1].shown
   }
   await page.click('button[title="退出分屏"]')
   await page.waitForTimeout(400)
   const panesAfterExit = await page.evaluate('document.querySelectorAll(".lib-rdr-pane").length')
+
+  // 保温切换：切到文献列表再切回，查看器组件原样保留（同一 canvas 节点），
+  // 滚动位置与页码不动，也从不出现「正在解析」。
+  await page.evaluate('(() => {\n'
+    + '  window.__cv = document.querySelector(".lib-pdf-page canvas")\n'
+    + '  window.__scrollBefore = Math.round(document.querySelector(".lib-pdf-scroll").scrollTop)\n'
+    + '  window.__pageBefore = document.querySelector(".lib-rdr-page-input").value\n'
+  + '})()')
+  await page.click('.lib-midcol .lib-tab:has-text("文献列表")')
+  await page.waitForTimeout(400)
+  const hiddenWhileList = await page.evaluate('(() => { const el = document.querySelector(".lib-reader"); return el ? getComputedStyle(el).display === "none" : false })()')
+  await page.click('.lib-midcol .lib-tab:not(:has-text("文献列表"))')
+  await page.waitForTimeout(400)
+  const warmSwitch = await page.evaluate('(() => ({\n'
+    + '  sameCanvas: document.querySelector(".lib-pdf-page canvas") === window.__cv,\n'
+    + '  sameScroll: Math.round(document.querySelector(".lib-pdf-scroll").scrollTop) === window.__scrollBefore,\n'
+    + '  samePage: document.querySelector(".lib-rdr-page-input").value === window.__pageBefore,\n'
+    + '  parsing: Boolean(document.querySelector(".lib-pv-status"))\n'
+  + '}))()')
+  console.log('warm tab switch:', JSON.stringify({ hiddenWhileList, ...warmSwitch }))
+  const warmOk = hiddenWhileList && warmSwitch.sameCanvas && warmSwitch.sameScroll && warmSwitch.samePage
+    && !warmSwitch.parsing
+
+  // 面板切换（卸载重挂）：文档热缓存让重挂免解析——秒级回到带位图的同一页，
+  // 字节热缓存保证 file 路由零重取。
+  const fileHitsBeforeRemount = await page.evaluate('window.__FILE_HITS ?? 0')
+  const remountStartedAt = Date.now()
+  await page.evaluate('window.__remountLibrary()')
+  let remount = null
+  for (let i = 0; i < 24; i += 1) {
+    await page.waitForTimeout(100)
+    remount = await page.evaluate('(() => ({\n'
+      + '  page: document.querySelector(".lib-rdr-page-input")?.value ?? "",\n'
+      + '  parsing: Boolean(document.querySelector(".lib-pv-status")),\n'
+      + '  painted: (() => { const c = document.querySelector(".lib-pdf-page canvas"); return Boolean(c && c.width > 0) })(),\n'
+      + '  fileHits: window.__FILE_HITS ?? 0\n'
+    + '}))()')
+    if (remount.page !== '' && remount.painted && !remount.parsing) break
+  }
+  remount = { ...remount, elapsedMs: Date.now() - remountStartedAt }
+  console.log('panel remount:', JSON.stringify(remount))
+  const remountOk = remount && remount.page !== '' && remount.page === await page.evaluate('window.__pageBefore')
+    && remount.painted && !remount.parsing && remount.fileHits === fileHitsBeforeRemount
+    && remount.elapsedMs < 1500
 
   console.log('page errors:', errors.slice(0, 4).join('\n=====\n') || '(none)')
   if (!zoomOk) { console.error('zoom FAILED'); process.exit(1) }
@@ -615,7 +728,10 @@ try {
   if (!linkOpenOk) { console.error(`web link open FAILED (${linkOpenNote})`); process.exit(1) }
   if (!splitOk) { console.error('split view FAILED'); process.exit(1) }
   if (!splitScrollOk) { console.error('split scroll independence FAILED'); process.exit(1) }
+  if (!splitMirrorOk) { console.error('split pane did not mirror the donor pane position FAILED'); process.exit(1) }
   if (panesAfterExit !== 1) { console.error('exiting split FAILED'); process.exit(1) }
+  if (!warmOk) { console.error('warm tab switch FAILED'); process.exit(1) }
+  if (!remountOk) { console.error('panel remount (doc hot cache) FAILED'); process.exit(1) }
   console.log(`reader e2e: OK (links: ${linkJumpNote}; ${linkOpenNote})`)
 } finally {
   await browser.close()
