@@ -131,7 +131,7 @@ let translateEvents = []
 // replays the settings-saved event, so `state` must read it live.
 const stateSettings = {
   mode: 'zotero', zoteroDataDir: '', webdav: { url: '', username: '', hasPassword: false }, autoSync: false,
-  updateFeed: '', translate: { thinking: false, auto: false, modelSource: 'follow', model: '' },
+  translate: { thinking: false, auto: false, modelSource: 'follow', model: '' },
 }
 // The schema-mismatch panel test flips this to render the unavailable state;
 // 一键修复 clears it again (the host's repair returns the recovered state).
@@ -318,10 +318,14 @@ globalThis.fetch = async (url, options) => {
       value = stateValue()
       break
     case 'update-check':
-      value = { available: false, current: '0.5.0', feed: true }
+      // 更新走 dsh 插件管理器：拒绝时给 reason（中文），listed 时给 latest。
+      value = { current: '0.5.0', manager: 'dsh', available: false }
       break
     case 'update-apply':
-      value = { applied: false }
+      value = { applied: true, from: '0.5.0', to: '9.9.9', application: 'applied', restartRequired: false }
+      break
+    case 'update-status':
+      value = { current: '0.5.0', manager: 'dsh', available: undefined }
       break
     case 'translate-models':
       value = {
@@ -1775,6 +1779,27 @@ assert.ok(container.textContent.includes('上次唤起'), 'last hand-off row ren
 assert.ok(container.textContent.includes('由 Zotero 客户端负责'), 'webdav rows are marked as zotero-owned in zotero mode')
 assert.ok(!container.textContent.includes('debug-bridge'), 'no third-party plugin guidance is shown')
 assert.ok(calls.includes('zotero-sync-status'), 'sync status fetched for the settings page')
+// 更新页：说明走 dsh 插件管理器（含镜像），无自建更新源输入框；检查更新把
+// 拒绝原因写进页内；没有新版本时「安装更新」置灰。
+await act(async () => {
+  const miscTab = [...container.querySelectorAll('button')].find(node => node.textContent.trim() === '更新')
+  miscTab.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  await tick()
+})
+assert.ok(container.textContent.includes('dsh 内置的插件管理器'), 'update tab explains the dsh plugin-manager flow')
+assert.ok(!container.textContent.includes('更新源'), 'the self-hosted feed input is gone')
+assert.ok(container.textContent.includes('当前版本 0.5.0'), 'update tab shows the running version from update-status')
+await act(async () => {
+  const check = [...container.querySelectorAll('button')].find(node => node.textContent.includes('检查更新'))
+  check.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+  await tick()
+  await tick()
+})
+assert.ok(calls.includes('update-check'), 'update check reaches the host')
+assert.ok(container.textContent.includes('已是最新版本'), 'up-to-date message renders in the tab')
+const installButton = [...container.querySelectorAll('button')].find(node => node.textContent.includes('安装更新'))
+assert.ok(installButton, 'install button renders')
+assert.equal(installButton.disabled, true, 'install stays disabled without an available version')
 await act(async () => {
   const save = [...container.querySelectorAll('button')].find(node => node.textContent.includes('保存'))
   save.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))

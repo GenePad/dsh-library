@@ -238,7 +238,7 @@ export function createChannel(runtime) {
         case 'update-check':
           return ok(await runtime.updates.check())
         case 'update-apply':
-          return ok(await runtime.updates.apply())
+          return ok(await runtime.updates.apply(typeof body.version === 'string' ? body.version : undefined))
         case 'translate-models':
           return ok(await runtime.translateModels())
         case 'office-status':

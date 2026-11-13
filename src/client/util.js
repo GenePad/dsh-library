@@ -9,6 +9,21 @@ export function classNames(...values) {
   return values.filter(Boolean).join(' ')
 }
 
+/** Dotted version compare: -1 / 0 / 1. Numeric segments compare numerically. */
+export function compareVersions(left, right) {
+  const a = String(left ?? '').split(/[.+-]/)
+  const b = String(right ?? '').split(/[.+-]/)
+  const length = Math.max(a.length, b.length)
+  for (let index = 0; index < length; index += 1) {
+    const x = /^\d+$/.test(a[index] ?? '') ? Number(a[index]) : (a[index] ?? 0)
+    const y = /^\d+$/.test(b[index] ?? '') ? Number(b[index]) : (b[index] ?? 0)
+    if (x === y) continue
+    if (typeof x === 'number' && typeof y === 'number') return x < y ? -1 : 1
+    return String(x) < String(y) ? -1 : 1
+  }
+  return 0
+}
+
 /** Format a Zotero SQL datetime ("2025-02-25 06:34:32", UTC) for display. */
 export function formatDateTime(value) {
   if (!value) return ''

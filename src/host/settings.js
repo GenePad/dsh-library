@@ -7,24 +7,6 @@ export function dataDir() {
   return path.join(dshHome(), 'library')
 }
 
-/** Official release manifest (GitHub raw); used when no custom feed is set. */
-export const DEFAULT_UPDATE_FEED = 'https://raw.githubusercontent.com/GenePad/dsh-zot-library/main/feed/manifest.json'
-
-const FEED_OFF = /^(off|none|disabled|关闭|停用)$/i
-
-/**
- * Effective update feed: the user's settings value wins; `off` (关闭) switches
- * updates off entirely; an empty value falls back to the bundle config and
- * then to the official GitHub source.
- */
-export function resolveUpdateFeed(userValue, configValue) {
-  const user = String(userValue ?? '').trim()
-  if (user !== '') return FEED_OFF.test(user) ? '' : user
-  const config = String(configValue ?? '').trim()
-  if (config !== '') return FEED_OFF.test(config) ? '' : config
-  return DEFAULT_UPDATE_FEED
-}
-
 export function settingsFile() {
   return path.join(dataDir(), 'settings.json')
 }
@@ -59,7 +41,6 @@ export function loadSettings() {
     // 一键修复: a userdata schema newer than MAX_SUPPORTED_SCHEMA that the user
     // explicitly accepted after the core-shape check; relaxes the version guard.
     acceptedSchema: Number.isFinite(raw.acceptedSchema) && raw.acceptedSchema > 0 ? raw.acceptedSchema : 0,
-    updateFeed: typeof raw.updateFeed === 'string' ? raw.updateFeed : '',
     // Reader「译」button: one-shot translation. `modelSource` 'follow' uses
     // dsh's current model; 'fixed' pins settings.translate.model. `auto`
     // starts the translation as soon as the selection popup appears.
@@ -98,7 +79,6 @@ export function saveSettings(patch = {}) {
     ...(['native', 'builtin'].includes(patch.pdfOpen) ? { pdfOpen: patch.pdfOpen } : {}),
     ...(typeof patch.zoteroExePath === 'string' ? { zoteroExePath: patch.zoteroExePath.trim() } : {}),
     ...(Number.isFinite(patch.acceptedSchema) && patch.acceptedSchema > 0 ? { acceptedSchema: patch.acceptedSchema } : {}),
-    ...(typeof patch.updateFeed === 'string' ? { updateFeed: patch.updateFeed.trim() } : {}),
     ...(patch.translate && typeof patch.translate === 'object' ? { translate: normalizeTranslate(patch.translate) } : {}),
   }
   if (next.mode === 'standalone') next.zoteroDataDir = ''
@@ -119,7 +99,6 @@ export function publicSettings() {
     },
     autoSync: settings.autoSync,
     pdfOpen: settings.pdfOpen,
-    updateFeed: settings.updateFeed,
     translate: settings.translate,
   }
 }

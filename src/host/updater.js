@@ -1,250 +1,167 @@
-// Self-update: verified file replacement from a release manifest, with rollback.
-import crypto from 'node:crypto'
-import fs from 'node:fs'
-import fsp from 'node:fs/promises'
-import path from 'node:path'
-import { safeRemoveTree } from './util.js'
+// Self-update through dsh's own plugin manager (ctx.pluginManager): version
+// checks via `listVersions`, installation via `updateBundle`. Registry order —
+// including the npm mirror dsh is configured with — is entirely the plugin
+// manager's business; this adapter only translates its answers into the shapes
+// the 文库 settings page and the channel endpoints speak (Chinese, actionable).
+//
+// The previous homegrown feed/manifest updater is gone: releasing now means
+// publishing the package to npm, and every dsh update surface (插件管理页 and
+// this page) sees it through the same registry plan.
+const PACKAGE_NAME = 'dsh-zot-library'
 
-/** Files a release carries, relative to the package root. */
-export const RELEASE_ENTRIES = ['package.json', 'index.js', 'client.js', 'cordis.patch.yml', 'icon.svg', 'src', 'vendor', 'assets', 'README.md', 'LICENSE', 'AGENTS.md']
+/** Mutually exclusive outcomes of a refused registry lookup. */
+const REFUSAL_PROBLEMS = new Set(['not-updatable', 'not-found', 'network', 'unknown'])
 
-/** Compare dotted versions; returns -1, 0 or 1. */
-export function compareVersions(left, right) {
-  const parse = value => String(value ?? '').split(/[.+-]/).map(part => (/^\d+$/.test(part) ? Number(part) : part))
-  const a = parse(left)
-  const b = parse(right)
-  const length = Math.max(a.length, b.length)
-  for (let index = 0; index < length; index += 1) {
-    const x = a[index] ?? 0
-    const y = b[index] ?? 0
-    if (x === y) continue
-    if (typeof x === 'number' && typeof y === 'number') return x < y ? -1 : 1
-    return String(x) < String(y) ? -1 : 1
-  }
-  return 0
-}
-
-function sha256(buffer) {
-  return crypto.createHash('sha256').update(buffer).digest('hex')
-}
-
-function safeRelative(value) {
-  const text = String(value ?? '')
-  if (text === '' || text.startsWith('/') || text.startsWith('\\') || /^[a-zA-Z]:/.test(text) || text.split(/[\\/]/).includes('..')) {
-    throw new Error(`library: unsafe release path "${text}"`)
-  }
-  return text.replaceAll('\\', '/')
-}
-
-/** Walk package files listed by RELEASE_ENTRIES. */
-export function packageFiles(packageDir) {
-  const files = []
-  for (const entry of RELEASE_ENTRIES) {
-    const full = path.join(packageDir, entry)
-    let stat
-    try {
-      stat = fs.statSync(full)
-    } catch {
-      continue
-    }
-    if (stat.isDirectory()) {
-      const walk = (dir, prefix) => {
-        for (const child of fs.readdirSync(dir, { withFileTypes: true })) {
-          const rel = `${prefix}/${child.name}`
-          if (child.isDirectory()) walk(path.join(dir, child.name), rel)
-          else if (child.isFile()) files.push({ path: rel, full: path.join(dir, child.name), size: fs.statSync(path.join(dir, child.name)).size })
-        }
+/** Human-readable Chinese for a listVersions/updateBundle refusal. */
+function refusalMessage(problem, reason) {
+  const detail = String(reason ?? '').trim()
+  switch (problem) {
+    case 'not-updatable':
+      if (/not installed from a registry/i.test(detail)) {
+        return '当前安装不是来自 npm 源（本地链接或目录安装），在线更新不可用；请从 npm 安装后再试。'
       }
-      walk(full, entry)
-    } else {
-      files.push({ path: entry, full, size: stat.size })
-    }
+      if (/carries plugin management/i.test(detail)) {
+        return '该组合包由 dsh 插件管理器接管，请到 dsh 的插件管理页更新。'
+      }
+      return '当前安装方式不支持在线更新；请到 dsh 的插件管理页处理。'
+    case 'not-found':
+      return `npm 源上还没有 ${PACKAGE_NAME}（可能尚未发布，或镜像尚未同步）。${detail}`
+    case 'network':
+      return `无法访问 npm 源。${detail} 可在 dsh 插件管理器里更换安装源（镜像）后重试。`
+    default:
+      return detail !== '' ? detail : '检查更新失败，原因未知。'
   }
-  return files
 }
 
-/** Parse and validate a release manifest. */
-export function parseManifest(value, manifestURL) {
-  if (!value || typeof value !== 'object') throw new Error('library: release manifest must be an object')
-  const version = String(value.version ?? '')
-  if (!/^\d+\.\d+\.\d+([.+-][\w.+-]+)?$/.test(version)) throw new Error('library: release manifest has no valid version')
-  if (!Array.isArray(value.files) || value.files.length === 0 || value.files.length > 400) {
-    throw new Error('library: release manifest files must be a non-empty list of at most 400 entries')
-  }
-  const base = typeof value.base === 'string' ? value.base : ''
-  if (base !== '' && !/^(\.\/)?[\w./-]+$/.test(base)) throw new Error('library: release manifest base must be relative')
-  const baseURL = new URL(base, manifestURL)
-  const files = value.files.map((file) => {
-    const rel = safeRelative(file?.path)
-    const size = Number(file?.size)
-    const hash = String(file?.sha256 ?? '').toLowerCase()
-    if (!Number.isInteger(size) || size <= 0) throw new Error(`library: release file ${rel} has no valid size`)
-    if (!/^[0-9a-f]{64}$/.test(hash)) throw new Error(`library: release file ${rel} has no valid sha256`)
-    return { path: rel, size, sha256: hash, url: new URL(rel.split('/').map(encodeURIComponent).join('/'), baseURL).href }
-  })
-  for (const required of ['package.json', 'index.js', 'client.js']) {
-    if (!files.some(file => file.path === required)) throw new Error(`library: release manifest is missing ${required}`)
-  }
-  return { version, notes: String(value.notes ?? ''), publishedAt: Number(value.publishedAt ?? 0), files }
+/** The one error a pending version check/apply turns into when it dies. */
+function updateError(message, code = 'library/update') {
+  return Object.assign(new Error(message), { code })
 }
 
-/** Verified, rollback-capable self-update. */
-export class PluginUpdater {
-  /**
-   * @param {object} options
-   * @param {string} options.packageDir - installed package root.
-   * @param {string} options.dataDir - plugin data directory for staging and backups.
-   * @param {string} options.currentVersion
-   * @param {() => string} options.feedUrl - manifest URL supplier (empty disables updates).
-   * @param {object} [options.logger]
-   */
-  constructor({ packageDir, dataDir, currentVersion, feedUrl, logger = console }) {
-    this.packageDir = packageDir
-    this.dataDir = dataDir
-    this.currentVersion = currentVersion
-    this.feedUrl = feedUrl
-    this.logger = logger
-    this.state = { phase: 'idle', checkedAt: 0, latest: undefined, available: false, applying: false, error: undefined, lastApplied: undefined }
-    this.loadState()
+/**
+ * Update adapter backed by dsh's plugin manager. The manager is an optional
+ * bridge: hosts without it keep the library working and this adapter reports
+ * why updates are unavailable instead of crashing.
+ * @param {object} options
+ * @param {object} options.ctx - cordis context (pluginManager service lives here).
+ * @param {string} [options.packageName] - installed profile dependency to update.
+ * @param {string} options.currentVersion - the running package version.
+ * @param {object} [options.logger]
+ */
+export function createPluginUpdates({ ctx, packageName = PACKAGE_NAME, currentVersion, logger = console }) {
+  let lastCheck
+
+  function manager() {
+    return ctx?.pluginManager ?? null
   }
 
-  statePath() {
-    return path.join(this.dataDir, 'updates.json')
-  }
-
-  loadState() {
-    try {
-      const saved = JSON.parse(fs.readFileSync(this.statePath(), 'utf8'))
-      if (saved && typeof saved === 'object') this.state = { ...this.state, ...saved, applying: false, phase: saved.phase === 'installing' ? 'error' : saved.phase }
-    } catch {
-      // No history yet.
+  /** The plugin-manager answer for one installed bundle, or the refusal. */
+  function digest(answer) {
+    if (answer?.status === 'listed') {
+      const newest = Array.isArray(answer.versions) ? answer.versions[0] : undefined
+      return {
+        manager: 'dsh',
+        installed: answer.installed,
+        available: Boolean(newest?.version),
+        latest: newest?.version,
+        deprecation: typeof newest?.deprecated === 'string' ? newest.deprecated : undefined,
+        incompatible: newest?.incompatible !== undefined,
+        registry: answer.registry ?? undefined,
+        omitted: Number.isFinite(answer.omitted) ? answer.omitted : 0,
+        checkedAt: Date.now(),
+      }
     }
-  }
-
-  saveState() {
-    try {
-      fs.mkdirSync(this.dataDir, { recursive: true })
-      fs.writeFileSync(this.statePath(), `${JSON.stringify(this.state, null, 2)}\n`)
-    } catch (error) {
-      this.logger.warn?.(`library: could not save update state: ${error?.message ?? error}`)
-    }
-  }
-
-  status() {
+    const problem = REFUSAL_PROBLEMS.has(answer?.problem) ? answer.problem : 'unknown'
     return {
-      current: this.currentVersion,
-      phase: this.state.phase,
-      checkedAt: this.state.checkedAt,
-      latest: this.state.latest,
-      available: this.state.available,
-      notes: this.state.notes,
-      publishedAt: this.state.publishedAt,
-      applying: this.state.applying,
-      error: this.state.error,
-      lastApplied: this.state.lastApplied,
-      feed: this.feedUrl() !== '',
+      manager: 'dsh',
+      available: false,
+      problem,
+      reason: refusalMessage(problem, answer?.reason),
+      attempts: Array.isArray(answer?.attempts) ? answer.attempts.length : 0,
+      checkedAt: Date.now(),
     }
   }
 
-  /** Fetch and validate the manifest; records availability. */
-  async check() {
-    const url = this.feedUrl()
-    if (url === '') return { ...this.status(), available: false, reason: 'no-feed' }
-    const response = await fetch(url, { headers: { 'user-agent': 'dsh-zot-library/updater' }, signal: AbortSignal.timeout(20_000) })
-    if (!response.ok) throw new Error(`library: update feed answered HTTP ${response.status}`)
-    const manifest = parseManifest(await response.json(), url)
-    const available = compareVersions(manifest.version, this.currentVersion) > 0
-    this.state.checkedAt = Date.now()
-    this.state.latest = manifest.version
-    this.state.available = available
-    this.state.notes = manifest.notes
-    this.state.publishedAt = manifest.publishedAt
-    this.state.manifest = manifest
-    this.state.phase = 'idle'
-    this.state.error = undefined
-    this.saveState()
-    return this.status()
+  function requireManager() {
+    const service = manager()
+    if (!service || typeof service.listVersions !== 'function') {
+      throw updateError('本 dsh 没有插件管理器服务，无法在线更新；请升级 dsh 或到插件管理页手动更新。', 'library/no-plugin-manager')
+    }
+    return service
   }
 
-  /** Download, verify and install the latest release. A restart activates it. */
-  async apply() {
-    if (this.state.applying) throw new Error('library: an update is already being installed')
-    if (!this.state.manifest || this.state.available !== true) await this.check()
-    const manifest = this.state.manifest
-    if (!manifest || compareVersions(manifest.version, this.currentVersion) <= 0) {
-      return { ...this.status(), applied: false, reason: 'up-to-date' }
-    }
-    this.state.applying = true
-    this.state.phase = 'installing'
-    this.state.error = undefined
-    this.saveState()
-    const stage = path.join(this.dataDir, 'updates', `stage-${manifest.version}`)
-    const backup = path.join(this.dataDir, 'updates', `rollback-${Date.now()}`)
-    try {
-      safeRemoveTree(stage)
-      fs.mkdirSync(stage, { recursive: true })
-      for (const file of manifest.files) {
-        const response = await fetch(file.url, { headers: { 'user-agent': 'dsh-zot-library/updater' }, signal: AbortSignal.timeout(300_000) })
-        if (!response.ok) throw new Error(`library: could not download ${file.path} (HTTP ${response.status})`)
-        const buffer = Buffer.from(await response.arrayBuffer())
-        // 本地没有任何东西被改动（校验全部通过前不动安装目录）；清单与发布内容
-        // 不一致是发布端问题，报错要直接告诉用户下一步做什么。
-        if (buffer.byteLength !== file.size) {
-          throw new Error(`library: 更新源与清单不一致：${file.path} 下载到 ${buffer.byteLength} 字节，清单记录 ${file.size} 字节。本次更新已中止、文库不受影响，属发布方问题，请稍后重试「检查更新」。`)
-        }
-        if (sha256(buffer) !== file.sha256) {
-          throw new Error(`library: 更新源与清单不一致：${file.path} 未通过 SHA-256 校验。本次更新已中止、文库不受影响，属发布方问题，请稍后重试「检查更新」。`)
-        }
-        const target = path.join(stage, ...file.path.split('/'))
-        fs.mkdirSync(path.dirname(target), { recursive: true })
-        fs.writeFileSync(target, buffer)
+  return {
+    /** Last known state plus the running version; `available` is undefined until a check ran. */
+    status() {
+      const service = manager()
+      const base = {
+        current: currentVersion,
+        manager: service ? 'dsh' : 'none',
+        packageName,
       }
-      // Staged package must declare the manifest's version.
-      const stagedPackage = JSON.parse(fs.readFileSync(path.join(stage, 'package.json'), 'utf8'))
-      if (stagedPackage.version !== manifest.version) throw new Error('library: staged package version does not match the manifest')
-      // Back up every file that will be replaced, then swap them in.
-      const current = packageFiles(this.packageDir)
-      fs.mkdirSync(backup, { recursive: true })
-      for (const file of current) {
-        const target = path.join(backup, ...file.path.split('/'))
-        fs.mkdirSync(path.dirname(target), { recursive: true })
-        await fsp.copyFile(file.full, target)
-      }
-      for (const file of manifest.files) {
-        const source = path.join(stage, ...file.path.split('/'))
-        const target = path.join(this.packageDir, ...file.path.split('/'))
-        fs.mkdirSync(path.dirname(target), { recursive: true })
-        const temporary = `${target}.dsh-new`
-        fs.copyFileSync(source, temporary)
-        fs.renameSync(temporary, target)
-      }
-      this.state.phase = 'installed'
-      this.state.applying = false
-      this.state.lastApplied = { version: manifest.version, at: Date.now() }
-      this.state.available = false
-      this.saveState()
-      return { ...this.status(), applied: true, restartRequired: true }
-    } catch (error) {
-      this.state.phase = 'error'
-      this.state.applying = false
-      this.state.error = String(error?.message ?? error)
-      this.saveState()
+      return { ...base, ...(lastCheck ?? {}) }
+    },
+
+    /** Ask dsh's registry plan (configured mirror first) what changed upstream. */
+    async check() {
+      const service = requireManager()
+      let answer
       try {
-        if (fs.existsSync(backup)) {
-          for (const file of packageFiles(backup)) {
-            const target = path.join(this.packageDir, ...file.path.split('/'))
-            fs.mkdirSync(path.dirname(target), { recursive: true })
-            fs.copyFileSync(file.full, target)
-          }
-          this.state.phase = 'rolled-back'
-          this.saveState()
-        }
-      } catch (rollbackError) {
-        this.logger.error?.(`library: update rollback failed: ${rollbackError?.message ?? rollbackError}`)
+        answer = await service.listVersions(packageName, {})
+      } catch (error) {
+        logger.warn?.(`library: update check failed: ${error?.message ?? error}`)
+        throw updateError(`检查更新失败：${error?.message ?? error}`, 'library/update-check')
       }
-      throw error
-    } finally {
-      this.state.applying = false
-    }
+      lastCheck = digest(answer)
+      return { ...this.status(), ...lastCheck }
+    },
+
+    /**
+     * Install `version` (default: the newest known) through the plugin manager.
+     * With HMR the bundle is replaced live; the removal step stops THIS plugin,
+     * so the HTTP answer may never reach the browser — the settings page polls
+     * `update-status` for the new version instead of trusting this response.
+     */
+    async apply(version) {
+      const service = requireManager()
+      let target = typeof version === 'string' && version.trim() !== '' ? version.trim() : lastCheck?.latest
+      if (!target) {
+        const checked = await this.check()
+        target = checked.latest
+      }
+      if (!target) {
+        throw updateError(lastCheck?.reason ?? '没有可安装的更新：请先「检查更新」。', 'library/update-none')
+      }
+      let answer
+      try {
+        answer = await service.updateBundle(packageName, target, {})
+      } catch (error) {
+        // The removal step stops this plugin; a transport-level rejection here
+        // usually means the update is already underway, not that it failed.
+        logger.warn?.(`library: update to ${target} interrupted: ${error?.message ?? error}`)
+        throw updateError(`更新已启动但应答中断（插件正在被替换）。请稍候片刻后刷新状态确认。${error?.message ?? error}`, 'library/update-interrupted')
+      }
+      const result = answer?.result
+      const application = result?.application
+      if (application === 'failed' || application === 'cancelled') {
+        const detail = result?.error?.diagnostic ?? result?.error?.message ?? result?.error?.code
+        lastCheck = undefined
+        throw updateError(application === 'cancelled'
+          ? '更新已取消，安装内容已回滚。'
+          : `更新到 ${target} 失败：${detail ?? '原因未知'}。已回滚或保留原版本。`, 'library/update-failed')
+      }
+      lastCheck = undefined
+      return {
+        ...this.status(),
+        applied: true,
+        from: answer?.from ?? undefined,
+        to: answer?.to ?? target,
+        application: application ?? 'applied',
+        restartRequired: application === 'restart-required',
+        // HMR replaces the package live; without HMR (or with a pending HMR
+        // reason) dsh reports that a restart activates it.
+        step: answer?.step,
+      }
+    },
   }
 }

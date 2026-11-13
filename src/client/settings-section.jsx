@@ -5,7 +5,7 @@
 import * as React from 'react'
 import * as api from './api.js'
 import { Button, Input, SegmentedControl, SegmentedTabs, Switch } from './platform.jsx'
-import { downloadText } from './util.js'
+import { compareVersions, downloadText } from './util.js'
 
 // The library page listens for this so "打开 PDF 的方式" applies without a reload.
 export const SETTINGS_SAVED_EVENT = 'dsh-zot-library:settings-saved'
@@ -26,7 +26,6 @@ function restoreForm(settings) {
     username: settings?.webdav?.username ?? '',
     password: '',
     autoSync: settings?.autoSync === true,
-    updateFeed: settings?.updateFeed ?? '',
     // Older settings may still hold the removed 'dsh' value; it means builtin.
     pdfOpen: settings?.pdfOpen === 'native' ? 'native' : 'builtin',
     translateThinking: settings?.translate?.thinking === true,
@@ -35,6 +34,11 @@ function restoreForm(settings) {
     translateModel: typeof settings?.translate?.model === 'string' ? settings.translate.model : '',
   }
 }
+
+/** 安装更新后轮询 update-status：HMR 替换期间本插件会短暂停止，应答可能中断。 */
+const UPDATE_POLL_MS = 2000
+const UPDATE_POLL_DEADLINE_MS = 90_000
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 
 /** The 文库 settings section: tabbed rows inside the native settings panel. */
 export function LibrarySettingsSection() {
@@ -55,6 +59,8 @@ export function LibrarySettingsSection() {
   const [installedStyles, setInstalledStyles] = React.useState([])
   // Zotero 客户端同步状态（zotero 模式）：客户端运行中/桥接可用/上次触发结果。
   const [zoteroSync, setZoteroSync] = React.useState(undefined)
+  // 插件更新状态（走 dsh 插件管理器）：current/available/latest/检查失败原因。
+  const [updateInfo, setUpdateInfo] = React.useState(undefined)
 
   const load = React.useCallback(async () => {
     try {
@@ -70,6 +76,11 @@ export function LibrarySettingsSection() {
       setCurrentModel(listed?.current ?? null)
     } catch {
       setModels([]) // 旧宿主没有该端点时隐藏指定模型下拉即可
+    }
+    try {
+      setUpdateInfo(await api.call('update-status', {}))
+    } catch {
+      // 断连或旧宿主：保留现状，点「检查更新」时再报错。
     }
   }, [])
 
@@ -99,7 +110,6 @@ export function LibrarySettingsSection() {
           zoteroDataDir: form.zoteroDataDir,
           webdav,
           autoSync: form.autoSync,
-          updateFeed: form.updateFeed,
           pdfOpen: form.pdfOpen,
           translate: {
             thinking: form.translateThinking,
@@ -151,9 +161,10 @@ export function LibrarySettingsSection() {
     setMessage('')
     try {
       const status = await api.call('update-check', {})
+      setUpdateInfo(status)
       setMessage(status.available
         ? `发现新版本 ${status.latest}（当前 ${status.current}）。`
-        : status.feed === false ? '未配置更新源。' : `已是最新版本（${status.current}）。`)
+        : (status.reason ?? `已是最新版本（${status.current}）。`))
     } catch (error) {
       fail(error)
     } finally {
@@ -161,14 +172,52 @@ export function LibrarySettingsSection() {
     }
   }
 
+  // 安装走 dsh 插件管理器的 updateBundle：HMR 替换期间本插件（连同应答通道）
+  // 会被短暂停止，所以「应答中断」不是失败——轮询 update-status 直到版本变化。
+  const applyPluginUpdate = async (target, doneMessage) => {
+    try {
+      const result = await api.call('update-apply', { version: target })
+      // 应答完整返回 = 没有 HMR（或 HMR 有挂起原因），需要重启 dsh 生效。
+      setMessage(result?.restartRequired
+        ? `已安装 ${result?.to ?? target}，重启 dsh 后生效。`
+        : (typeof doneMessage === 'function' ? doneMessage(result?.to ?? target) : doneMessage))
+      return true
+    } catch (error) {
+      const code = String(error?.code ?? '')
+      // 真失败（引擎报错/取消/没有插件管理器）：直接报告，轮询只会白等。
+      if (code === 'library/update-failed' || code === 'library/update-none' || code === 'library/no-plugin-manager') {
+        fail(error)
+        return false
+      }
+      // 其余（含 library/update-interrupted 与传输层错误）：更新已在路上。
+    }
+    setMessage(`正在更新到 ${target}…（插件会短暂重启）`)
+    const deadline = Date.now() + UPDATE_POLL_DEADLINE_MS
+    while (Date.now() < deadline) {
+      await sleep(UPDATE_POLL_MS)
+      try {
+        const status = await api.call('update-status', {})
+        setUpdateInfo(status)
+        if (compareVersions(status?.current, target) >= 0) {
+          setMessage(typeof doneMessage === 'function' ? doneMessage(target) : doneMessage)
+          return true
+        }
+      } catch {
+        // 插件替换期间通道不可用：继续轮询。
+      }
+    }
+    setMessage(`更新仍在进行：可稍后重开设置页，或到 dsh 的插件管理页确认状态。`)
+    return false
+  }
+
   const applyUpdate = async () => {
+    const target = updateInfo?.latest
+    if (!target) return
     setBusy('apply')
     setMessage('')
     try {
-      const result = await api.call('update-apply', {})
-      setMessage(result.applied ? `已安装 ${result.lastApplied?.version}，重启 dsh 后生效。` : '没有可安装的更新。')
-    } catch (error) {
-      fail(error)
+      await applyPluginUpdate(target, version => `已更新到 ${version}。`)
+      await load()
     } finally {
       setBusy('')
     }
@@ -192,23 +241,19 @@ export function LibrarySettingsSection() {
   }
 
   // 「Zotero 数据库结构更新」面板（数据来源页与文库主页各一份）。更新插件走
-  // 插件自己的 update-check/apply（装好后需重启 dsh）；一键修复 = 宿主自检核心
-  // 表结构后以兼容模式接受新 schema（结构差异过大时宿主会拒绝并给出原因）。
+  // dsh 插件管理器的检查/安装；一键修复 = 宿主自检核心表结构后以兼容模式接受
+  // 新 schema（结构差异过大时宿主会拒绝并给出原因）。
   const repairPlugin = async () => {
     setBusy('schema-update')
     setMessage('')
     try {
       const status = await api.call('update-check', {})
+      setUpdateInfo(status)
       if (!status.available) {
-        setMessage(status.feed === false
-          ? '未配置更新源，无法在线更新；可用「一键修复」以兼容模式继续使用文库。'
-          : `已是最新版本（${status.current}），还没有适配新 schema 的发布；可用「一键修复」以兼容模式继续使用文库。`)
+        setMessage(`${status.reason ?? `已是最新版本（${status.current}），还没有适配新 schema 的发布`}；可用「一键修复」以兼容模式继续使用文库。`)
         return
       }
-      const result = await api.call('update-apply', {})
-      setMessage(result.applied
-        ? `已安装 ${result.lastApplied?.version}，重启 dsh 后生效；若重启后文库仍不可用，再用「一键修复」。`
-        : '没有可安装的更新；可用「一键修复」以兼容模式继续使用文库。')
+      await applyPluginUpdate(status.latest, version => `已更新到 ${version}；若文库仍不可用，再用「一键修复」。`)
     } catch (error) {
       fail(error)
     } finally {
@@ -660,14 +705,22 @@ export function LibrarySettingsSection() {
         {tab === 'misc' ? (
           <div id="lib-set-panel-misc" role="tabpanel" aria-labelledby="lib-set-tab-misc">
             <div className="lib-settings-row">
-              <div className="lib-settings-label">插件更新源（manifest.json 地址）</div>
-              <Input value={form.updateFeed} placeholder="https://…/feed/manifest.json（留空使用官方源）" onChange={set('updateFeed')} />
+              <div className="lib-settings-label">插件更新</div>
+              <div className="lib-settings-hint">
+                检查与安装都通过 dsh 内置的插件管理器完成，下载走 dsh 配置的 npm 安装源（可在 dsh 插件管理器里更换镜像）。
+                当前版本 {updateInfo?.current ?? snapshot?.version ?? '…'}；安装更新时插件会短暂重启，稍候片刻即可。
+              </div>
+              {updateInfo?.available ? (
+                <div className="lib-settings-hint">
+                  发现新版本 {updateInfo.latest}，可安装更新。
+                  {updateInfo.deprecation ? `（${updateInfo.deprecation}）` : ''}
+                </div>
+              ) : updateInfo?.reason ? (
+                <div className="lib-settings-hint">{updateInfo.reason}</div>
+              ) : null}
               <div className="lib-settings-actions">
                 <Button variant="outline" size="sm" disabled={busy !== ''} onClick={checkUpdate}>{busy === 'update' ? '检查中…' : '检查更新'}</Button>
-                <Button variant="outline" size="sm" disabled={busy !== ''} onClick={applyUpdate}>{busy === 'apply' ? '安装中…' : '安装更新'}</Button>
-              </div>
-              <div className="lib-settings-hint">
-                留空使用官方源（GitHub GenePad/dsh-zot-library 的 feed/manifest.json）；填写 off 关闭在线更新。
+                <Button variant="primary" size="sm" disabled={busy !== '' || updateInfo?.available !== true} onClick={applyUpdate}>{busy === 'apply' ? '更新中…' : '安装更新'}</Button>
               </div>
             </div>
           </div>

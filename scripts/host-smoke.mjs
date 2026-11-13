@@ -68,6 +68,9 @@ const agent = {
 const mockCtx = {
   logger: { info() {}, warn() {}, error() {} },
   get() { return undefined },
+  // Fake dsh plugin manager: update endpoints drive it through the adapter in
+  // src/host/updater.js; tests re-point pluginManagerBehavior per case.
+  pluginManager: null,
   effect(fn) {
     const dispose = fn()
     if (typeof dispose === 'function') disposers.push(dispose)
@@ -135,6 +138,21 @@ const mockCtx = {
     async create() { return { id: 'ws-smoke' } },
     get() { return undefined },
     async archiveSession(id) { archivedSessions.push(id) },
+  },
+}
+
+// 插件更新 = dsh 插件管理器适配器：用例通过换 handler 模拟 listed/拒绝/成功/
+// 失败，并断言传给 listVersions/updateBundle 的实参。
+let pluginManagerBehavior = () => ({ status: 'refused', problem: 'not-found', reason: 'not found', attempts: [{ registry: 'https://registry.npmjs.org/' }] })
+const pluginManagerCalls = []
+mockCtx.pluginManager = {
+  async listVersions(nameArg, options) {
+    pluginManagerCalls.push(['listVersions', nameArg, options])
+    return pluginManagerBehavior('listVersions')
+  },
+  async updateBundle(nameArg, versionArg, options) {
+    pluginManagerCalls.push(['updateBundle', nameArg, versionArg, options])
+    return pluginManagerBehavior('updateBundle')
   },
 }
 
@@ -886,27 +904,62 @@ assert.equal(settings.value.webdav.hasPassword, true)
 assert.equal(settings.value.webdav.password, undefined)
 const syncStatus = await call('sync-status', {})
 assert.equal(syncStatus.ok, true)
+// 插件更新走 dsh 插件管理器：status 报当前版本与 manager=dsh；check 把
+// listed/refused 译成可操作的中文；apply 透传 updateBundle 结果。
 const updateStatus = await call('update-status', {})
 assert.equal(updateStatus.ok, true)
-// No custom feed configured: the official GitHub source is the default.
-assert.equal(updateStatus.value.feed, true)
-// `off` disables online updates entirely; a custom URL wins; empty restores
-// the official source.
-const offSettings = await call('settings-set', { patch: { updateFeed: 'off' } })
-assert.equal(offSettings.ok, true)
-const offStatus = await call('update-status', {})
-assert.equal(offStatus.ok, true)
-assert.equal(offStatus.value.feed, false, 'updateFeed=off must disable the feed')
-const customSettings = await call('settings-set', { patch: { updateFeed: 'https://example.com/feed/manifest.json' } })
-assert.equal(customSettings.ok, true)
-const customStatus = await call('update-status', {})
-assert.equal(customStatus.ok, true)
-assert.equal(customStatus.value.feed, true)
-const resetSettings = await call('settings-set', { patch: { updateFeed: '' } })
-assert.equal(resetSettings.ok, true)
-const resetStatus = await call('update-status', {})
-assert.equal(resetStatus.ok, true)
-assert.equal(resetStatus.value.feed, true, 'empty updateFeed must fall back to the official feed')
+assert.equal(updateStatus.value.manager, 'dsh')
+assert.equal(updateStatus.value.current, version)
+assert.equal(updateStatus.value.available, undefined, 'no check has run yet')
+// 拒绝（npm 源上还没有这个包）：reason 翻成中文。
+pluginManagerBehavior = () => ({ status: 'refused', problem: 'not-found', reason: 'registry answered 404', attempts: [{ registry: 'https://registry.npmjs.org/' }] })
+const refusedCheck = await call('update-check', {})
+assert.equal(refusedCheck.ok, true)
+assert.equal(refusedCheck.value.available, false)
+assert.ok(refusedCheck.value.reason.includes('npm 源上还没有'), `refusal is translated (${refusedCheck.value.reason})`)
+// listed：有新版本（registry 字段原样带出，供界面展示安装源）。
+pluginManagerBehavior = () => ({ status: 'listed', installed: version, versions: [{ version: '9.9.9', tags: [] }], registry: 'https://registry.npmmirror.com/', attempts: [], omitted: 1 })
+const listedCheck = await call('update-check', {})
+assert.equal(listedCheck.ok, true)
+assert.equal(listedCheck.value.available, true)
+assert.equal(listedCheck.value.latest, '9.9.9')
+assert.equal(listedCheck.value.registry, 'https://registry.npmmirror.com/')
+assert.equal(pluginManagerCalls.at(-1)[0], 'listVersions')
+assert.equal(pluginManagerCalls.at(-1)[1], 'dsh-zot-library')
+// apply 不带版本 = 用最近一次检查的最新版；成功透传 from/to/application。
+pluginManagerBehavior = () => ({ from: version, to: '9.9.9', step: 'install', result: { changed: true, application: 'applied', stage: 'install' } })
+const appliedUpdate = await call('update-apply', {})
+assert.equal(appliedUpdate.ok, true, JSON.stringify(appliedUpdate))
+assert.equal(appliedUpdate.value.applied, true)
+assert.equal(appliedUpdate.value.to, '9.9.9')
+assert.equal(appliedUpdate.value.restartRequired, false)
+assert.equal(pluginManagerCalls.at(-1)[0], 'updateBundle')
+assert.equal(pluginManagerCalls.at(-1)[2], '9.9.9', 'apply falls back to the last checked latest')
+assert.deepEqual(pluginManagerCalls.at(-1)[3], {}, 'updateBundle gets no explicit registry (dsh owns the mirror plan)')
+// 指定版本 + 无 HMR（application=restart-required）。
+pluginManagerBehavior = () => ({ from: version, to: '9.9.9', step: 'install', result: { changed: true, application: 'restart-required', restartReason: 'no-hmr', stage: 'install' } })
+const restartUpdate = await call('update-apply', { version: '9.9.9' })
+assert.equal(restartUpdate.ok, true)
+assert.equal(restartUpdate.value.restartRequired, true)
+assert.equal(pluginManagerCalls.at(-1)[2], '9.9.9', 'explicit version wins')
+// 失败：错误信封带中文与稳定 code。
+pluginManagerBehavior = () => ({ from: version, to: '9.9.9', step: 'install', result: { changed: false, application: 'failed', stage: 'install', error: { code: 'operation-error', diagnostic: 'pnpm exploded' } } })
+const failedUpdate = await call('update-apply', { version: '9.9.9' })
+assert.equal(failedUpdate.ok, false)
+assert.equal(failedUpdate.error.code, 'library/update-failed')
+assert.ok(failedUpdate.error.message.includes('更新到 9.9.9 失败'), failedUpdate.error.message)
+assert.ok(failedUpdate.error.message.includes('pnpm exploded'), 'engine diagnostic travels')
+// 没有 pluginManager 服务（老 dsh）：status manager=none，check 报可操作中文。
+const savedManager = mockCtx.pluginManager
+delete mockCtx.pluginManager
+const noManagerStatus = await call('update-status', {})
+assert.equal(noManagerStatus.value.manager, 'none')
+const noManagerCheck = await call('update-check', {})
+assert.equal(noManagerCheck.ok, false)
+assert.equal(noManagerCheck.error.code, 'library/no-plugin-manager')
+assert.ok(noManagerCheck.error.message.includes('插件管理器'), noManagerCheck.error.message)
+mockCtx.pluginManager = savedManager
+pluginManagerBehavior = () => ({ status: 'refused', problem: 'not-found', reason: 'not found', attempts: [] })
 
 // Standalone library: switching away from Zotero creates a fresh schema-130
 // database under $DSH_HOME/library/data that the same engine can write.

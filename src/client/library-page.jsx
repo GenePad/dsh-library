@@ -13,7 +13,7 @@ import {
   ChevronLeftIcon, ChevronRightIcon, GearIcon, LibraryIcon, PlusIcon, PdfIcon, SearchIcon, SyncIcon, WandIcon,
 } from './icons.jsx'
 import { Button } from './platform.jsx'
-import { fileBase64, filePathOf, itemTypeLabel, useDarkMode, useDebounced, probeSidebarOpen } from './util.js'
+import { compareVersions, fileBase64, filePathOf, itemTypeLabel, useDarkMode, useDebounced, probeSidebarOpen } from './util.js'
 
 const VIEW_STORAGE = 'dsh-zot-library:view'
 const SORT_STORAGE = 'dsh-zot-library:sort'
@@ -1332,24 +1332,51 @@ export function LibraryPage({ layout, openSettings, openNativeSession, retainSes
     }
   }
 
-  // 「Zotero 数据库结构更新」面板的两个自助按钮。更新走插件自己的
-  // update-check/apply（装好后需重启 dsh）；一键修复 = 宿主自检核心表结构后
-  // 以兼容模式接受新 schema（结构差异过大时宿主会拒绝并给出原因）。
+  // 「Zotero 数据库结构更新」面板的两个自助按钮。更新走 dsh 插件管理器的
+  // 检查/安装（HMR 下插件会被短暂替换，应答中断就轮询 update-status 等新版
+  // 本就位）；一键修复 = 宿主自检核心表结构后以兼容模式接受新 schema（结构
+  // 差异过大时宿主会拒绝并给出原因）。
   const repairPlugin = async () => {
     setRepairing('update')
     setSchemaMessage('')
     try {
       const status = await api.call('update-check', {})
       if (!status.available) {
-        setSchemaMessage(status.feed === false
-          ? '未配置更新源，无法在线更新；可用「一键修复」以兼容模式继续使用文库。'
-          : `已是最新版本（${status.current}），还没有适配新 schema 的发布；可用「一键修复」以兼容模式继续使用文库。`)
+        setSchemaMessage(`${status.reason ?? `已是最新版本（${status.current}），还没有适配新 schema 的发布`}；可用「一键修复」以兼容模式继续使用文库。`)
         return
       }
-      const result = await api.call('update-apply', {})
-      setSchemaMessage(result.applied
-        ? `已安装 ${result.lastApplied?.version}，重启 dsh 后生效；若重启后文库仍不可用，再用「一键修复」。`
-        : '没有可安装的更新；可用「一键修复」以兼容模式继续使用文库。')
+      const target = status.latest
+      let settled = false
+      try {
+        const result = await api.call('update-apply', { version: target })
+        settled = true
+        setSchemaMessage(result?.restartRequired
+          ? `已安装 ${result?.to ?? target}，重启 dsh 后生效；若重启后文库仍不可用，再用「一键修复」。`
+          : `已更新到 ${result?.to ?? target}；若文库仍不可用，再用「一键修复」。`)
+      } catch (applyError) {
+        const code = String(applyError?.code ?? '')
+        if (code === 'library/update-failed' || code === 'library/update-none' || code === 'library/no-plugin-manager') {
+          setSchemaMessage(applyError?.message ?? String(applyError))
+          return
+        }
+        // 应答中断 = HMR 正在替换本插件：轮询直到新版本应答。
+      }
+      if (settled) return
+      setSchemaMessage(`正在更新到 ${target}…（插件会短暂重启）`)
+      const deadline = Date.now() + 90_000
+      while (Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 2000))
+        try {
+          const next = await api.call('update-status', {})
+          if (compareVersions(next?.current, target) >= 0) {
+            setSchemaMessage(`已更新到 ${next.current}；若文库仍不可用，再用「一键修复」。`)
+            return
+          }
+        } catch {
+          // 插件替换期间通道不可用：继续轮询。
+        }
+      }
+      setSchemaMessage('更新仍在进行：可稍后刷新页面，或到 dsh 的插件管理页确认状态。')
     } catch (error) {
       setSchemaMessage(error?.message ?? String(error))
     } finally {

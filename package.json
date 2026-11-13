@@ -1,6 +1,6 @@
 {
   "name": "dsh-zot-library",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "type": "module",
   "description": "A Zotero-compatible literature library for DeepSeek Harness: browse and edit a real zotero.sqlite, import PDFs with metadata lookup, annotations, WebDAV file sync, an agent chat dock, and a full Zotero-compatible Microsoft Word citation plugin.",
   "keywords": [
@@ -42,8 +42,7 @@
   "scripts": {
     "build": "node tools/build-client.mjs && node tools/build-vendor.mjs",
     "check": "node --check index.js && node --check client.js && node scripts/host-smoke.mjs && node scripts/office-smoke.mjs && node scripts/webdav-smoke.mjs && node scripts/client-smoke.mjs",
-    "bench": "node scripts/pdf-open-bench.mjs && node scripts/pdf-pages-bench.mjs",
-    "manifest": "node tools/build-manifest.mjs"
+    "bench": "node scripts/pdf-open-bench.mjs && node scripts/pdf-pages-bench.mjs"
   },
   "dsh": {
     "bundle": {

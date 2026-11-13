@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { ZoteroDb, inspectCoreShape, readSchemaVersion } from './db.js'
 import { locateZotero } from './locate.js'
-import { dataDir, loadSettings, loadState, publicSettings, resolveUpdateFeed, saveSettings, saveState } from './settings.js'
+import { dataDir, loadSettings, loadState, publicSettings, saveSettings, saveState } from './settings.js'
 import { attachmentTarget, readAnnotations, readCollections, readItem, readItems, readStats, readTags } from './read.js'
 import { createItem, updateItem, trashItems, deleteForever, createCollection, renameCollection, trashCollection, createAnnotationRecord, updateAnnotationRecord, removeAnnotationRecord, changeItemType, createNoteItem, updateNoteItem, createUrlAttachment, duplicateItem, createParentAttachment, detachAttachment, mergeItems, noteFromAnnotations } from './write.js'
 import { typeList, typeSchema, planTypeChange } from './schema.js'
@@ -13,7 +13,7 @@ import { createStorageWatcher } from './watcher.js'
 import { WebDavClient, syncStorage } from './webdav.js'
 import { openExternal, revealInFolder } from './open.js'
 import { fileApplications, openWithApplication } from './assoc.js'
-import { PluginUpdater } from './updater.js'
+import { createPluginUpdates } from './updater.js'
 import { createStandaloneLibrary } from './standalone.js'
 import { ensureSession, openSession, readPage, sendMessage, stopTurn, workspaceDir } from './chat.js'
 import { createTranslator } from './translate.js'
@@ -583,14 +583,9 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
     return syncTask
   }
 
-  const updater = new PluginUpdater({
-    packageDir,
-    dataDir: home,
-    currentVersion: config.version,
-    // User feed → bundle config → official GitHub source; `off`/关闭 disables.
-    feedUrl: () => resolveUpdateFeed(getSettings().updateFeed, config.updateFeed),
-    logger,
-  })
+  // 在线更新走 dsh 自己的插件管理器（listVersions/updateBundle）：镜像/安装源
+  // 完全跟随 dsh 的配置，本插件不再自维护 feed 清单。
+  const updater = createPluginUpdates({ ctx, currentVersion: config.version, logger })
 
   // One-shot reader translations ride dsh's own llm service (bridged lazily by
   // index.js — hosts without it keep the whole library working).
@@ -975,7 +970,7 @@ export function createLibraryRuntime({ ctx, config = {}, logger = console, packa
     updates: {
       status: () => updater.status(),
       check: () => updater.check(),
-      apply: () => updater.apply(),
+      apply: version => updater.apply(version),
     },
     translateModels: () => translator.listModels(),
     translateStream: (text, signal) => translator.stream(text, signal),
