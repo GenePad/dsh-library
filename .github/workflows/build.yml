@@ -6,10 +6,9 @@
 #   dsh plugin --profile desktop add dsh-zot-library-<version>.tgz
 # The same tarball is published to npm when the version is new, using npm
 # trusted publishing (GitHub OIDC — no token secret); a version already on npm
-# is skipped with a notice.
-# The in-app updater is NOT served from Releases — it reads feed/manifest.json
-# at the repository root (files are committed), so this workflow never pushes
-# to main.
+# is skipped with a notice. Publishing here IS the release: the in-app update
+# flow (0.6.3+) asks dsh's plugin manager, which reads the npm registry —
+# there is no feed/manifest.json anymore.
 name: Build
 
 on:
